@@ -105,6 +105,7 @@ from shared.xlsx_guard import csv_cell, put as xl_text  # noqa: E402  (outside t
 from shared import xlsx_verify
 import statement_set as ss  # noqa: E402  (tool-local: one vendor = one running record)
 import statement_markup as sm  # noqa: E402  (tool-local: the marked-up copy of the statement)
+from shared import statement_record as sr  # noqa: E402  (the record the ledger's Vendor Center reads)
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -154,7 +155,7 @@ QBO_BILL_URL_TEMPLATE = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 # and the source statement together under <root>/<Vendor>/<MM-YYYY>/. A statement
 # whose reconciliation the clerk has marked DONE is left untouched on re-runs.
 # (Moved 2026-09-16 from Automations/ into the new Accounts Payable/ folder.)
-INBOX_ROOT = Path("/Volumes/Accounting/Accounts Payable/Vendor Statements")
+INBOX_ROOT = sr.root()      # ONE place names the root (shared/statement_record): the ledger reads the same folders
 INBOX_SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".heic", ".heif", ".xlsx", ".xls"}
 STATEMENT_EMBED_MAX_PAGES = 20   # cap embedded statement pages to keep xlsx size sane
 STATEMENT_EMBED_MAX_WIDTH = 900  # px - target on-sheet width per embedded page
@@ -3792,6 +3793,19 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
 
     result["_bills"] = bills
     markups = _mark_statements(extras.get("sources") or [], rows, result)
+    # what the ledger's record needs (shared/statement_record, 10/09/2026): every row with its
+    # bucket, the clerk's note and the job, plus the marked pages - written after the publish
+    _by = {b.bill_id: b for b in bills}
+    _notes = extras.get("notes") or {}
+    result["_record"] = {
+        "rows": [{"category": r.category, "bucket": sm.bucket_for(r.category, _approval(r, _by)),
+                  "stmt_ref": r.stmt_ref, "qbo_ref": r.qbo_ref, "stmt_date": r.stmt_date, "qbo_date": r.qbo_date,
+                  "stmt_amount": r.stmt_amount, "qbo_amount": r.qbo_amount, "qbo_bill_id": r.qbo_bill_id,
+                  "job": (lambda m: m.group(1).upper() if m else "")(qbo_api.PROJ_RE.search(f"{r.qbo_memo} {r.po} {r.address}")),
+                  "note": ss.note_for(_notes, r.qbo_bill_id, r.stmt_ref or r.qbo_ref)} for r in rows],
+        "files": [f"{ss.CURRENT}/{p.name}" for p, _l in (extras.get("sources") or [])],
+        "excel": f"{ss.CURRENT}/{out.name}" if out else ""}
+    result["_markups"] = markups
     result.pop("_bills", None)
 
     if args.dry_run:
@@ -4178,7 +4192,8 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         if not merged.lines:
             newest = max(live, key=lambda d: d.as_of)
             _fail(f"{folder}: no statement ties out - nothing reconciled; left as is.")
-            results.append({"action": "unreadable", "vendor_folder": folder, "as_of": newest.as_of})
+            results.append({"action": "unreadable", "vendor_folder": folder, "as_of": newest.as_of,
+                            "vendor": vendor_name, "vendor_id": vendor_id, "_vdir": str(vdir)})
             failed.append((folder, "no readable statement"))
             continue
         cur_docs = [d for d in live if d.status == "current"]
@@ -4224,6 +4239,7 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
             extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree,
                     "sources": [(d.path, d.lines) for d in cur_docs]})
         result["vendor_folder"] = folder
+        result["_vdir"], result["checked"] = str(vdir), when     # for the ledger's record
         if any(d.status == "unreadable" and d.origin in ("inbox", "manual", "current")
                and (not d.as_of or d.as_of >= merged.as_of) for d in live):
             result["tieout"] = False       # a new statement can't be read - can't confirm
@@ -4256,7 +4272,8 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
                        + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
                        + (f" · statements disagree by ${merged.gap:,.2f}" if disagree else ""))
 
-    _publish(results, args)
+    synced = _publish(results, args)
+    _write_records(results, synced, args)
 
     print()
     _hr()
@@ -4359,27 +4376,28 @@ def audit_parsing(root: Path, only: Optional[List[str]] = None) -> int:
     return 1 if bad_new else 0
 
 
-def _publish(results: List[dict], args: argparse.Namespace) -> None:
+def _publish(results: List[dict], args: argparse.Namespace) -> List[dict]:
     """Push this run to the Notion board (one live page per vendor) and post ONE
     short Teams digest linking to it. --dry-run reads the board and prints what
     would change. Best-effort: no board id / no token / no webhook each skip with
-    one line; nothing here can fail the run."""
+    one line; nothing here can fail the run. Returns what the board wrote (one
+    {name, status, standing, url} per vendor) so the ledger's record can carry it."""
     try:
         import notion_board as nb
         recs = nb.group_results(results)
     except Exception as e:
         _warn(f"Notion board skipped: {e}")
-        return
+        return []
     if not recs or (getattr(args, "no_notion", False) and not args.dry_run):
-        return
+        return []
     try:
         board = nb.Board.from_env()
     except Exception as e:
         _warn(f"Notion board skipped: {e}")
-        return
+        return []
     if board is None:
         print(_Term.color(_Term.DIM, "  (Notion board off: set ACB_STATEMENTS_DS_ID in machine.env)"))
-        return
+        return []
     if args.dry_run:
         print()
         print(_Term.color(_Term.BOLD, f"  NOTION BOARD PREVIEW  ·  {len(recs)} vendor(s)"))
@@ -4395,7 +4413,7 @@ def _publish(results: List[dict], args: argparse.Namespace) -> None:
             if buckets:
                 print(_Term.color(_Term.DIM, f"      {buckets}"))
         print(_Term.color(_Term.DIM, "  (preview: nothing written. Run without --dry-run to publish.)"))
-        return
+        return []
     synced: List[dict] = []
     t0 = _phase(f"Updating the Notion board ({len(recs)} vendor(s))")
     for rec in recs:
@@ -4407,17 +4425,77 @@ def _publish(results: List[dict], args: argparse.Namespace) -> None:
     for s in synced:
         print(f"    {s['name']}: {s['standing']}")
     if getattr(args, "no_teams", False):
-        return
+        return []
     try:
         webhook = kc.get_secret("TEAMS_STMT_WEBHOOK") or ""
     except Exception:
         webhook = ""
     if not webhook or not synced:
-        return
+        return []
     from shared import teams_notify
     if teams_notify.post_statement_digest(webhook, synced, board.url()):
         print(_Term.color(_Term.DIM, "  (posted the Teams digest)"))
+    return synced
 
+
+
+def _write_records(results: List[dict], synced: Optional[List[dict]], args: argparse.Namespace) -> None:
+    """The ledger's record copy of every vendor reconciled this run (shared/statement_record,
+    owner 10/09/2026): `<Vendor>/.statement-record.json` + the marked pages as PNGs under
+    `<Vendor>/.marked/`. Status and standing are the Notion board's words (from what it just
+    wrote, else computed the same way); an unreadable run keeps the last record's lines and
+    pages and only turns the status. Never on --dry-run; nothing here can fail the run."""
+    if getattr(args, "dry_run", False):
+        return
+    try:
+        import notion_board as nb
+    except Exception as e:                                   # noqa: BLE001
+        _warn(f"ledger record skipped: {e}")
+        return
+    by_name = {s.get("name"): s for s in (synced or []) if s.get("name")}
+    n = 0
+    for res in results:
+        vdir = Path(res.get("_vdir") or "")
+        if not res.get("_vdir") or not vdir.is_dir():
+            continue
+        try:
+            if res.get("action") == "unreadable":
+                old = sr.read(vdir) or {"vendor": res.get("vendor") or vdir.name, "vendor_id": str(res.get("vendor_id") or ""),
+                                        "folder": res.get("vendor_folder") or vdir.name, "lines": [], "pages": [], "counts": {}}
+                old.pop("_dir", None)
+                when = ss.us_date(res.get("as_of") or old.get("as_of") or "")
+                old.update({"status": "Unreadable", "standing": f"Statement as of {when} unreadable" if when else "Statement unreadable",
+                            "tieout": False, "clean": False, "checked": dt.datetime.now().strftime("%m/%d/%Y %I:%M %p"),
+                            "checked_at": dt.datetime.now().isoformat(timespec="seconds")})
+                s = by_name.get(old.get("vendor"))
+                if s:
+                    old["status"], old["standing"], old["notion_url"] = s["status"], s["standing"], s.get("url") or old.get("notion_url", "")
+                sr.write(vdir, old)
+                n += 1
+                continue
+            if res.get("action") not in ("filed", "held"):
+                continue
+            recs = nb.group_results([res])
+            if not recs:
+                continue
+            rec = recs[0]
+            m = nb.merge({"items": rec["items"], "tieout": rec["tieout"], "parsed": True}, {"items": {}, "cleared": {}},
+                         frozenset(rec.get("unchecked_kinds") or ()))
+            status, standing = nb.status(m, rec.get("as_of", ""), rec.get("gap", 0.0) or 0.0)
+            url = ""
+            s = by_name.get(rec["vendor"])
+            if s:
+                status, standing, url = s["status"], s["standing"], s.get("url") or ""
+            markups = res.get("_markups") or []
+            record = sr.build(res, status=status, standing=standing, notion_url=url, markups=markups)
+            record["board_counts"] = m["counts"]
+            pages = [im for _name, r in markups for im in (getattr(r, "pages", None) or [])]
+            sr.write(vdir, record, pages)
+            n += 1
+        except Exception as e:                               # noqa: BLE001
+            _warn(f"ledger record for {vdir.name}: {e}")
+    if n:
+        print(_Term.color(_Term.DIM, f"  (ledger record written for {n} vendor(s))"))
 
 def main() -> int:
     p = argparse.ArgumentParser()

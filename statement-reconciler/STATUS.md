@@ -12,6 +12,17 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-09 (night) · **The ledger's record copy** (owner: "make the vendor ledger have a record copy of vendor
+  statements so it can show, when paying, reconciled as of"). After the Notion publish every live run writes
+  `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` ->
+  `shared/statement_record`): status / standing / page URL as the board wrote them (computed the same way when the
+  board is off), every statement line with its bucket, the QBO bill, the clerk's note and WHERE its band sits on which
+  page (`statement_markup.Result.bands` + `.unread`, new), the statement files and the Excel by relative path. An
+  unreadable run keeps the last lines and pages and only turns the status. `--dry-run` writes nothing. `INBOX_ROOT`
+  now comes from `statement_record.root()` so the SharePoint move changes one place. The ledger shows it (its STATUS).
+  Tests: `tests/test_statement_record.py` (build, write + read, name folding, path containment, the live/dry/unreadable
+  paths of `_write_records`). Not yet run against the share from this session (not mounted here) - the next live run
+  writes the first records.
 - 2026-10-09 (later) · **A column deleted on the Notion board no longer fails the page.** "Follow-ups" was removed from
   the board after the 10/08 run; the CMC / Cowtown re-run then failed both pages with a Notion 400. `Board` now reads
   the board's columns once per run (`ensure_schema`) and writes only those, logging any it skips; it never re-creates a

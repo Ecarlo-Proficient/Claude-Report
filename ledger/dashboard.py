@@ -48,6 +48,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven, wip_audit  # noqa: E402
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
 from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
+from shared import statement_record  # the vendor statement record the reconciler writes (Vendor Center bubble + Statement view)
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -61,6 +62,7 @@ import dup_customers      # noqa: E402  (local: one project # on two QBO custome
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
 import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
+import server_status      # noqa: E402  (local: the office server as the ledger watches it - server-status.json + writer.json -> one judgement)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
 HERE = Path(__file__).resolve().parent
@@ -3753,6 +3755,16 @@ class Handler(BaseHTTPRequestHandler):
             self._subloc_project(self._query().get("p", ""))
         elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
             self._vendor(self._query().get("v", ""))
+        elif path == "/api/statements":      # every vendor's statement standing (the Vendor Center bubble, the pay run) - from the reconciler's records on the share
+            self._statements()
+        elif path == "/api/statement":       # one vendor's full record: the marked pages, every line with its band, the legend (the Statement view)
+            self._statement(self._query())
+        elif path == "/api/statement/page":  # one marked page (PNG) - the path comes from the record, never the request
+            self._statement_file(self._query(), "page")
+        elif path == "/api/statement/file":  # the statement itself / the vendor's Excel - same rule
+            self._statement_file(self._query(), "file")
+        elif path == "/api/server":          # the office server monitor: server-status.json + writer.json -> ok / late / down / failing / standing down
+            self._json(server_status.read(paths.accounting_base() / "_automation"))
         elif path == "/api/bill-payment/stubs":     # the printed-stub history for a vendor / payment (status vs QBO now) + the column registry
             self._bp_stubs(self._query())
         elif path == "/api/bill-payment/stub/file":  # one printed stub's PDF, by history id (the file as it went out, even if QBO changed)
@@ -3899,6 +3911,63 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_fetch_vendor(con, vendor))
         finally:
             con.close()
+
+    # ── vendor statements: the reconciler's record copy (shared/statement_record, owner 2026-10-09) ─────────
+    # The ledger shows what the reconciler found - it never reads a statement itself. The summary is cached
+    # for a minute (one small JSON per vendor folder on the SMB share); the full record is read on click.
+    _stmt_cache: dict = {"at": 0.0, "data": None}
+
+    def _statements(self):
+        now = time.time()
+        c = type(self)._stmt_cache
+        if c["data"] is None or now - c["at"] > 60 or self._query().get("fresh"):
+            try:
+                c["data"] = statement_record.read_all()
+            except Exception as e:                        # noqa: BLE001 - a share hiccup is an answer, not a 500
+                c["data"] = {"mounted": False, "root": "", "vendors": {}, "error": str(e)}
+            c["at"] = now
+        self._json({"ok": True, **c["data"]})
+
+    def _statement(self, q: dict):
+        vendor = (q.get("v") or "").strip()
+        if not vendor:
+            return self._json({"ok": False, "error": "no vendor"}, 400)
+        try:
+            rec = statement_record.find(vendor)
+        except Exception as e:                            # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if not rec:
+            mounted = statement_record.root().is_dir()
+            return self._json({"ok": False, "mounted": mounted,
+                               "error": "no statement record for this vendor" if mounted else "the Accounting share is not mounted"})
+        rec = dict(rec)
+        rec.pop("_dir", None)
+        self._json({"ok": True, "record": rec})
+
+    def _statement_file(self, q: dict, kind: str):
+        """A marked page (kind=page, n = index) or a file the record names (kind=file, i = index into
+        `files`, or which=excel). The path is taken from the record and must sit under the vendor's folder."""
+        vendor = (q.get("v") or "").strip()
+        rec = statement_record.find(vendor) if vendor else None
+        if not rec:
+            return self._send(404, b"no statement record for this vendor", "text/plain; charset=utf-8")
+        rel = ""
+        try:
+            if kind == "page":
+                rel = (rec.get("pages") or [])[int(q.get("n", "0"))].get("file") or ""
+            elif q.get("which") == "excel":
+                rel = rec.get("excel") or ""
+            else:
+                rel = (rec.get("files") or [])[int(q.get("i", "0"))]
+        except (ValueError, IndexError, AttributeError):
+            rel = ""
+        target = statement_record.resolve_file(rec, rel)
+        if not target:
+            return self._send(404, b"that file is not on disk (is the Accounting share mounted?)", "text/plain; charset=utf-8")
+        ctype = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".pdf": "application/pdf",
+                 ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                 ".xls": "application/vnd.ms-excel"}.get(target.suffix.lower(), "application/octet-stream")
+        self._send(200, target.read_bytes(), ctype)
 
     # ── bill payment stubs (payment on top, bills below) + their print history ──────────────
     def _bp_stubs(self, q: dict):

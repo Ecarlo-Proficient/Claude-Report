@@ -730,10 +730,14 @@ function renderSyncPill() {
   for (const [n, w] of feeds) { if (!w) { stale.push(n + " never"); continue; } const t = Date.parse(w.length <= 16 ? w + ":00" : w); if (isNaN(t)) continue;
     if (!newest || t > newest) newest = t; if (businessHoursSince(t, Date.now()) > STALE_BUSINESS_H) stale.push(`${n} ${timeAgo(w)}`); }
   if (typeof syncing !== "undefined" && syncing) { pill.className = "sync-pill busy"; txt.textContent = "Syncing…"; pill.title = "A sync is running - see the progress on Overview"; return; }
-  pill.className = "sync-pill " + (stale.length ? "stale" : "ok");
+  const srvBad = SERVER && SERVER.present && (SERVER.health === "down" || SERVER.health === "failing");
+  const srvWarn = SERVER && SERVER.present && (SERVER.health === "late" || SERVER.health === "standing down");
+  pill.className = "sync-pill " + (srvBad ? "bad" : (stale.length || srvWarn) ? "stale" : "ok");
   txt.textContent = newest ? `Synced ${fmtDate(new Date(newest - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}` : "Not synced";
   if (stale.length) txt.textContent += ` · ${stale.length} stale`;
+  if (srvBad || srvWarn) txt.textContent += ` · server ${(SRV_WORD[SERVER.health] || SERVER.health).toLowerCase()}`;
   pill.title = feeds.map(([n, w]) => `${n}: ${w ? fmtDate(w, true) + " (" + timeAgo(w) + ")" : "never"}`).join("\n") + (stale.length ? "\n\nStale (over 48 business hours): " + stale.join(", ") : "\n\nEvery feed is within 48 business hours");
+  if (SERVER && SERVER.present) pill.title += `\n\nOffice server: ${SRV_WORD[SERVER.health] || SERVER.health} - ${SERVER.reason || ""}`;
 }
 // The ONE place load / sync times live (owner 2026-09-23: "remove ALL loads/sync data in the actual ledger and simply keep
 // that status where it belongs in the top, break it out, show qbo status"). Grouped by system, a dot per feed
@@ -760,6 +764,10 @@ function toggleSyncPop() {
   for (const [sys, feeds] of SYNC_GROUPS) {
     if (sys === "Office server" && !fr.server_mode) continue;   // share not mounted / no server: no block
     html += `<div class="sp-sys">${_ge(sys === "Office server" && fr.server_mode === "test" ? sys + " (test - practice copies)" : sys)}</div>`;
+    if (sys === "Office server" && SERVER && SERVER.present) {   // the monitor's judgement first (owner 2026-10-09)
+      const h = SERVER.health, cls = h === "ok" ? "ok" : (h === "down" || h === "failing") ? "bad" : "stale";
+      html += `<div class="sp-row sp-srv"><span class="sp-dot ${cls}"></span><span class="sp-l"><b>${_ge(SRV_WORD[h] || h)}</b> · ${_ge(SERVER.reason || "")}</span><span class="sp-t"></span><span class="sp-ago">${SERVER.written ? _ge(timeAgo(SERVER.written)) : ""}</span></div>`;
+    }
     for (const [lbl, kind, key] of feeds) {
       const w = (kind === "S" ? S : L)[key], t = at(w);
       const cls = !t ? "none" : businessHoursSince(t, Date.now()) > STALE_BUSINESS_H ? "stale" : "ok";
@@ -1536,7 +1544,7 @@ function renderVendors() {
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${moneyC(totalOpen)} open)`
     : "(no cost data - run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Statement", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included   // Statement = the reconciler's standing (owner 2026-10-09)
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
@@ -1555,6 +1563,7 @@ function renderVendors() {
     const ty = document.createElement("td"); ty.className = "left";
     ty.classList.add("vtype-cell"); const ts = _vtypesOf(v); if (ts.length) ts.forEach(t => ty.appendChild(_vtypePill(t))); else ty.textContent = "–";
     tr.appendChild(ty);
+    { const sc = document.createElement("td"); sc.className = "left stmt-cell"; sc.appendChild(stmtBubble(v.vendor, true)); tr.appendChild(sc); }
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
@@ -2468,9 +2477,15 @@ function renderVendorPage() {
   const body = $("#recordBody"); body.innerHTML = "";
   // Bills | Payments view toggle
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
-  for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`]]) {
+  for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`], ["statement", "Statement"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorView === k ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _vendorView = k; _recSave({ k: "vendor", id: d.vendor, view: k }); renderVendorPage(); }; vseg.appendChild(b);
+  }
+  vseg.appendChild(stmtBubble(d.vendor, true));   // the statement standing, on every view (owner 2026-10-09)
+  if (_vendorView === "statement") {   // the statement + its legend - no bill filters on this view
+    { const sb = $("#vpSelBar"); if (sb) sb.hidden = true; }
+    body.appendChild(vseg);
+    return _renderVendorStatement(d, body, seq);
   }
   { const wrap = document.createElement("span"); wrap.className = "vp-projwrap";
     const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
@@ -2650,6 +2665,218 @@ function _vendorLines(b) {
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
 }
+
+// ── Vendor statements: the reconciler's record copy (owner 2026-10-09: "have a record copy of vendor statements so
+// it can show, when paying, reconciled as of ... a Notion-style bubble in the Vendor Center; when opened we see the
+// vendor statement and the highlighted ones with the legend floating as you scroll") ───────────────────────────────
+// statement-reconciler writes <Vendor>/.statement-record.json + the marked pages (shared/statement_record); the ledger
+// shows that record and never reads a statement itself. /api/statements = every vendor's standing (the bubble);
+// /api/statement?v= = one vendor in full (pages + every line with its band). Vendor names meet on a folded key.
+let STMT = { loaded: false, mounted: null, vendors: {} };
+function stmtKey(name) { return String(name || "").toUpperCase().replace(/[^A-Z0-9]+/g, ""); }   // = shared/statement_record.key(): letters + digits only
+function stmtOf(vendor) { return STMT.vendors[stmtKey(vendor)] || null; }
+async function loadStatements(fresh) {
+  try { const j = await (await fetch("/api/statements" + (fresh ? "?fresh=1" : ""))).json(); STMT = { loaded: true, mounted: !!j.mounted, vendors: j.vendors || {} }; }
+  catch { STMT = { loaded: true, mounted: false, vendors: {} }; }
+  document.querySelectorAll(".stmt-pill[data-vendor]").forEach(el => el.replaceWith(stmtBubble(el.dataset.vendor, el.dataset.compact === "1")));   // every bubble on the page catches up
+}
+const STMT_CLASS = { "All entered": "ok", "Not entered": "bad", "Unreadable": "odd", "No statement": "none", "No record": "dim" };
+// the bubble: one look everywhere (Vendor Center, vendor page, pay run) - colour = the Notion board's Status
+function stmtBubble(vendor, compact) {
+  const s = stmtOf(vendor);
+  const el = document.createElement("span"); el.className = "stmt-pill"; el.dataset.vendor = vendor || ""; if (compact) el.dataset.compact = "1";
+  const dot = document.createElement("span"); dot.className = "stmt-dot"; el.appendChild(dot);
+  const txt = document.createElement("span"); el.appendChild(txt);
+  let cls = "dim", text = "", title = "";
+  if (!STMT.loaded) { text = "…"; title = "Loading the statement records"; }
+  else if (!STMT.mounted) { text = "Share off"; title = "The Accounting share is not mounted on this Mac - the statement records live there"; }
+  else if (!s) { text = "No statement folder"; title = `No folder for ${vendor} under Vendor Statements on the Accounting share - drop a statement in the Inbox and run the reconciler`; }
+  else {
+    cls = STMT_CLASS[s.status] || "dim";
+    const asOf = s.as_of ? fmtDateShort(s.as_of) : "";
+    if (s.status === "All entered") text = compact ? `All entered · ${asOf}` : `All entered as of ${asOf}`;
+    else if (s.status === "Not entered") { const n = (s.open_items || {})["To enter (missing in QBO)"] || (s.counts || {}).enter || 0; text = `${n} not entered${asOf ? " · " + asOf : ""}`; }
+    else if (s.status === "Unreadable") text = `Unreadable${asOf ? " · " + asOf : ""}`;
+    else if (s.status === "No statement") text = `No statement${asOf ? " since " + asOf : ""}`;
+    else text = s.status || "No record";
+    title = (s.standing || "") + (s.checked ? `\nChecked ${s.checked}` : "") + "\nClick: the statement with every line highlighted";
+  }
+  el.classList.add(cls); txt.textContent = text; el.title = title;
+  el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (vendor) openVendorStatement(vendor); };
+  return el;
+}
+async function openVendorStatement(vendor) {
+  if (!(_vendorData && _vendorData.vendor === vendor && _vendorPageShowing(_vendorData))) await openVendorPage(vendor);
+  if (_vendorData && _vendorData.vendor === vendor) { _vendorView = "statement"; _recSave({ k: "vendor", id: vendor, view: "statement" }); renderVendorPage(); }
+}
+// the legend's buckets, in the order the clerk works them: problems first, then what matched
+const STMT_BUCKETS = [["enter", "Not in QBO - enter it", [229, 57, 53]], ["unread", "On the statement, not read - check by hand", [198, 40, 40]],
+  ["mismatch", "Amount differs from QBO", [255, 152, 0]], ["tax", "Sales tax added", [255, 112, 67]], ["approve", "Matched, NOT APPROVED - chase the PM", [205, 220, 57]],
+  ["checkqbo", "Matched, approval is in QBO - check there", [0, 172, 193]], ["lag", "Paid in QBO, vendor still shows it open", [66, 165, 245]],
+  ["unlisted", "Open in QBO, not on the statement", [121, 85, 72]], ["matched", "Matched - in QBO, same amount", [76, 175, 80]],
+  ["other", "Payment / credit / balance forward", [149, 117, 205]], ["skipped", "Another customer's line - left out", [158, 158, 158]]];
+const STMT_OPEN_BY_DEFAULT = new Set(["enter", "unread", "mismatch", "tax", "approve", "checkqbo", "lag", "unlisted"]);
+let _stmtOpen = null;   // bucket -> open? (per page visit)
+async function _renderVendorStatement(d, body, seq) {
+  $("#recordSub").textContent = "Vendor statement, as the reconciler last checked it against QuickBooks";
+  const host = document.createElement("div"); host.className = "stmt-wrap"; body.appendChild(host); skeletonInto(host, 4);
+  let j; try { j = await (await fetch("/api/statement?v=" + encodeURIComponent(d.vendor))).json(); } catch { j = { ok: false, error: "could not load the statement record" }; }
+  if (seq !== _vpSeq || _vendorView !== "statement" || !_vendorPageShowing(d)) return;
+  host.innerHTML = "";
+  if (!j || !j.ok) { host.classList.add("stmt-empty"); const p = document.createElement("div"); p.className = "bills-cap";
+    p.textContent = j && j.mounted === false ? "The Accounting share is not mounted on this Mac - the statement records live there."
+      : `No statement record for ${d.vendor} yet. Drop the vendor's statement in the Vendor Statements Inbox and run the reconciler; the record and the marked pages appear here.`;
+    host.appendChild(p); return; }
+  const r = j.record, pages = r.pages || [], lines = (r.lines || []).map((ln, i) => ({ ...ln, k: i }));
+  const unread = (r.unread || []).map((u, i) => ({ k: "u" + i, bucket: "unread", ref: u.text, page: u.page, top: u.top, bottom: u.bottom, amount: null, date: "" }));
+  if (!_stmtOpen) _stmtOpen = new Map();
+  const rgb = Object.fromEntries(STMT_BUCKETS.map(([k, , c]) => [k, `rgb(${c.join(",")})`])), label = Object.fromEntries(STMT_BUCKETS.map(([k, l]) => [k, l]));
+  const vq = encodeURIComponent(d.vendor);
+  // ── the pages, every band a click target (the colour is already painted into the picture) ──
+  const pg = document.createElement("div"); pg.className = "stmt-pages";
+  if (!pages.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No page pictures in this record (an Excel statement, or the markup could not run) - the legend still lists every line."; pg.appendChild(p); }
+  pages.forEach((meta, i) => {
+    const cap = document.createElement("div"); cap.className = "stmt-pagecap"; cap.textContent = `${meta.source || "statement"} · page ${i + 1} of ${pages.length}`; pg.appendChild(cap);
+    const wrap = document.createElement("div"); wrap.className = "stmt-page"; wrap.dataset.i = i;
+    const img = document.createElement("img"); img.src = `/api/statement/page?v=${vq}&n=${i}`; img.alt = `page ${i + 1}`; img.loading = i ? "lazy" : "eager"; wrap.appendChild(img);
+    const H = meta.height || 1;
+    for (const ln of [...lines, ...unread].filter(x => x.page === i && x.top != null && x.bottom != null)) {
+      const b = document.createElement("div"); b.className = "stmt-band"; b.dataset.k = ln.k;
+      b.style.top = (ln.top / H * 100) + "%"; b.style.height = (Math.max(ln.bottom - ln.top, 6) / H * 100) + "%";
+      b.title = `${ln.ref || "(no ref)"}${ln.amount != null ? " · " + moneyC(ln.amount) : ""} · ${label[ln.bucket] || ln.bucket}\nClick: show in the legend · ⌘-click: where it is`;
+      b.onclick = (e) => { e.stopPropagation(); if (e.metaKey || e.ctrlKey) return _stmtWhere(ln, r, d.vendor); _stmtFocus(ln.k, host, "legend"); };
+      wrap.appendChild(b);
+    }
+    pg.appendChild(wrap);
+  });
+  // ── the legend: floats beside the pages as you scroll ──
+  const leg = document.createElement("aside"); leg.className = "stmt-legend";
+  { const h = document.createElement("div"); h.className = "stmt-lhead"; h.appendChild(stmtBubble(d.vendor, false)); leg.appendChild(h);
+    const st = document.createElement("div"); st.className = "stmt-standing"; st.textContent = r.standing || r.status || ""; leg.appendChild(st);
+    const m = document.createElement("div"); m.className = "stmt-meta";
+    m.textContent = [r.as_of ? `Statement as of ${fmtDateShort(r.as_of)}` : "", r.checked ? `checked ${r.checked}` : ""].filter(Boolean).join(" · "); leg.appendChild(m);
+    const amts = document.createElement("div"); amts.className = "stmt-meta";
+    const bits = []; if (r.amount_due != null) bits.push(`Statement due ${moneyC(r.amount_due)}`); if (r.merged_total != null && Math.abs(num(r.merged_total) - num(r.amount_due)) > 0.5) bits.push(`lines add to ${moneyC(r.merged_total)}`);
+    if (r.gap) bits.push(`statements disagree by ${moneyC(Math.abs(r.gap))}`); amts.textContent = bits.join(" · "); if (bits.length) leg.appendChild(amts);
+    const found = document.createElement("div"); const miss = (r.not_found || []).length + unread.length;
+    found.className = "stmt-found" + (miss ? " warn" : ""); found.textContent = r.total ? `${r.located} of ${r.total} lines found on the pages` + (miss ? ` · ${miss} to check by hand` : " · all accounted for") : `${lines.length} lines`;
+    found.title = "Did it get everything: every line the tool read, found on its page and banded - rows it could not place are listed below"; leg.appendChild(found);
+    const links = document.createElement("div"); links.className = "stmt-links";
+    (r.files || []).forEach((f, i) => { const a = document.createElement("a"); a.className = "btn tiny"; a.href = `/api/statement/file?v=${vq}&i=${i}`; a.target = "_blank"; a.rel = "noopener"; a.textContent = `Statement ${(r.files.length > 1 ? i + 1 + " " : "")}↗`; a.title = String(f).split("/").pop(); links.appendChild(a); });
+    if (r.excel) { const a = document.createElement("a"); a.className = "btn tiny"; a.href = `/api/statement/file?v=${vq}&which=excel`; a.textContent = "Excel ↓"; a.title = "The vendor's reconciliation workbook (the filed evidence)"; a.setAttribute("download", ""); links.appendChild(a); }
+    if (r.notion_url) { const a = document.createElement("a"); a.className = "btn tiny"; a.href = r.notion_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Notion ↗"; a.title = "The clerk's page on the Vendor Statements board - to-dos, notes, Re-check"; links.appendChild(a); }
+    { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = "Process"; b.title = "Where this sits in the company's processes: Vendor statement reconciliation"; b.onclick = () => openProcessRow("statement reconciliation"); links.appendChild(b); }
+    leg.appendChild(links); }
+  const all = [...lines, ...unread];
+  for (const [key, lbl] of STMT_BUCKETS) {
+    const rows = all.filter(x => (x.bucket || "other") === key); if (!rows.length) continue;
+    const g = document.createElement("div"); g.className = "stmt-group"; g.dataset.b = key;
+    const open = _stmtOpen.has(key) ? _stmtOpen.get(key) : STMT_OPEN_BY_DEFAULT.has(key);
+    const gh = document.createElement("div"); gh.className = "stmt-ghead"; gh.title = open ? "Click to collapse" : "Click to expand";
+    const sw = document.createElement("span"); sw.className = "stmt-sw"; sw.style.background = rgb[key]; gh.appendChild(sw);
+    const t = document.createElement("span"); t.textContent = lbl; gh.appendChild(t);
+    const n = document.createElement("span"); n.className = "n"; n.textContent = String(rows.length); gh.appendChild(n);
+    const sum = document.createElement("span"); sum.className = "sum"; const tot = rows.reduce((a, x) => a + (num(x.amount) || 0), 0); sum.textContent = key === "unread" ? "" : moneyC(tot); gh.appendChild(sum);
+    const list = document.createElement("div"); list.className = "stmt-lines"; list.hidden = !open;
+    gh.onclick = () => { list.hidden = !list.hidden; _stmtOpen.set(key, !list.hidden); gh.title = list.hidden ? "Click to expand" : "Click to collapse"; };
+    for (const ln of rows) {
+      const row = document.createElement("div"); row.className = "stmt-line" + (ln.page == null ? " nopage" : ""); row.dataset.k = ln.k;
+      row.title = (ln.page != null ? "Click: find it on the statement" : "Not on any page (" + (key === "unlisted" ? "QuickBooks only" : "read, not located") + ")") + " · ⌘-click: where it is in the process";
+      const a = document.createElement("span"); const b = document.createElement("b"); b.textContent = ln.ref || (key === "other" ? "balance / payment" : "(no ref)"); a.appendChild(b);
+      if (ln.date) { const dt = document.createElement("span"); dt.className = "dim"; dt.textContent = " · " + fmtDateShort(ln.date); a.appendChild(dt); }
+      row.appendChild(a);
+      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = ln.amount != null ? moneyC(ln.amount) : ""; row.appendChild(amt);
+      const sub = []; if (ln.job) sub.push(ln.job); if (key === "mismatch" && ln.qbo_amount != null) sub.push(`QBO ${moneyC(ln.qbo_amount)}`); if (ln.note) sub.push("“" + ln.note + "”");
+      if (sub.length) { const s2 = document.createElement("span"); s2.className = "sub"; s2.textContent = sub.join(" · "); s2.title = sub.join(" · "); row.appendChild(s2); }
+      row.onclick = (e) => { if (e.metaKey || e.ctrlKey) return _stmtWhere(ln, r, d.vendor); _stmtFocus(ln.k, host, "page"); };
+      list.appendChild(row);
+    }
+    g.appendChild(gh); g.appendChild(list); leg.appendChild(g);
+  }
+  if ((r.not_found || []).length) { const g = document.createElement("div"); g.className = "stmt-group"; const gh = document.createElement("div"); gh.className = "stmt-ghead";
+    const sw = document.createElement("span"); sw.className = "stmt-sw"; sw.style.background = "transparent"; sw.style.border = "1px dashed var(--text-dim)"; gh.appendChild(sw);
+    const t = document.createElement("span"); t.textContent = "Read, not found on the page"; gh.appendChild(t); const n = document.createElement("span"); n.className = "n"; n.textContent = String(r.not_found.length); gh.appendChild(n); gh.appendChild(document.createElement("span"));
+    const list = document.createElement("div"); list.className = "stmt-lines"; for (const t2 of r.not_found) { const row = document.createElement("div"); row.className = "stmt-line nopage"; const s = document.createElement("span"); s.textContent = t2; row.appendChild(s); list.appendChild(row); }
+    gh.onclick = () => { list.hidden = !list.hidden; }; g.appendChild(gh); g.appendChild(list); leg.appendChild(g); }
+  host.appendChild(pg); host.appendChild(leg);
+}
+// a click finds the SAME line on the other side: the legend row scrolls the page to its band and flashes it; a band scrolls the legend to its row
+function _stmtFocus(k, host, where) {
+  host.querySelectorAll(".stmt-band.on, .stmt-line.on").forEach(x => x.classList.remove("on"));
+  const band = host.querySelector(`.stmt-band[data-k="${k}"]`), row = host.querySelector(`.stmt-line[data-k="${k}"]`);
+  if (row) { row.classList.add("on"); const list = row.closest(".stmt-lines"); if (list && list.hidden) { list.hidden = false; } }
+  if (band) { band.classList.add("on"); band.classList.remove("flash"); void band.offsetWidth; band.classList.add("flash"); }
+  const target = where === "page" ? band : row;
+  if (target) target.scrollIntoView({ block: "center", behavior: "smooth" });
+  else if (where === "page") toast("This line is not on any page of the statement");
+}
+// ⌘ / Ctrl-click: where the line is in the process. A bill QuickBooks has -> the bill viewer (its lines, pay status, approval,
+// the scan); a bill to enter / a row to read by hand -> the clerk's Notion page (her to-do list), else the statement itself.
+function _stmtWhere(ln, r, vendor) {
+  if (ln.bill_id) return openBillViewer([{ type: "Bill", id: String(ln.bill_id), n: 0, title: `${vendor} · bill ${ln.ref || ln.qbo_ref || ln.bill_id}` }], 0);
+  if (r.notion_url) return window.open(r.notion_url, "_blank", "noopener");
+  if ((r.files || []).length) return window.open(`/api/statement/file?v=${encodeURIComponent(vendor)}&i=0`, "_blank", "noopener");
+  openProcessRow("statement reconciliation");
+}
+// Company -> Processes, scrolled to the row that names the process (plain words, no registry codes)
+async function openProcessRow(text) {
+  closeRecord(); setTab("processes");
+  const want = String(text || "").toLowerCase();
+  for (let i = 0; i < 40; i++) {
+    const hit = [...document.querySelectorAll('[data-tab="processes"] table tbody tr')].find(tr => tr.textContent.toLowerCase().includes(want));
+    if (hit) { hit.scrollIntoView({ block: "center" }); hit.classList.remove("flash-row"); void hit.offsetWidth; hit.classList.add("flash-row"); return; }
+    await new Promise(res => setTimeout(res, 100));
+  }
+}
+
+// ── The office server monitor (owner 2026-10-09, the day the Synology went live: "make sure we can monitor action") ──
+// /api/server = server-status.json + writer.json judged by ledger/server_status.py: ok · late · down · failing ·
+// standing down · off. Shown in the gear (every job: last run, result, took, last good, its output when it failed),
+// in the Data status pop-up, and on the top pill, which turns red when the server is down or a job failed.
+let SERVER = null;
+async function loadServer() {
+  try { SERVER = await (await fetch("/api/server")).json(); } catch { SERVER = null; }
+  renderServerBox(); renderSyncPill();
+}
+const SRV_WORD = { ok: "Running", late: "Late", down: "Down", failing: "Failing", "standing down": "Standing down", off: "Off" };
+function _srvCls(h) { return { ok: "ok", late: "late", down: "down", failing: "failing", "standing down": "standing" }[h] || "none"; }
+function renderServerBox() {
+  const box = $("#serverBox"); if (!box) return; box.innerHTML = "";
+  const s = SERVER;
+  if (!s || !s.present) { const p = document.createElement("div"); p.className = "srv-meta"; p.textContent = (s && s.reason) || "No word from the office server (is the Accounting share mounted?)"; box.appendChild(p); return; }
+  const head = document.createElement("div"); head.className = "srv-head";
+  const dot = document.createElement("span"); dot.className = "srv-dot " + _srvCls(s.health); head.appendChild(dot);
+  const w = document.createElement("span"); w.className = "srv-word"; w.textContent = SRV_WORD[s.health] || s.health; head.appendChild(w);
+  const why = document.createElement("span"); why.className = "srv-meta"; why.textContent = s.reason || ""; head.appendChild(why);
+  box.appendChild(head);
+  const meta = document.createElement("div"); meta.className = "srv-meta";
+  meta.textContent = [s.host ? `host ${s.host}` : "", s.mode ? `mode ${s.mode}` : "", `writer: ${s.writer || "none"}`, s.written ? `last word ${fmtDate(s.written, true)} (${timeAgo(s.written)})` : ""].filter(Boolean).join(" · ");
+  box.appendChild(meta);
+  const t = document.createElement("table"); t.className = "srv-table";
+  t.innerHTML = "<thead><tr><th>Job</th><th>Last run</th><th>Result</th><th>Took</th><th>Last good</th></tr></thead>"; const tb = document.createElement("tbody");
+  for (const j of s.jobs || []) {
+    const tr = document.createElement("tr");
+    const c1 = document.createElement("td"); c1.textContent = j.label || j.job; tr.appendChild(c1);
+    const c2 = document.createElement("td"); c2.textContent = j.last_run ? `${fmtDate(j.last_run, true)} (${timeAgo(j.last_run)})` : "never"; tr.appendChild(c2);
+    const c3 = document.createElement("td");
+    if (j.skipped && j.job === "apar") { c3.textContent = "skipped - " + String(j.skipped).split(" ", 1).concat([String(j.skipped).slice(String(j.skipped).indexOf(" ") + 1)])[1]; c3.className = "warn"; }
+    else if (j.ok === true) { c3.textContent = "ok"; c3.className = "good"; }
+    else if (j.ok === false) { c3.textContent = `FAILED exit ${j.exit}`; c3.className = "bad"; }
+    else c3.textContent = "–";
+    tr.appendChild(c3);
+    const c4 = document.createElement("td"); c4.textContent = j.seconds != null ? `${j.seconds}s` : "–"; tr.appendChild(c4);
+    const c5 = document.createElement("td"); c5.textContent = j.last_ok ? `${fmtDate(j.last_ok, true)} (${timeAgo(j.last_ok)})` : "never"; tr.appendChild(c5);
+    tb.appendChild(tr);
+    if (j.ok === false && (j.tail || []).length) { const tr2 = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 5;
+      const det = document.createElement("details"); const sm = document.createElement("summary"); sm.textContent = "What it said"; det.appendChild(sm);
+      const pre = document.createElement("div"); pre.className = "srv-tail"; pre.textContent = j.tail.join("\n"); det.appendChild(pre); td.appendChild(det); tr2.appendChild(td); tb.appendChild(tr2); }
+  }
+  t.appendChild(tb); box.appendChild(t);
+  const foot = document.createElement("div"); foot.className = "set-actions";
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "Check now"; b.onclick = () => { b.disabled = true; loadServer().finally(() => { b.disabled = false; }); }; foot.appendChild(b);
+  box.appendChild(foot);
+}
+
 // Vendor payments view: the QBO BillPayments (money out) this year, from the local bill_payment table.
 // + the bill payment STUB (owner 2026-09-22): "Print stub" per payment -> the PDF in the vendor's folder on the
 // Accounting share, one file per payment; a column picker (QBO's six on by default); and the print HISTORY -
@@ -3232,6 +3459,7 @@ function renderPayList() {
     const gtd = document.createElement("td"); gtd.colSpan = cols.length;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v;
+    key.appendChild(stmtBubble(v, true));   // reconciled as of - before the check goes out (owner 2026-10-09)
     cell.appendChild(key);
     bandMetrics(cell, [[list.length, "bills"], [moneyC(sub), "total"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
@@ -3380,7 +3608,7 @@ function renderPayQbo() {
   for (const v of d.vendors) {
     const gtr = document.createElement("tr"); gtr.className = "bill-group pq-band"; const gtd = document.createElement("td"); gtd.colSpan = 6;
     const cell = document.createElement("div"); cell.className = "bg-cell";
-    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; cell.appendChild(key);
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; key.appendChild(stmtBubble(v.vendor, true)); cell.appendChild(key);   // the statement standing beside the vendor being paid (owner 2026-10-09)
     bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqNet(v)), "payment"]]);
     const rf = document.createElement("span"); rf.className = "pq-ref";
     if (PQ.method === "print") { rf.textContent = "check # when printed"; rf.classList.add("dim"); }
@@ -10376,6 +10604,8 @@ function init() {
   setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
+  setInterval(() => { loadServer(); loadStatements(); }, 90000);   // the office server monitor + the statement standings (reads of two small files on the share)
+  loadServer(); loadStatements();
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

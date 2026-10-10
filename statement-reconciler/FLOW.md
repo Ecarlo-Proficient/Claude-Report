@@ -1,6 +1,6 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/09/2026 (later) - the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
+Last changed: 10/09/2026 (night) - **the ledger's record copy**: after the Notion publish, every live run writes `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` -> `shared/statement_record`); status / standing / Notion URL as the board wrote them, every line with its bucket and where its band sits on which page (`statement_markup.Result.bands` / `.unread`), the clerk's note, the QBO bill; an unreadable run only turns the status. The ledger's Vendor Center shows it (bubble, Statement view, pay run). `INBOX_ROOT` now comes from `statement_record.root()` (one place for the SharePoint move). Earlier the same day: the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
 Earlier 10/09: statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
 Earlier 10/08 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
 Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
@@ -40,6 +40,7 @@ flowchart LR
     HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
     HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
     PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
+    LREC[("&lt;Vendor&gt;/.statement-record.json + .marked/ PNGs<br/>the ledger's record copy (shared/statement_record):<br/>standing · every line + its band on the page · the clerk's note")]:::out
     TEAMS[("Teams<br/>1 digest: vendors not ready to pay")]:::out
     PRINT[("terminal: the plan per vendor<br/>+ what would be filed + board preview")]:::out
 
@@ -58,6 +59,9 @@ flowchart LR
     PREV -- no --> XLSX
     PREV -- no --> HIST
     PREV -- no --> NB --> PAGE
+    NB -- "status + standing + page url" --> LREC
+    MARK -- "bands: where each line sits" --> LREC
+    LREC -. "Vendor Center bubble · Statement view · pay run" .-> LEDGER[("the Project Ledger")]:::out
     NB --> TEAMS
     RECHECK{"Notion 'Re-check' ticked?<br/>run_recheck.sh every 5 min<br/>(silent when locked / nothing ticked)"}:::gate
     PAGE -. "clerk ticks Re-check · types notes under bills" .-> RECHECK

@@ -4,6 +4,29 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/09/2026 (night) · **Vendor statements in the ledger + the office server monitor** (owner: "record copy of vendor
+  statements ... notion style bubble ... put it in the vendor center ... the highlighted ones with the legend side
+  floating as you scroll ... cmd/ctrl clicked takes you to the process of where it's at"; "now that we have the live,
+  make sure we can monitor action"). The reconciler's record (`shared/statement_record`) is read, never a statement:
+  `/api/statements` (every standing, 60 s cache), `/api/statement?v=` (one vendor in full), `/api/statement/page|file`
+  (the path comes from the record and must sit under the vendor's folder). UI: `stmtBubble` - the Notion colours (All
+  entered green · Not entered red · Unreadable purple · No statement grey · no folder / share off dashed) - as a
+  **Statement** column in the Vendor Center, on the vendor page bar, and inside every vendor band on the pay run and the
+  Pay in QuickBooks step ("reconciled as of" before a check goes out); click = the vendor page's new third view
+  **Statement**: the marked pages on the left (every band a click target), the legend sticky on the right (standing, as
+  of / checked, statement due, "N of M lines found on the pages · K to check by hand", Statement / Excel / Notion /
+  Process links, then one group per bucket with count + $, problems open by default); a click finds the same line on
+  the other side and flashes its band; ⌘ / Ctrl-click = where it is in the process (a bill QuickBooks has -> the bill
+  viewer; a bill to enter / a row to read by hand -> the clerk's Notion page; else the statement; the Process button
+  -> Company -> Processes scrolled to the reconciliation row). Vendor names meet on a letters + digits key
+  (`stmtKey` = `statement_record.key`). **Office server monitor**: `server_status.py` (`/api/server`) judges
+  server-status.json + writer.json as ok · late (20 min quiet) · down (60) · failing (a job's latest exit != 0) ·
+  standing down (live but the writer file is not "server" / AP-AR skipped) · off; the gear's new "Office server" box
+  lists every job (last run, result, took, last good, its output when it failed) with Check now; the Data status
+  pop-up's Office server block leads with the judgement; the top pill turns red with "server down / failing" (amber
+  for late / standing down); refreshed every 90 s. Tests: `tests/test_server_status.py`. Checked in the preview on a
+  stand-in share (two vendor records with marked pages, a failing AP run): desktop, dark, phone width (edge check
+  clean), the pay-run band, the gear and the pop-up.
 - 10/08/2026 · **Data status: the office server.** `_freshness` reads `Accounting/_automation/server-status.json`: the
   last GOOD run of the server's mirror, Bill Tracker and Invoice sync (a failed latest run shows no time, so the dot goes
   grey) + `server_mode`; the Data status pop-up gains an "Office server" block, "(test - practice copies)" in test mode,
@@ -2821,7 +2844,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   uses. Writes Excel only; the ledger is untouched. `pnl` alone and any
   unknown `pnl-<x>` resolve to zero steps and are rejected by `_sync_start`.
 
-## OPEN ISSUES / NOTES
+## OPEN ISSUES
+- 10/09/2026 · **The Notion "Re-check" poller runs nowhere.** `statement-reconciler/run_recheck.sh` is a Mac launchd job
+  that is not loaded (no scheduled jobs on the owner's Mac, 10/08), and the office server image does not carry the
+  reconciler (it needs tesseract + poppler and the Notion / QBO keys). Until it moves to the server's scheduler, a
+  ticked Re-check box does nothing and the ledger's record only refreshes when someone runs `statement-reconcile`. / NOTES
 - MFD rows come from `Test-Master`, which has **no STATUS column** → MFD `status` loads as NULL
   (MFD closures are manual anyway). RP/CP status comes from their own tabs.
 - `wip_snapshot` stores the master's already-computed figures verbatim (source of truth = the

@@ -81,6 +81,13 @@ class Result:
     located: int = 0
     total: int = 0
     source: str = ""
+    # where each band sits, for the ledger's Statement view (shared/statement_record, 10/09/2026):
+    #   bands  [{line: index into `lines`, page, top, bottom, bucket}]  (image pixels)
+    #   unread [{page, top, bottom, text}]  the red-outlined rows, with their place
+    #   lines  the statement lines mark() was given, in order (so a band's index resolves)
+    bands: List[dict] = field(default_factory=list)
+    unread: List[dict] = field(default_factory=list)
+    lines: list = field(default_factory=list)
 
 
 # ─────────────────────────── words ───────────────────────────
@@ -364,7 +371,7 @@ def mark(pages: List[Page], lines: list, bucket_of: Callable[[object], str],
     got no band. `skipped` = rows the parser left out on purpose (another
     customer's) - greyed, not flagged. Returns the marked images and the misses."""
     from PIL import Image, ImageDraw
-    res = Result(total=len(lines), source=",".join(sorted({p.source for p in pages})))
+    res = Result(total=len(lines), source=",".join(sorted({p.source for p in pages})), lines=list(lines))
     skipped = skipped or []
     where = locate(pages, list(lines) + list(skipped))
     copies = dict(_EXTRA)
@@ -380,7 +387,10 @@ def mark(pages: List[Page], lines: list, bucket_of: Callable[[object], str],
             continue
         key = bucket_of(ln)
         for pos in [w] + copies.get(i, []):
-            bands.setdefault(pos[0], []).append((pages[pos[0]].rows[pos[1]], key))
+            row = pages[pos[0]].rows[pos[1]]
+            bands.setdefault(pos[0], []).append((row, key))
+            res.bands.append({"line": i, "page": pos[0], "top": round(row.top - 3, 1),
+                              "bottom": round(row.bottom + 3, 1), "bucket": key})
         res.counts[key] = res.counts.get(key, 0) + 1
         res.located += 1
     for pi, pg in enumerate(pages):
@@ -404,6 +414,8 @@ def mark(pages: List[Page], lines: list, bucket_of: Callable[[object], str],
                 continue
             dr.rectangle([4, row.top - 4, W - 4, row.bottom + 4], outline=MISSED_RGB + (255,), width=4)
             res.unread_rows.append(f"page {pi + 1}: {row.text[:90]}")
+            res.unread.append({"page": pi, "top": round(row.top - 4, 1), "bottom": round(row.bottom + 4, 1),
+                               "text": row.text[:120]})
         res.pages.append(Image.alpha_composite(img.convert("RGBA"), over).convert("RGB"))
     return res
 
