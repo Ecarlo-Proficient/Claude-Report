@@ -14,6 +14,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   months of the bills on the screen - every other filter applied, the date filter itself not (`_payMonthsShown`,
   `_payFilterPass(b, skipDate)`), rebuilt on each render. Open bills = 13 months (a paid bill's Dec 2026 gone); one
   vendor picked = just its Aug + Sep 2026; "In this pay run" with nothing on it = no months.
+- 10/12/2026 · **Select all at the top of Pay bills' Pay column** (owner: "need a select all as well on the pay bills
+  screen"). A master checkbox in the Pay header (`input.pay-all`): one tick puts every payable bill on the screen on
+  the run (`paySelectAllShown`), a second tick takes every shown bill off it (NEW `payDeselectAllShown`); half-ticked
+  when only some are on; the ticks are a draft until Save. The "Select all shown" button stays. Verified: one vendor's
+  4 bills on / 3 after one row off (half-tick) / 0 after the untick, no draft left; all 805 open bills on and off.
 - 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
   stand" - "in the same statement Excel, not a mix"). `/api/revisions` reads every vendor's statement record
   (`revised` rows the reconciler writes from each workbook's Revised Bills sheet, 60 s cache) and judges each row

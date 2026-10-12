@@ -3583,6 +3583,14 @@ function renderPayBills() {
   const htr = document.createElement("tr");
   cols.forEach((c, i) => { const th = document.createElement("th");
     if (![0, 4, 5].includes(i)) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  // Select all at the top of the Pay column (owner 2026-10-12: "need a select all as well"): one tick puts every
+  // payable bill on the screen on the run, a second tick takes them all off; half-ticked when only some are on.
+  { const payable = rows.filter(b => num(b.open_balance) > 0);
+    const all = document.createElement("input"); all.type = "checkbox"; all.className = "pay-all"; all.title = "Tick every bill shown - tick again to clear them";
+    all.checked = payable.length > 0 && payable.every(b => payState(b).selected);
+    all.indeterminate = !all.checked && payable.some(b => payState(b).selected);
+    all.onchange = () => { if (all.checked) paySelectAllShown(); else payDeselectAllShown(); };
+    htr.firstChild.textContent = ""; htr.firstChild.style.textAlign = "center"; htr.firstChild.appendChild(all); }
   thead.appendChild(htr);
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
@@ -3720,8 +3728,13 @@ async function clearPayRun() {
   } catch (e) { toast("Clear failed: " + e.message); }
 }
 function paySelectAllShown() {
-  const rows = _payMarkable().filter(_payFilterPass).filter(b => num(b.open_balance) > 0);
+  const rows = _payMarkable().filter(b => _payFilterPass(b)).filter(b => num(b.open_balance) > 0);
   for (const b of rows) { const cur = payState(b); if (!cur.selected) payDraft.set(b.bill_id, { selected: true, amount: cur.amount }); }
+  renderPayBills();
+}
+function payDeselectAllShown() {   // the header tick's second click: every bill on the screen off the run (unsaved - Save to keep)
+  const rows = _payMarkable().filter(b => _payFilterPass(b));
+  for (const b of rows) if (payState(b).selected) payDraft.set(b.bill_id, { selected: false, amount: null });
   renderPayBills();
 }
 function exportPayList() {
