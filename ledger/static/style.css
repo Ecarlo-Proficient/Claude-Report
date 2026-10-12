@@ -1463,6 +1463,14 @@ main small, main .k-sub, main .k-label { font-size: max(.8em, 12px); }
 .pp-tab:hover { border-color: var(--text-dim); }
 .pp-tab.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 700; }
 .pp-tabs-hint { margin-left: auto; font-size: .82em; }
+/* the vendor band on the project page: its total under Amount, the counts as words beside it (money adds in one column) */
+table.grid tr.pp-vendor td.pp-band-amt { font-weight: 700; }
+table.grid tr.pp-vendor td.pp-band-words { white-space: nowrap; }
+.pp-fx[hidden] { display: none; }
+.pp-fx-x { margin-left: auto; }
+/* a little box glows while the wheel is scrolling inside it */
+.table-scroll, .msel-menu, .panel-body, .np-box { transition: outline-color .25s, box-shadow .25s; outline: 2px solid transparent; outline-offset: -2px; }
+.scroll-in { outline-color: color-mix(in srgb, var(--accent) 55%, transparent) !important; box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 8px color-mix(in srgb, var(--accent) 12%, transparent) !important; border-radius: 6px; }
 /* the draw picker: one bar you click and choose (owner 2026-10-11) */
 .pp-draw-pick { font: inherit; font-size: .95em; font-weight: 600; padding: 7px 34px 7px 12px; min-width: 300px; max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface-2); color: var(--text); cursor: pointer; appearance: none; -webkit-appearance: none;
@@ -2202,6 +2210,16 @@ tr.dt-group.dt-recent .bg-key { color: var(--accent-text); }
 .rs-val.neg { color: var(--neg-text); }
 .rs-sub { color: var(--text-dim); font-size: .82em; }
 .record-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; max-width: 620px; padding-top: 2px; }
+/* little space (owner 2026-10-11: "broken when viewed in little space"): title on its own line, the tools and the stats
+   under it from the left edge, nothing side by side */
+.record-title { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .record-head { gap: 8px 10px; }
+  .record-head-txt { flex: 1 1 100%; order: 2; }
+  .record-tools { margin-left: 0; max-width: none; justify-content: flex-start; flex-basis: 100%; order: 3; }
+  .record-stats { margin-left: 0; gap: 4px 16px; order: 4; }
+  .rv-project .record-title { font-size: 1.25em; }
+}
 .record-tools .rt-group { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; margin-left: 4px; border-left: 1px solid var(--border); }
 .record-tools .rt-lab { color: var(--text-dim); font-size: .82em; }
 .record-tools .rt-stamp { color: var(--text-dim); font-size: .78em; white-space: nowrap; }
@@ -2575,3 +2593,12 @@ td.stmt-cell { white-space: nowrap; }
 .iv-lines th:nth-child(3), .iv-lines td:nth-child(3) { width: 38px; }
 .iv-lines th:nth-child(4), .iv-lines td:nth-child(4), .iv-lines th:nth-child(5), .iv-lines td:nth-child(5) { width: 23%; }
 .iv-lines tbody td { white-space: normal; } .iv-lines tbody td:last-child { white-space: nowrap; }
+
+/* little space (owner 2026-10-11: "broken when viewed in little space"): the project head is a grid (back · title ·
+   tools / stats) and its rule sits late in this file, so the narrow form must come after it - title beside Back, the
+   tools under it from the left, the stats under those */
+@media (max-width: 760px) {
+  .rv-project .record-head { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "back txt" "tools tools" "stats stats"; row-gap: 8px; }
+  .rv-project .record-tools { grid-area: tools; justify-content: flex-start; margin-left: 0; max-width: none; }
+  .rv-project .record-stats { grid-area: stats; margin-left: 0; }
+}

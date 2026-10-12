@@ -313,6 +313,16 @@ function buildSubTabs(g, active) {
     for (const [label, tabs] of g.cats) { const c = document.createElement("span"); c.className = "subcat"; c.textContent = label; bar.appendChild(c); tabs.forEach(add); }
   } else g.tabs.forEach(add);
 }
+// A small box that scrolls inside the page (a capped table, a menu, a list) glows softly while the wheel is scrolling
+// IT, so it is clear the page is not moving (owner 2026-10-11: "when scrolling in little menus make the menu outline
+// subtle glow to show the scroll is scrolling inside that box until you are out"). The glow drops half a second after
+// the last scroll - which is also when the box reached its end and the page took over.
+document.addEventListener("scroll", (e) => {
+  const el = e.target; if (!(el instanceof Element) || el === document.documentElement || el === document.body) return;
+  if (el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1) return;
+  if (el.clientHeight > 560) return;                      // a page-sized panel is not a little box
+  el.classList.add("scroll-in"); clearTimeout(el._glow); el._glow = setTimeout(() => el.classList.remove("scroll-in"), 500);
+}, true);
 let activeTab = "projects";
 function setTab(t) {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;   // an unsaved pay run on the project page: Save or Discard first
@@ -5036,13 +5046,14 @@ function _ppScrollDetail() { /* the page stays put when a draw is picked (owner 
 // of it = the actuals (billed gross, costs, gross profit, margin, overhead, net, net margin). Net = gross billed -
 // costs - overhead. A click on a worked-out cell shows its formula in the fx bar above, like Excel.
 function _ppFx(label, formula, value) { _pp.fx = { label, formula, value }; const bar = $("#ppFx"); if (bar) _ppPaintFx(bar); }
-function _ppPaintFx(bar) {
-  const f = _pp.fx; bar.innerHTML = "";
+function _ppPaintFx(bar) {   // shown only once a worked-out cell is clicked; idle it is nothing (owner 2026-10-11: "what is this?")
+  const f = _pp.fx; bar.innerHTML = ""; bar.hidden = !f; if (!f) return;
   const tag = document.createElement("span"); tag.className = "pp-fx-tag"; tag.textContent = "fx"; bar.appendChild(tag);
-  if (!f) { const s = document.createElement("span"); s.className = "dim"; s.textContent = "Click Overhead, Gross profit, Margin, Net or Net margin to see how it is worked out"; bar.appendChild(s); return; }
   const l = document.createElement("span"); l.className = "pp-fx-lab"; l.textContent = f.label; bar.appendChild(l);
   const fm = document.createElement("code"); fm.className = "pp-fx-f"; fm.textContent = f.formula; bar.appendChild(fm);
   const v = document.createElement("b"); v.className = "pp-fx-v"; v.textContent = "= " + f.value; bar.appendChild(v);
+  const x = document.createElement("button"); x.type = "button"; x.className = "btn tiny subtle pp-fx-x"; x.textContent = "×"; x.title = "Hide";
+  x.onclick = (e) => { e.stopPropagation(); _pp.fx = null; _ppPaintFx(bar); for (const c of $$("td.pp-fx-on")) c.classList.remove("pp-fx-on"); }; bar.appendChild(x);
 }
 // The Draw overview shows at most 5 draws (owner 2026-09-30: "max of 5, with scroll wheel and adequate space to
 // scroll"): the box is cut to the header + 5 rows + the total, the rest scrolls; the scroll position survives a redraw.
@@ -5307,16 +5318,6 @@ function _ppBillsTable(cur) {
         const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); }; }
     sr.appendChild(td); tbody.appendChild(sr);
     sr.classList.add("pp-sect-" + sect);                 // 6: a hue per section (Materials / Labor)
-    if (!flat) {   // 5: the metric labels ONCE, over the vendor rows (owner 2026-09-30: not a caption under every number)
-      const hr = document.createElement("tr"); hr.className = "pp-colhead pp-in-" + sect;
-      if (pay) hr.appendChild(document.createElement("td"));
-      const htd = document.createElement("td"); htd.className = "left"; htd.colSpan = COLS - (pay ? 1 : 0);
-      const labs = ["Total", "Bills", showDraw ? "Draws" : null, "Paid", "To pay"].filter(Boolean);
-      const cell = document.createElement("div"); cell.className = "bg-cell bg-grid"; cell.style.setProperty("--nm", String(labs.length));
-      cell.appendChild(Object.assign(document.createElement("span"), { className: "bg-left", textContent: _pp.sort === "code" ? "Cost code" : "Vendor" }));
-      for (const l of labs) { const m = document.createElement("span"); m.className = "bg-m"; const sm = document.createElement("small"); sm.textContent = l; m.appendChild(sm); cell.appendChild(m); }
-      htd.appendChild(cell); hr.appendChild(htd); tbody.appendChild(hr);
-    }
   };
   const totalRow = (label, xs, grand) => {   // Materials total / Labor total / Total - amount under Amount, what is still to pay beside it, like a real sheet
     const bills = xs.map(x => x.b), paidCt = bills.filter(b => b.paid).length;
@@ -5338,12 +5339,17 @@ function _ppBillsTable(cur) {
       const bills = list.map(x => x.b), paidCt = bills.filter(b => b.paid).length, tot = totOf(list), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor pp-in-" + sect; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
       if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, v)); gtr.appendChild(cbTd); }
-      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - (pay ? 1 : 0);
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
-      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
+      // money adds in ONE column (owner 2026-10-11: "rule: make money add to the same column"): the band's total sits
+      // under Amount, exactly where the bills under it put theirs; the counts are words to its right, not more columns
+      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = iAmt - (pay ? 1 : 0);
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; vt.appendChild(caret); vt.appendChild(k); gtr.appendChild(vt);
+      const at = document.createElement("td"); at.className = "ip-amt pp-band-amt"; at.textContent = moneyC(tot); gtr.appendChild(at);
       const nDraws = new Set(list.map(x => x.dr.matched_invoice)).size;
-      bandMetrics(cell, [[moneyC(tot), "total"], [list.length, "bills"], showDraw ? [nDraws, nDraws === 1 ? "draw" : "draws"] : null, [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? moneyC(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
-      vt.appendChild(cell); gtr.appendChild(vt);
+      const rt2 = document.createElement("td"); rt2.className = "left pp-band-words"; rt2.colSpan = COLS - iAmt - 1;
+      rt2.innerHTML = `<span class="dim">${list.length} bill${list.length === 1 ? "" : "s"}${showDraw ? ` · ${nDraws} draw${nDraws === 1 ? "" : "s"}` : ""} · </span>`
+        + `<span class="${paidCt === list.length ? "ip-paid ok" : "dim"}">${paidCt}/${list.length} paid${paidCt === list.length ? " ✓" : ""}</span>`
+        + (owed > 0.005 ? ` <span class="dim">·</span> <span class="pp-topay">${_ge(moneyC(owed))} to pay</span>` : "");
+      gtr.appendChild(rt2);
       gtr.onclick = (e) => { if (e.target.closest("input")) return;
         if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const x2 of _ppAllRows(cur ? [cur] : d.draws)) _pp.openV.add(`${cur ? cur.matched_invoice : "all"}|${x2.isSub ? "labor" : "materials"}|${_pp.sort}|${keyOf(x2)}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); };

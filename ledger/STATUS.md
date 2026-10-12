@@ -14,6 +14,23 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
   Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
   2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
+- 10/11/2026 (night, latest) · **Four owner rules on the project page.** (1) **Money adds in one column** (owner:
+  "rule: make money add to the same column" - a vendor band's total sat in its own grid column, right of the bill
+  amounts it sums): the band row is now real cells - the name across to Amount, the total UNDER Amount
+  (`pp-band-amt`, the same cell the bills and the Materials / Labor totals use), the counts as words beside it ("3
+  bills · 2 draws · 3/3 paid ✓ · $x to pay"); the metric-label row over the vendors went with the grid it labelled.
+  (2) **A little box glows while the wheel scrolls it** (owner: "when scrolling in little menus make the menu outline
+  subtle glow to show the scroll is scrolling inside that box until you are out"): one document-level scroll listener
+  (capture) adds `.scroll-in` to any element that scrolls inside the page and is under 560px tall - the capped Draw
+  overview, menus, lists - and drops it half a second after the last scroll (= when the box hit its end and the page
+  took over); an accent outline + soft shadow, transitioned. (3) **The fx bar shows only on a click** (owner, on
+  "Click Overhead, Gross profit, Margin, Net or Net margin to see how it is worked out": "what is this?" - an idle
+  instruction sentence, against his no-instruction-text rule): `_ppPaintFx` hides the bar until a worked-out cell is
+  clicked, then shows the formula with an × to hide it. (4) **The project head in little space** (owner: "broken when
+  viewed in little space" - the title one letter per line beside the tools): at ≤760px the head's grid stacks - Back
+  beside the title, the tools under it from the left, the stats under those - and the title can break anywhere.
+  Checked in the preview: band total and bill amounts share the same right edge (636px), fx hidden until clicked,
+  the glow class on the capped table, the phone-width head stacked with the edge check clean.
 - 10/11/2026 (night, later) · **One draw picker instead of the chip grid** (owner, on the wrapped rows of draw chips:
   "instead of this disorder what do you think is best? ... a single choice bar that you click and choose"). `_ppTabs`
   is now one `<select class="pp-draw-pick">`: All draws, No draw yet, then every draw newest first by its NAME alone
