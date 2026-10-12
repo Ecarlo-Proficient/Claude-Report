@@ -1938,6 +1938,15 @@ table.grid td.qa-val .qa-now { color: var(--warn-text); font-weight: 600; }
 table.grid tr.qa-detail td { border-top: 0; padding-top: 0; white-space: normal; font-size: .86em; color: var(--text-dim); line-height: 1.45; }
 table.grid tr.qa-detail td > div { overflow-wrap: anywhere; }
 table.grid tr:has(+ tr.qa-detail) td { border-bottom: 0; }
+/* an invoice's story under its Audit row (created · history · payments · the tracker page), 2026-10-11 */
+.qa-histlink { margin-left: 8px; font-size: .9em; color: var(--accent-text); }
+table.grid tr.qa-hist td { color: var(--text); font-size: .88em; padding-bottom: 10px; }
+.qh-body { border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); padding: 4px 0 4px 12px; max-width: 980px; }
+.qh-head { font-weight: 600; }
+.qh-sub { margin-top: 8px; font-weight: 600; }
+.qh-line { margin-left: 10px; padding: 1px 0; color: var(--text); }
+.qh-line.qh-detail { margin-left: 24px; color: var(--text-dim); }
+.qh-np { margin: 6px 0 0 10px; }
 .qa-knock { font-size: .8em; color: var(--neg-text); margin-top: 2px; }
 /* the fix under a row = a white card on the grey band (owner 2026-09-25: "grey everywhere, it blends, there's no
    distinction"). The inner table must not inherit the grid's sticky white header - reset it here. */

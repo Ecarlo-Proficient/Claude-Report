@@ -274,7 +274,12 @@ on the network). What it shows:
   deleted** (deleted or voided; *deleted open invoice* = money was still owed) · **Company · Other changes** (lists,
   journal entries, deposits, transfers). The window has an **All** stop (since the log began, 09/23/2026). QuickBooks'
   API never says who - the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged
-  as the owner); split into categories 2026-10-11.
+  as the owner); split into categories 2026-10-11. Every **Invoice** row carries a **story** link (open unasked on
+  Invoices deleted): `/api/qboaudit/invoice?id=` - created in QuickBooks, every logged change oldest first with what
+  moved, the payments applied (deleted or not), on file / deleted with QuickBooks' own time, and the Notion Invoice
+  Tracker (the ledger's row - status, lien, quick status, dates - then the page body + comments; when the tracker row
+  is gone the page comes from the `invoice_notion_ref` register, which `load_invoices` fills before every tracker
+  replace and never prunes, so a deleted invoice's archived page still opens and says so).
 - **Uncleared checks** (Audit · AP) - every check QuickBooks still shows as uncleared (not matched = not deposited),
   from QBO's TransactionList `cleared=Uncleared` filter via `ledger/load_uncleared_checks.py`; each bank account's
   matched-through date; accounts never matched to a bank feed (Joint Checks) kept apart. `/api/uncleared`.

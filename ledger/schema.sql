@@ -127,6 +127,19 @@ CREATE TABLE IF NOT EXISTS billing_event (
 );
 
 
+-- ── invoice_notion_ref : QBO invoice id → its Invoice Tracker page, kept for good (2026-10-11) ──
+-- billing_event's tracker rows are replaced on every load, and invoice-sync archives the Notion page
+-- of an invoice QuickBooks deleted - so the Audit page could never find the page of exactly the
+-- invoice it asks about. This register only grows: every tracker page ever seen, by QBO invoice id.
+CREATE TABLE IF NOT EXISTS invoice_notion_ref (
+    qbo_txn_id      TEXT PRIMARY KEY,
+    doc_number      TEXT,
+    notion_url      TEXT NOT NULL,
+    first_seen      TEXT NOT NULL,
+    last_seen       TEXT NOT NULL
+);
+
+
 -- ── project_customer : project # → its CLIENT (the GC), from the QBO hierarchy ──
 -- Every project is a QBO sub-customer whose name carries the project #, nested under the
 -- GC (Customer:Project). Reversing that gives project → client for EVERY project, not just

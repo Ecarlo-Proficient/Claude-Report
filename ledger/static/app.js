@@ -5534,7 +5534,10 @@ function invNotionSection(body, url, bodyOnly) {
   const draw = (d) => {
     box.innerHTML = "";
     if (!d || !d.ok) { box.textContent = "Could not load the page" + (d && d.error ? ": " + d.error : "") + "."; box.classList.add("dim"); return; }
-    const meta = document.createElement("div"); meta.className = "np-meta"; meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}`; box.appendChild(meta);
+    const meta = document.createElement("div"); meta.className = "np-meta";
+    meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}` + (d.created ? ` · page made ${fmtDate(d.created.replace(" ", "T"), true)}` : "");
+    if (d.archived) { const s = document.createElement("span"); s.className = "st st-bad"; s.style.marginLeft = "8px"; s.textContent = "archived in Notion (in the trash)"; meta.appendChild(s); }
+    box.appendChild(meta);
     const props = bodyOnly ? [] : (d.properties || []).filter(p => p.value !== "" && p.value != null && p.type !== "title");
     if (props.length) {
       const pl = document.createElement("div"); pl.className = "np-props";
@@ -9309,6 +9312,60 @@ function qaMoved(b, a, what) {
   td.append(o, " → ", n); td.title = `${what} changed: ${(b || []).join(", ") || "(none)"} → ${(a || []).join(", ") || "(none)"}`;
   return td;
 }
+// ── An invoice's story under its row (owner 2026-10-11: "the history of invoices and the creation date ... with notion
+// invoice tracker data"): /api/qboaudit/invoice = created in QuickBooks, every logged change oldest first with what moved,
+// the payments applied, on file / deleted, and the Invoice Tracker (the ledger's row, else the page kept in the register
+// - an archived page still opens). Open on click on Invoices changed; open for every row on Invoices deleted.
+const _qaHist = {}, qaHistOpen = new Set();
+function qaHistInto(body, d) {
+  body.innerHTML = "";
+  if (!d || !d.ok) { body.textContent = "Could not read the invoice" + (d && d.error ? ": " + d.error : "") + "."; body.classList.add("dim"); return; }
+  const inv = d.invoice || {}, line = (cls, text) => { const el = document.createElement("div"); el.className = cls; el.textContent = text; body.appendChild(el); return el; };
+  const when = v => v ? fmtDate(v, true) : "–";
+  const head = line("qh-head", `Created in QuickBooks ${when(inv.created)} · last changed ${when(inv.last_updated)}`);
+  { const s = document.createElement("span"); s.className = "st " + (inv.deleted ? "st-bad" : "st-dim"); s.style.marginLeft = "8px";
+    s.textContent = inv.deleted ? `deleted in QuickBooks ${when(inv.deleted_at)}` : "on file"; head.appendChild(s); }
+  line("qh-line", `#${inv.doc_number || "–"} · ${inv.customer || "–"}${inv.project ? " · " + inv.project : ""} · dated ${inv.txn_date ? fmtDateShort(inv.txn_date) : "–"}` +
+    (inv.due_date ? ` · due ${fmtDateShort(inv.due_date)}` : "") + ` · total ${inv.total == null ? "–" : moneyC(inv.total)} · open ${inv.balance == null ? "–" : moneyC(inv.balance)}` + (inv.memo ? ` · ${inv.memo}` : ""));
+  const hist = d.history || [];
+  line("qh-sub", `History on record (${hist.length})` + (inv.logged_since_birth ? "" : " · the log began 09/23/2026, before that only QuickBooks' own audit log has it"));
+  if (!hist.length) line("qh-line dim", "No change logged on this invoice since the log began.");
+  for (const h of hist) {
+    const what = (h.flags && h.flags.length ? h.flags.join(", ") : h.kind);
+    const money = h.kind === "edited" && h.total_before != null && h.total_after != null && Math.abs(h.total_before - h.total_after) > 0.005 ? ` · total ${moneyC(h.total_before)} → ${moneyC(h.total_after)}` : "";
+    line("qh-line", `${when(h.changed_at)} · ${what}${money}`);
+    for (const t of (h.detail || []).slice(0, 8)) line("qh-line qh-detail", t.replace(/ -> /g, " → "));
+    if ((h.detail || []).length > 8) line("qh-line qh-detail dim", `…and ${h.detail.length - 8} more`);
+  }
+  const pays = d.payments || [];
+  line("qh-sub", `Payments applied (${pays.length})`);
+  if (!pays.length) line("qh-line dim", "No payment applied to this invoice.");
+  for (const p of pays) {
+    const el = line("qh-line", `${p.date ? fmtDateShort(p.date) : "–"} · ${p.applied == null ? "–" : moneyC(p.applied)} of a ${p.total == null ? "–" : moneyC(p.total)} payment${p.ref ? " · ref " + p.ref : ""}`);
+    if (p.deleted) { const s = document.createElement("span"); s.className = "st st-bad"; s.style.marginLeft = "8px"; s.textContent = `payment deleted ${when(p.deleted_at)}`; el.appendChild(s); }
+  }
+  const n = d.notion;
+  line("qh-sub", "Notion Invoice Tracker");
+  if (!n) { line("qh-line dim", "Not on the Invoice Tracker - never synced, or paid and aged out of it."); return; }
+  if (n.source === "ledger") {
+    const bits = [["Status", n.status], ["Lien", n.lien_status ? n.lien_status + (n.lien_notice ? " · " + n.lien_notice : "") : null], ["Quick status", n.note],
+      ["Paid", n.paid_date ? fmtDateShort(n.paid_date) : null], ["Last action", n.last_action_date ? fmtDateShort(n.last_action_date) : null],
+      ["Next follow-up", n.next_followup ? fmtDateShort(n.next_followup) : null], ["Aging", n.aging_bucket], ["Litigation", n.litigation ? "yes" : null]].filter(b => b[1]);
+    line("qh-line", bits.map(b => `${b[0]}: ${b[1]}`).join(" · ") || "on the tracker");
+  } else line("qh-line", `The tracker row is gone from the ledger (the sync archives a deleted invoice's page) - the page it had, last seen ${when(n.last_seen)}:`);
+  if (n.url) { const el = line("qh-line", ""); const a = document.createElement("a"); a.href = n.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "open the tracker page ↗"; el.appendChild(a);
+    const np = document.createElement("div"); np.className = "qh-np"; body.appendChild(np); invNotionSection(np, n.url, n.source === "ledger"); }
+}
+function qaHistRow(c, colSpan) {
+  const tr = document.createElement("tr"); tr.className = "qa-detail qa-hist"; tr.dataset.hist = c.rec_id;
+  tr.appendChild(document.createElement("td"));
+  const td = document.createElement("td"); td.className = "left"; td.colSpan = colSpan - 1;
+  const body = document.createElement("div"); body.className = "qh-body"; body.textContent = "Reading the invoice…"; td.appendChild(body); tr.appendChild(td);
+  const draw = d => qaHistInto(body, d);
+  if (_qaHist[c.rec_id]) draw(_qaHist[c.rec_id]);
+  else fetch("/api/qboaudit/invoice?id=" + encodeURIComponent(c.rec_id)).then(r => r.json()).then(d => { if (d && d.ok) _qaHist[c.rec_id] = d; draw(d); }).catch(e => draw({ ok: false, error: String(e) }));
+  return tr;
+}
 function renderQboAudit() {
   const note = $("#qaNote"), stats = $("#qaStats"), filt = $("#qaFilters"), table = $("#qaTable"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
@@ -9394,7 +9451,13 @@ function renderQboAudit() {
     if (what !== null) for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCellC(v)); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = moneyC(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
-      s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
+      s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s);
+      if (!child && c.entity === "Invoice") {   // the invoice's story: created, every change, payments, the tracker page (2026-10-11)
+        const a = document.createElement("a"); a.href = "#"; a.className = "qa-histlink"; a.textContent = qaHistOpen.has(c.rec_id) ? "hide story" : "story";
+        a.title = "When it was created, every change on record, the payments on it and its Notion Invoice Tracker page";
+        a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (qaHistOpen.has(c.rec_id)) qaHistOpen.delete(c.rec_id); else qaHistOpen.add(c.rec_id); const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y); };
+        td.appendChild(a); }
+      tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left qa-okcell";   // the owner's review: OK = seen, fine, off the list next run
       if (!child && c.ok_at) {
         const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = `OK'd ${fmtDateShort(c.ok_at)}`; td.appendChild(s);
@@ -9424,6 +9487,7 @@ function renderQboAudit() {
     for (const c of gr) {
       frag.appendChild(qaRow(c, false));
       { const d = qaDetail(c, false); if (d) frag.appendChild(d); }
+      if (c.entity === "Invoice" && (sk === "qboardel" || qaHistOpen.has(c.rec_id))) frag.appendChild(qaHistRow(c, cols.length));   // every deleted invoice tells its story unasked
       for (const k of kids[c.id] || []) { frag.appendChild(qaRow(k, true)); const d = qaDetail(k, true); if (d) frag.appendChild(d); }
     }
   }

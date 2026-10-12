@@ -1791,6 +1791,98 @@ def _fetch_qbo_changes(days: int = 30, db_path=None) -> dict:
     return out
 
 
+def _invoice_history(rec_id: str, db_path=None, mcon=None) -> dict:
+    """Audit > AR: one invoice's whole story (owner 2026-10-11: "the history of invoices and the creation date
+    ... with notion invoice tracker data"). From the mirror: when QuickBooks created it (MetaData.CreateTime), the
+    copy as held (the last copy, for a deleted one), every change the log holds oldest first with what moved
+    (the same explainer as the page), the payments applied to it and whether each is still on file. From the
+    ledger: the Invoice Tracker row (status, lien, the collections note and dates, the page) - or, when the row is
+    gone (the sync archives a deleted invoice's page and the loader replaces the rows), the page url kept in
+    invoice_notion_ref so the archived page is still reachable. Read-only on both."""
+    from shared import qbo_mirror as mirror
+    rec_id = str(rec_id or "").strip()
+    out = {"ok": False, "id": rec_id, "invoice": None, "history": [], "payments": [], "notion": None}
+    if not rec_id:
+        out["error"] = "no invoice id"
+        return out
+    own = mcon is None
+    try:
+        con = mcon or mirror.connect()
+    except Exception as e:                       # noqa: BLE001
+        out["error"] = f"mirror unavailable: {e}"
+        return out
+    try:
+        row = con.execute(f"SELECT created, last_updated, deleted, deleted_at FROM {mirror.table('Invoice')} WHERE id=?",
+                          (rec_id,)).fetchone()
+        rec = mirror.get("Invoice", rec_id, con)
+        rows = [r for r in mirror.changes(con, entity="Invoice", limit=200000) if str(r["rec_id"]) == rec_id]
+        if not rec and rows:                     # gone before the mirror held it: the before copy of its newest change
+            rec = mirror.change_before(con, rows[0]["id"]) or {}
+        if not rec:
+            out["error"] = "the mirror has no copy of this invoice"
+            return out
+        _explain_changes(con, rows)
+        hist = [{k: r.get(k) for k in ("id", "kind", "changed_at", "flags", "detail", "total_before", "total_after",
+                                       "balance_before", "balance_after", "doc_number")} for r in reversed(rows)]
+        md, cust = rec.get("MetaData") or {}, rec.get("CustomerRef") or {}
+        jobs = mirror.jobs_of(rec)
+        out["invoice"] = {
+            "id": rec_id, "doc_number": rec.get("DocNumber"), "customer": cust.get("name") or "", "customer_id": cust.get("value"),
+            "project": jobs[0] if jobs else "", "txn_date": rec.get("TxnDate"), "due_date": rec.get("DueDate"),
+            "total": mirror._num(rec.get("TotalAmt")), "balance": mirror._num(rec.get("Balance")), "memo": rec.get("PrivateNote") or "",
+            "created": (row[0] if row else None) or md.get("CreateTime"), "last_updated": (row[1] if row else None) or md.get("LastUpdatedTime"),
+            "deleted": bool(row and row[2]),
+            # QuickBooks' own time of the deletion from the log; the mirror row only knows when the refresh noticed
+            "deleted_at": next((h["changed_at"] for h in reversed(hist) if h["kind"] == "deleted"), None) or (row[3] if row else None),
+            "logged_since_birth": any(h["kind"] == "created" for h in hist),   # the log saw it born: its history is complete
+        }
+        pays = []
+        for lt in rec.get("LinkedTxn") or []:
+            if lt.get("TxnType") != "Payment":
+                continue
+            pid = str(lt.get("TxnId"))
+            p = mirror.get("Payment", pid, con) or {}
+            prow = con.execute(f"SELECT deleted, deleted_at FROM {mirror.table('Payment')} WHERE id=?", (pid,)).fetchone()
+            applied = None
+            for ln in p.get("Line") or []:
+                if any(str(x.get("TxnId")) == rec_id and x.get("TxnType") == "Invoice" for x in ln.get("LinkedTxn") or []):
+                    applied = (applied or 0.0) + (mirror._num(ln.get("Amount")) or 0.0)
+            pays.append({"id": pid, "date": p.get("TxnDate"), "total": mirror._num(p.get("TotalAmt")), "applied": applied,
+                         "ref": str(p.get("PaymentRefNum") or ""), "deleted": bool(prow and prow[0]), "deleted_at": (prow[1] if prow else None)})
+        out["payments"] = sorted(pays, key=lambda x: x["date"] or "")
+        out["history"] = hist
+    finally:
+        if own:
+            con.close()
+    if db_path:
+        try:
+            lcon = _connect(db_path)
+        except sqlite3.Error:
+            lcon = None
+        if lcon is not None:
+            try:
+                try:
+                    r = lcon.execute("SELECT doc_number, status, lien_status, lien_notice, note, paid_date, last_action_date, next_followup, "
+                                     "notion_url, notion_edited, aging_bucket, litigation, customer, project_no FROM billing_event "
+                                     "WHERE qbo_txn_id=? AND source='invoice_tracker'", (rec_id,)).fetchone()
+                except sqlite3.Error:
+                    r = None
+                if r:
+                    out["notion"] = {**{k: r[k] for k in r.keys()}, "url": r["notion_url"], "source": "ledger"}
+                else:
+                    try:
+                        g = lcon.execute("SELECT notion_url, doc_number, first_seen, last_seen FROM invoice_notion_ref WHERE qbo_txn_id=?",
+                                         (rec_id,)).fetchone()
+                    except sqlite3.Error:
+                        g = None
+                    if g:
+                        out["notion"] = {"url": g[0], "doc_number": g[1], "first_seen": g[2], "last_seen": g[3], "source": "register"}
+            finally:
+                lcon.close()
+    out["ok"] = True
+    return out
+
+
 def _fetch_accounting_audits() -> dict:   # cached per workbook mtime - the project page reads it per request (2026-09-08)
     bt = paths.bill_tracker_xlsx()
     try:
@@ -3701,6 +3793,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_qbo_changes(int(self._query().get("days") or 30), self.db_path))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
+        elif path == "/api/qboaudit/invoice":   # Audit > AR: one invoice's story - created, every logged change, payments, the Invoice Tracker page
+            try:
+                self._json(_invoice_history(self._query().get("id") or "", self.db_path))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": f"invoice history failed: {e}"})
         elif path == "/api/uncleared":     # Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24)
             con = _connect(self.db_path)
             try:

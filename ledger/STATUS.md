@@ -14,6 +14,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
   Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
   2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
+- 10/11/2026 (later) · **An invoice's story under its Audit row** (owner: "add ... if the invoices were deleted with
+  notion invoice tracker data and more so the history of invoices and the creation date"). `/api/qboaudit/invoice?id=`
+  (`_invoice_history`): from the mirror - created in QuickBooks (`MetaData.CreateTime`, the mirror's `created`), the
+  copy as held (a deleted invoice keeps its last copy), every logged change oldest first through the same explainer as
+  the page (what moved, old -> new), the payments applied (each one's date, amount on this invoice, ref #, deleted or
+  not), on file / deleted with QuickBooks' own deletion time; from the ledger - the Invoice Tracker row (status, lien,
+  quick status, paid / last action / next follow-up, aging, litigation, the page) or, when the row is gone, the page url
+  from the NEW register **`invoice_notion_ref`** (schema.sql; `load_invoices.remember_pages` fills it before every
+  tracker replace, seeds itself from the rows already loaded, only grows - the sync archives a deleted invoice's Notion
+  page and the loader replaces the rows, so without it a deleted invoice's page was unreachable; seeded on the live
+  ledger with 465 pages). `notion_page.render` now carries the page's own `created` time and `archived` (in Notion's
+  trash). UI: a **story** link on every Invoice row's Record cell (Invoices changed / deleted / any page showing one)
+  opens `qaHistRow` under the row - created · last changed · on file or deleted, the invoice line, History on record
+  (with "the log began 09/23/2026" when the log did not see it born), Payments applied, Notion Invoice Tracker (the
+  ledger fields, "open the tracker page", then the page body + comments via `invNotionSection`; a register-only page
+  shows every property and the archived badge); on **Invoices deleted** every row opens its story unasked. Tests:
+  `tests/test_invoice_history.py` (edited then deleted invoice, register fallback, the register only grows). Checked
+  in the preview on a live invoice (CP582 draw 4: created 05/20, re-totalled 10/08, the collections log from Notion).
 - 10/11/2026 · **Audit view in categories** (owner: "the audit into an audit and then to categories, AP, AR, etc. I need
   the checks QuickBooks changed first for AP and invoices changed after saved ... are the invoices getting deleted as
   well. That's something we never checked"). `NAV_GROUPS` gains **Audit** between Customers and Company; its sub-tab row
