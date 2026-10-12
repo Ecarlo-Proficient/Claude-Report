@@ -4705,7 +4705,7 @@ function _ppHeader(pn, r0, d, p) {
   const stats = $("#recordStats"), tools = $("#recordTools"); if (!stats || !tools) return;
   const contract = num(p.contract || r0.total_contract_price), etc = num(r0.estimated_total_costs), billed = num(p.billed_gross), cost = num(p.cost);
   const owes = (d.draws || []).reduce((s0, x) => s0 + num(x.ar_open), 0);
-  const items = [["Contract", money(contract), ""], ["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],
+  const items = [["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],   // no Contract figure up here (owner 2026-10-11: "remove the contract amounts on the top")
     ["Costs", money(cost), etc ? `${Math.round(cost / etc * 100)}% of ETC` : ""],
     ["Net profit", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}%` : "", num(p.net) < 0 ? "neg" : ""],
     ["Owed to us", money(owes), ""]];
@@ -4728,6 +4728,22 @@ function _ppHeader(pn, r0, d, p) {
   const qurl = qboCustomerUrl(cid); if (qurl) btn("QuickBooks ↗", "The project in QuickBooks", null, qurl);
   tools.hidden = false;   // buildPnlGroup adds Job folder (first) and the P&L workbook group (last)
 }
+// An (i) in a cell's top-right corner that opens a small note on click (owner 2026-10-11: "put that info on a i circle
+// top right of cell that you click and see that"). lines = [text | {text, cls}]; one open at a time, any click
+// elsewhere closes it. Reuse for any cell whose detail should not be a row of its own.
+function cellInfo(td, lines, title) {
+  const ls = (lines || []).filter(Boolean); if (!ls.length) return;
+  td.classList.add("has-i");
+  const b = document.createElement("button"); b.type = "button"; b.className = "cell-i"; b.textContent = "ⓘ"; b.title = title || "More on this figure"; b.setAttribute("aria-expanded", "false");
+  const pop = document.createElement("div"); pop.className = "cell-pop"; pop.hidden = true;
+  for (const l of ls) { const d = document.createElement("div"); d.className = "cell-pop-l" + (l.cls ? " " + l.cls : ""); d.textContent = l.text || l; pop.appendChild(d); }
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const open = pop.hidden; for (const o of $$(".cell-pop:not([hidden])")) { o.hidden = true; const ob = o.previousElementSibling; if (ob) { ob.classList.remove("on"); ob.setAttribute("aria-expanded", "false"); } }
+    pop.hidden = !open; b.classList.toggle("on", open); b.setAttribute("aria-expanded", String(open)); };
+  pop.onclick = (e) => e.stopPropagation();
+  td.appendChild(b); td.appendChild(pop);
+}
+if (!window.__cellPopClose) { window.__cellPopClose = true;
+  document.addEventListener("click", () => { for (const o of $$(".cell-pop:not([hidden])")) { o.hidden = true; const ob = o.previousElementSibling; if (ob) { ob.classList.remove("on"); ob.setAttribute("aria-expanded", "false"); } } }); }
 // What we projected (the WIP master: contract, ETC) next to what actually happened (QuickBooks: billed, costs), row by
 // row, the big numbers first (owner 2026-09-16: "remove the big blocks ... make the numbers that are important jump
 // out like billed to date, costs to date, put what we projected and what the actual are side by side").
@@ -4752,7 +4768,8 @@ function _ppProjectedVsActual(p, r0, pn) {
     const tr = document.createElement("tr"); if (opts.cls) tr.className = opts.cls;
     const l = document.createElement("td"); l.className = "left pp-pva-lab"; l.textContent = label; if (opts.sub) l.title = opts.sub; tr.appendChild(l);   // one line a row: the note is the hover (owner 2026-09-23)
     const a = document.createElement("td"); a.className = "right pp-pva-proj"; a.textContent = proj == null ? "" : proj; tr.appendChild(a);
-    const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); } tr.appendChild(b);
+    const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); }
+    if (opts.info) cellInfo(b, opts.info, opts.infoTitle); tr.appendChild(b);
     // the difference as Excel would show it (owner 2026-09-30: "the graphs under it do not help"): the $ (actual -
     // projected) and the % in their own columns, then a few plain words - no bars
     const dv = document.createElement("td"), dp = document.createElement("td"), dn = document.createElement("td");
@@ -4766,10 +4783,16 @@ function _ppProjectedVsActual(p, r0, pn) {
     tr.appendChild(dv); tr.appendChild(dp); tr.appendChild(dn); tb.appendChild(tr);
   };
   const left = contract - billedG;
+  // Retained, net billed and the WIP report's figure sit behind an (i) on the gross billed cell, so ETC · Costs to date
+  // reads right under the billing it compares to (owner 2026-10-11: "make the etc costs to date below the gross to
+  // compare instead of having that gap of retained and net billed ... even the wip report warning")
   row("Contract · Gross billed", money(contract), money(billedG), { v: billedG - contract, base: contract, good: 0, word: left > 0.5 ? `${money(left)} left to bill` : (left < -0.5 ? `billed ${money(-left)} past the contract` : "fully billed") },
-      { sub: "gross billed = every QuickBooks invoice before retainage" + (r0.approved_cos ? ` · contract incl. COs ${money(r0.approved_cos)}` : ""), actSub: billedNote });
-  row("Retained", null, "(" + money(ret) + ")", null, { sub: "retainage the GC is holding - billed, not yet collected" });
-  row("Net billed", null, money(netB), p.billed_gap ? { word: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null, { sub: "gross billed - retained = what the GC pays now" });
+      { sub: "gross billed = every QuickBooks invoice before retainage" + (r0.approved_cos ? ` · contract incl. COs ${money(r0.approved_cos)}` : ""),
+        infoTitle: "Retained · net billed · the WIP report",
+        info: [`Retained (${money(ret)}) - retainage the GC is holding: billed, not yet collected`,
+               `Net billed ${money(netB)} - gross billed less retained, what the GC pays now`,
+               billedNote ? `${billedNote} - the WIP report's gross billed; the invoices run past it` : null,
+               p.billed_gap ? { text: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null] });
   const over = cost - etc;
   row("ETC · Costs to date", money(etc), money(cost), etc ? { v: over, base: etc, good: -1, word: (over > 0.5 ? "Over budget" : "Under budget") + ` - ${(cost / etc * 100).toFixed(0)}% of ETC spent` } : null);
   row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-sub", sub: "projected: contract - ETC · actual: gross billed - costs" });   // a rule above + bold: the subtotal (owner 2026-10-11)

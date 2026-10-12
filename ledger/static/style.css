@@ -2092,6 +2092,15 @@ button.help-i { border: 0; background: none; padding: 0 2px; margin-left: 6px; f
   color: var(--text-dim); cursor: pointer; line-height: 1; vertical-align: 0; }
 button.help-i:hover, button.help-i.on { color: var(--accent); }
 p.help-pop { margin-top: 0; }
+/* an (i) in a cell's corner with a note that opens on click (2026-10-11) */
+td.has-i { position: relative; padding-right: 22px !important; }
+.cell-i { position: absolute; top: 3px; right: 4px; border: 0; background: none; padding: 0; font: inherit; font-size: .78em; font-weight: 400; line-height: 1; color: var(--text-dim); cursor: pointer; }
+.cell-i:hover, .cell-i.on { color: var(--accent); }
+.cell-pop { position: absolute; right: 0; top: calc(100% - 2px); z-index: 30; min-width: 280px; max-width: 420px; padding: 8px 12px; text-align: left; font-weight: 400; font-size: .9em; white-space: normal;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.16); }
+.cell-pop[hidden] { display: none; }
+.cell-pop-l { padding: 2px 0; }
+.cell-pop-l.warn { color: var(--neg-text); font-weight: 600; }
 /* a panel heading never crushes its controls (2026-09-24 visual QC: "90 days" was cut off, buttons broke in two) -
    the controls stay one line each and drop under the title when the row is too narrow */
 .widget-head { flex-wrap: wrap; gap: 6px 12px; }

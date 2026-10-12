@@ -14,6 +14,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
   Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
   2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
+- 10/11/2026 (night, last) · **Project P&L: ETC right under gross billed; retained / net billed / the WIP warning
+  behind an (i)** (owner: "remove the contract amounts on the top. on the P&L make the etc costs to date below the
+  gross to compare instead of having that gap of retained and net billed. put that info on a i circle top right of
+  cell that you click and see that. even the wip report warning"). The head line drops Contract (Billed · Costs · Net
+  profit · Owed to us stay). `_ppProjectedVsActual` rows are now Contract · Gross billed → ETC · Costs to date → Gross
+  profit → Overhead → Net profit; the Retained and Net billed rows are gone, their figures, the WIP report's gross
+  billed and the "WIP report shows $x more - Resync" warning sit behind an ⓘ in the top-right of the gross billed
+  Actual cell. NEW reusable `cellInfo(td, lines, title)` (`.cell-i` + `.cell-pop`): an (i) in a cell's corner that
+  opens a small note on click, one open at a time, any click elsewhere closes it - reuse for any cell whose detail
+  should not be a row. Checked in the preview on MFD325 (rows, head, the note's four lines incl. the warning).
 - 10/11/2026 (night, latest) · **Four owner rules on the project page.** (1) **Money adds in one column** (owner:
   "rule: make money add to the same column" - a vendor band's total sat in its own grid column, right of the bill
   amounts it sums): the band row is now real cells - the name across to Amount, the total UNDER Amount
