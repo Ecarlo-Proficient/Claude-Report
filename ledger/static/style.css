@@ -2618,4 +2618,4 @@ td.stmt-cell { white-space: nowrap; }
 .rev-pill { cursor: default; }
 tr.rev-flagged td.rev-flags { color: var(--neg-text); font-weight: 600; }
 td.rev-late { color: var(--warn-text); font-weight: 600; }
-#revTable td { white-space: nowrap; } #revTable td.inv-memo, #revTable td.rev-flags { white-space: normal; max-width: 320px; }
+#revTable td { white-space: nowrap; } #revTable td.inv-memo, #revTable td.rev-flags { white-space: normal; min-width: 240px; max-width: 360px; }

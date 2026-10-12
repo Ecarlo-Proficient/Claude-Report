@@ -2972,9 +2972,10 @@ async function openProcessRow(text) {
 
 // ── Revised bills: the AP-13 follow-up as a process (owner 2026-10-12: "did the clerk send the bill to get revised? when?
 // have they responded? with the new revised bill? is the new revised bill uploaded to qbo?"). bill-tracker/revised_bills.py
-// keeps one Notion row per PM-revised bill (the QuickBooks copy + the statement records: original vs revised total, what the
-// vendor's statement says, the pickles flagged); the clerk sets the Stage and the four dates on Notion; the ledger reads the
-// board (/api/revisions) and says where each one stands and for how long.
+// keeps one row per PM-revised bill on the Bill Tracker's Revised Bills sheet (the QuickBooks copy + the statement records:
+// original vs revised total, what the vendor's statement says, the pickles flagged); the clerk types the Stage and the four
+// dates in the Excel (owner 2026-10-12: "it's only the Excel"); the ledger reads the sheet (/api/revisions) and says where each
+// one stands and for how long.
 let REV = null;
 const REV_STAGE_CLS = { "To send": "bad", "Sent to vendor": "warn", "Vendor replied": "warn", "Revised bill received": "info", "Entered in QBO": "ok", "Done - statement agrees": "ok", "Dropped": "none" };
 function revPill(stage) { const s = document.createElement("span"); s.className = "stmt-pill rev-pill " + (REV_STAGE_CLS[stage] || "dim"); const d = document.createElement("span"); d.className = "stmt-dot"; s.appendChild(d); s.appendChild(document.createTextNode(stage || "–")); return s; }
@@ -2988,13 +2989,12 @@ async function loadRevised(force) {
 }
 let _revStage = "open";   // open (default) | all | a stage name
 function renderRevised() {
-  const table = $("#revTable"), note = $("#revNote"), chips = $("#revChips"), board = $("#revBoard"); if (!table) return;
+  const table = $("#revTable"), note = $("#revNote"), chips = $("#revChips"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody"); thead.innerHTML = ""; tbody.innerHTML = ""; chips.innerHTML = "";
-  if (!REV || !REV.ok) { if (note) note.textContent = ""; tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((REV && REV.error) || "could not read the board")}</td></tr>`; if (board) board.hidden = true; return; }
-  if (board && REV.board_url) { board.href = REV.board_url; board.hidden = false; }
+  if (!REV || !REV.ok) { if (note) note.textContent = ""; tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((REV && REV.error) || "could not read the Revised Bills sheet")}</td></tr>`; return; }
   const all = REV.rows || [];
   const openRows = all.filter(r => !r.standing.final);
-  if (note) note.textContent = `(${openRows.length} open · ${all.length} on the board · read ${REV.read_at ? fmtDate(REV.read_at, true) : "–"})`;
+  if (note) note.textContent = `(${openRows.length} open · ${all.length} on the sheet · Bill Tracker written ${REV.read_at ? fmtDate(REV.read_at, true) : "–"})`;
   const stages = ["To send", "Sent to vendor", "Vendor replied", "Revised bill received", "Entered in QBO", "Done - statement agrees", "Dropped"];
   const chip = (key, label, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (_revStage === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`; b.onclick = () => { _revStage = key; renderRevised(); }; chips.appendChild(b); };
   chip("open", "Open", openRows.length); chip("flagged", "Flagged", all.filter(r => r.flag_list.length).length);
@@ -3002,32 +3002,32 @@ function renderRevised() {
   chip("all", "All", all.length);
   let rows = _revStage === "open" ? openRows : _revStage === "all" ? all : _revStage === "flagged" ? all.filter(r => r.flag_list.length) : all.filter(r => (r.stage || "To send") === _revStage);
   const cols = [["Vendor", "left"], ["Bill #", "left"], ["Date", "left"], ["Project", "left"], ["PM's reason", "left"], ["Vendor billed", "right"], ["QBO now", "right"], ["Open", "right"],
-                ["Stage", "left"], ["Where it stands", "left"], ["Sent", "left"], ["Replied", "left"], ["Received", "left"], ["Entered", "left"], ["Statement says", "left"], ["Flags", "left"], ["Notion", "left"]];
+                ["Stage", "left"], ["Where it stands", "left"], ["Sent", "left"], ["Replied", "left"], ["Received", "left"], ["Entered", "left"], ["Statement says", "left"], ["Flags", "left"], ["Notes", "left"]];
   const htr = document.createElement("tr"); for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
   if (!rows.length) { tbody.innerHTML = `<tr><td class="left" colspan="${cols.length}" style="padding:14px;color:var(--text-dim)">Nothing here.</td></tr>`; return; }
   for (const r of rows) {
     const tr = document.createElement("tr"); if (r.flag_list.length) tr.classList.add("rev-flagged");
     { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); openVendorPage(r.vendor); }; td.appendChild(a); tr.appendChild(td); }
-    tr.appendChild(qboLinkCell(r.bill || "–", r.qbo_bill || (r.key ? qboUrl("bill", r.key) : ""), "Open this bill in QuickBooks"));
+    tr.appendChild(qboLinkCell(r.bill || "–", r.key ? qboUrl("bill", r.key) : "", "Open this bill in QuickBooks"));
     tr.appendChild(leftText(fmtDateShort(r.bill_date)));
     tr.appendChild(_vpProjCell(r.project ? [r.project] : []));
     { const td = leftText(r.pm_reason || "–"); td.title = r.pm_reason || ""; td.className += " inv-memo"; tr.appendChild(td); }
-    { const td = document.createElement("td"); if (r.vendor_original != null) td.appendChild(moneyCellC(r.vendor_original)); else td.textContent = "–"; tr.appendChild(td); }
-    { const td = document.createElement("td"); if (r.qbo_total != null) td.appendChild(moneyCellC(r.qbo_total)); else td.textContent = "–"; tr.appendChild(td); }
-    { const td = document.createElement("td"); if (r.open_balance != null) td.appendChild(moneyCellC(r.open_balance)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.vendor_billed != null) td.appendChild(moneyCellC(r.vendor_billed)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.qbo_now != null) td.appendChild(moneyCellC(r.qbo_now)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.open != null) td.appendChild(moneyCellC(r.open)); else td.textContent = "–"; tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; td.appendChild(revPill(r.stage || "To send")); tr.appendChild(td); }
     { const td = leftText(r.standing.text || ""); if (!r.standing.final && (r.standing.days || 0) > 14) td.classList.add("rev-late"); tr.appendChild(td); }
     for (const k of ["sent_on", "replied_on", "received_on", "entered_on"]) { const td = leftText(r[k] ? fmtDateShort(r[k]) : "–"); if (!r[k]) td.classList.add("dim"); tr.appendChild(td); }
     { const td = leftText(r.statement_says || "–"); td.title = r.statement_says || ""; tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left rev-flags"; td.textContent = r.flag_list.join(" · ") || "–"; if (!r.flag_list.length) td.classList.add("dim"); tr.appendChild(td); }
-    { const td = document.createElement("td"); td.className = "left"; if (r.url) { const a = document.createElement("a"); a.href = r.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "open ↗"; a.title = "The row on the Notion board - the clerk's stage, dates and notes"; td.appendChild(a); } else td.textContent = "–"; tr.appendChild(td); }
+    { const td = leftText(r.notes || "–"); td.title = r.notes || ""; if (!r.notes) td.classList.add("dim"); td.className += " inv-memo"; tr.appendChild(td); }
     tbody.appendChild(tr);
   }
 }
 // the revised-bill standing for one bill, used by the vendor page's Statement legend (vendor + bill # folded the same way)
 function revFor(vendor, ref) {
   if (!REV || !REV.ok) return null;
-  const vk = stmtKey(vendor), rk = stmtKey(ref);
+  const vk = stmtKey(vendor), rk = stmtKey(ref);   // the sheet's Vendor + Bill # columns
   return (REV.rows || []).find(r => stmtKey(r.vendor) === vk && stmtKey(r.bill) === rk) || null;
 }
 

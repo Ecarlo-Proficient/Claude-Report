@@ -49,7 +49,7 @@ from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven, wip_audi
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
 from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
 from shared import statement_record  # the vendor statement record the reconciler writes (Vendor Center bubble + Statement view)
-from shared import revised_board      # the Notion Revised Bills board (AP-13): read-only here, /api/revisions
+from shared import revised_sheet      # the Bill Tracker's Revised Bills sheet (AP-13): read-only here, /api/revisions
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -1253,6 +1253,16 @@ def _freshness(con) -> dict:
     except (OSError, ValueError, TypeError):           # share not mounted / no server yet = no lines
         pass
     return out
+
+
+def _sheet_names(path) -> list:
+    """The workbook's sheet names without loading its cells (zip + workbook.xml)."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            return re.findall(r'<sheet [^>]*name="([^"]+)"', z.read("xl/workbook.xml").decode("utf-8", "replace"))
+    except Exception:                                      # noqa: BLE001
+        return []
 
 
 def _fetch_actions(con) -> dict:
@@ -4116,29 +4126,27 @@ class Handler(BaseHTTPRequestHandler):
     _rev_cache: dict = {"at": 0.0, "data": None}
 
     def _revisions(self, q: dict):
+        """The Revised Bills sheet of the live Bill Tracker, read as the clerk typed it (60 s cache)."""
         now = time.time()
         c = type(self)._rev_cache
         if c["data"] is None or now - c["at"] > 60 or q.get("fresh"):
-            ds = revised_board.ds_id()
-            if not ds:
-                c["data"] = {"ok": False, "error": "the Revised Bills board is not set up on this Mac (ACB_REVISED_DS_ID in machine.env)", "rows": []}
+            path = Path(paths.bill_tracker_xlsx())
+            if not path.exists():
+                c["data"] = {"ok": False, "error": "the Bill Tracker is not on disk (is the Accounting share mounted?)", "rows": []}
             else:
                 try:
-                    from shared.notion_client import NotionClient
-                    rows = revised_board.read_rows(NotionClient(), ds)
-                    today = _dt.date.today()
-                    for r in rows:
-                        r["standing"] = revised_board.standing(r, today)
-                        r["flag_list"] = [f for f in (r.get("flags") or "").split(" · ") if f]
-                    rows.sort(key=lambda r: (not r["flag_list"], r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
-                    c["data"] = {"ok": True, "rows": rows, "read_at": _dt.datetime.now().isoformat(timespec="minutes"),
-                                 "board_url": f"https://www.notion.so/{ds.replace('-', '')}"}
-                except Exception as e:                    # noqa: BLE001 - no token / board not shared = an answer
-                    msg = _scrub(str(e))
-                    if "object_not_found" in msg or " 404 " in msg:
-                        msg = ("The Revised Bills board on Notion is not connected to the Automation Integrator yet - open the board, "
-                               "its ··· menu, Connections, add Automation Integrator. Then Refresh here.")
-                    c["data"] = {"ok": False, "error": msg, "rows": []}
+                    rows = revised_sheet.read_sheet(path)
+                    if not rows and revised_sheet.SHEET not in _sheet_names(path):
+                        c["data"] = {"ok": False, "error": "the Bill Tracker has no Revised Bills sheet yet - the next AP run on the office server adds it", "rows": []}
+                    else:
+                        today = _dt.date.today()
+                        for r in rows:
+                            r["standing"] = revised_sheet.standing(r, today)
+                            r["flag_list"] = [f for f in (r.get("flags") or "").split(" · ") if f]
+                        rows.sort(key=lambda r: (not r["flag_list"], r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
+                        c["data"] = {"ok": True, "rows": rows, "read_at": _dt.datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"), "file": str(path)}
+                except Exception as e:                    # noqa: BLE001 - a locked / half-written file is an answer
+                    c["data"] = {"ok": False, "error": _scrub(str(e)), "rows": []}
             c["at"] = now
         self._json(c["data"])
 

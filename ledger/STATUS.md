@@ -5,13 +5,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 
 ## DONE / FINALIZED
 - 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
-  stand"). `/api/revisions` reads the Notion Revised Bills board (`shared/revised_board.read_rows`, 60 s cache) and
-  judges each row (`standing`: the stage, since when, "waiting on the vendor's reply - 9 days"); the page shows chips
-  per stage (Open · Flagged · each stage · All), then one row per revised bill: vendor (opens the vendor page), bill #
-  (QuickBooks), date, project, the PM's reason, vendor billed vs QBO now, open, the Stage pill, where it stands (amber
-  past 14 days), the clerk's four dates, what the statement says, the flags (red), and the Notion row. The vendor page's
-  Statement legend adds "revised bill: <stage> - <standing>" under a line that is one. Board not connected yet =
-  the page says so.
+  stand" - "it's only the Excel"). `/api/revisions` reads the live Bill Tracker's **Revised Bills** sheet
+  (`shared/revised_sheet.read_sheet`, 60 s cache, the file's write time shown) and judges each row (`standing`: the
+  stage, since when, "waiting on the vendor's reply - 9 days"); the page shows chips per stage (Open · Flagged · each
+  stage · All), then one row per revised bill: vendor (opens the vendor page), bill # (QuickBooks), date, project, the
+  PM's reason, vendor billed vs QBO now, open, the Stage pill, where it stands (amber past 14 days), the clerk's four
+  dates, what the statement says, the flags (red), her Notes. The vendor page's Statement legend adds "revised bill:
+  <stage> - <standing>" under a line that is one. No sheet yet (the office server has not run the new AP code) = the
+  page says so in one line.
 - 2026-10-11 · **Invoice viewer + Gross profit rule** (owner: "invoice # not clickable i want that to open just like
   attachment and see the invoice load from qbo ... see the line items as is so you don't have to leave the ledger";
   "Jpi mayhil ... show clearly that you are opening the popup but ... there are more invoices adding to the total";

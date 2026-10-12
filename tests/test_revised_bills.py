@@ -1,7 +1,7 @@
-"""The REVISED-bill follow-up (bill-tracker/revised_bills.py + shared/revised_board.py, 10/12/2026):
-finding revised bills in a stand-in QuickBooks copy, the vendor's original total from the change
-log, what the statement record says, the pickles flagged, and the board plan (forward-only stages,
-the clerk's columns untouched). No network, no share."""
+"""The REVISED-bill follow-up in the Bill Tracker (bill-tracker/revised_bills.py + shared/revised_sheet.py,
+10/12/2026): finding revised bills in a stand-in QuickBooks copy, the vendor's original total from the
+change log, what the statement record says, the pickles flagged, the sheet written and read back with
+the clerk's typed columns carried forward, and the stage rules (forward only). No network, no share."""
 import datetime as dt
 import json
 import sqlite3
@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "bill-tracker"))
 
 import revised_bills as rv  # noqa: E402
-from shared import qbo_mirror, revised_board as rb, statement_record as sr  # noqa: E402
+from shared import qbo_mirror, revised_sheet as rs, statement_record as sr, xlsx_verify  # noqa: E402
 
 TODAY = dt.date(2026, 10, 12)
 
@@ -78,46 +78,73 @@ def test_pickles_are_flagged(monkeypatch):
     assert found["401816"]["statement_says"] == "no statement record for this vendor"
 
 
-def test_plan_moves_stages_forward_only_and_leaves_the_clerks_columns():
-    base = {"bill_id": "1", "vendor": "V", "ref": "A", "bill_date": "2026-09-01", "project": "", "reason": "x", "total": 10.0, "original": 12.0,
+def _found(**over):
+    base = {"bill_id": "1", "vendor": "V", "ref": "A", "bill_date": "2026-09-01", "project": "RP1", "reason": "x", "total": 10.0, "original": 12.0,
             "open": 10.0, "approval": "approved", "revised_at": "2026-10-01", "amount_edits": [{"at": "2026-10-01T07:00:00-07:00", "before": 12.0, "after": 10.0}],
-            "deleted": False, "statement_says": "not on the 09/30/2026 statement", "statement_matched": None, "flags": [], "flags_text": "", "checked_at": "x"}
-    # new -> created at To send
-    p = rv.plan([base], [])
-    assert p[0]["action"] == "create" and p[0]["stage_to"] == "To send"
-    # the clerk moved it on; nothing changed -> keep
-    prior = [{"page_id": "pg", "key": "1", "stage": "Sent to vendor", "sent_on": "2026-10-03", "statement_says": base["statement_says"], "flags": "",
-              "approval": "approved", "pm_reason": "x", "qbo_total": 10.0, "open_balance": 10.0, "vendor_original": 12.0}]
-    p = rv.plan([base], prior)
-    assert p[0]["action"] == "keep" and p[0]["stage_to"] is None
+            "deleted": False, "statement_says": "not on the 09/30/2026 statement", "statement_matched": None, "flags": []}
+    return dict(base, **over)
+
+
+def test_plan_moves_stages_forward_only_and_carries_the_clerks_columns():
+    p = rv.plan([_found()], [], TODAY)
+    assert p[0]["stage"] == "To send" and p[0]["moved"] and p[0]["standing"]["text"] == "the clerk has not told the vendor yet - 11 days"
+    # the clerk typed Sent to vendor + a date and a note: carried as typed, no move
+    prior = [{"key": "1", "stage": "sent to vendor", "sent_on": "2026-10-03", "replied_on": "", "received_on": "", "entered_on": "", "notes": "called twice"}]
+    p = rv.plan([_found()], prior, TODAY)
+    assert p[0]["stage"] == "Sent to vendor" and not p[0]["moved"] and p[0]["sent_on"] == "2026-10-03" and p[0]["notes"] == "called twice"
+    assert p[0]["standing"]["text"] == "waiting on the vendor's reply - 9 days"
     # the statement now agrees -> Done, forward from Sent to vendor
-    done = dict(base, statement_matched=True, statement_says="matched at $10.00 on the 10/31/2026 statement")
-    p = rv.plan([done], prior)
-    assert p[0]["action"] == "update" and p[0]["stage_to"] == "Done - statement agrees"
+    p = rv.plan([_found(statement_matched=True, statement_says="matched at $10.00 on the 10/31/2026 statement")], prior, TODAY)
+    assert p[0]["stage"] == "Done - statement agrees" and p[0]["moved"]
     # the PM changed the amount AGAIN after she sent it -> flagged, stage untouched
-    again = dict(base, amount_edits=base["amount_edits"] + [{"at": "2026-10-08T07:00:00-07:00", "before": 10.0, "after": 9.0}], total=9.0)
-    p = rv.plan([again], prior)
-    assert p[0]["action"] == "update" and p[0]["stage_to"] is None and "amount changed again" in p[0]["row"]["flags_text"]
+    again = _found(amount_edits=[{"at": "2026-10-01T07:00:00-07:00", "before": 12.0, "after": 10.0}, {"at": "2026-10-08T07:00:00-07:00", "before": 10.0, "after": 9.0}], total=9.0)
+    p = rv.plan([again], prior, TODAY)
+    assert p[0]["stage"] == "Sent to vendor" and "amount changed again" in p[0]["flags_text"]
     # a bill gone from QuickBooks -> Dropped; a Done row never goes back
-    p = rv.plan([dict(base, deleted=True, flags=["bill gone from QuickBooks"])], prior)
-    assert p[0]["stage_to"] == "Dropped"
-    p = rv.plan([dict(base, deleted=True)], [dict(prior[0], stage="Done - statement agrees")])
-    assert p[0]["stage_to"] is None
+    assert rv.plan([_found(deleted=True, flags=["bill gone from QuickBooks"])], prior, TODAY)[0]["stage"] == "Dropped"
+    assert rv.plan([_found(deleted=True)], [dict(prior[0], stage="Done - statement agrees")], TODAY)[0]["stage"] == "Done - statement agrees"
+    # a row no longer found but still mid-process is kept as typed; a finished one is let go
+    p = rv.plan([], [dict(prior[0], vendor="V", bill="A", bill_date="2026-09-01"), {"key": "2", "stage": "Dropped", "vendor": "W", "bill": "B"}], TODAY)
+    assert [r["bill_id"] for r in p] == ["1"] and p[0]["flags_text"].startswith("not in the last 120 days")
 
 
-def test_props_never_touch_the_clerks_columns_and_parse_round_trips():
-    row = {"bill_id": "77", "vendor": "V", "ref": "A1", "project": "RP1", "reason": "why", "approval": "approved", "statement_says": "s",
-           "flags_text": "f", "total": 10.0, "original": 12.0, "open": 0.0, "bill_date": "2026-09-01", "revised_at": "2026-10-01", "checked_at": "2026-10-12T10:00"}
-    props = rb.props_auto(row)
-    assert not (set(props) & set(rb.CLERK_DATES)) and "Stage" not in props and "Notes" not in props
-    assert props["QBO bill"]["url"].endswith("txnId=77") and props["Open balance"]["number"] == 0.0 and props["Bill date"]["date"]["start"] == "2026-09-01"
-    page = {"id": "pg", "url": "https://n/pg", "last_edited_time": "2026-10-12T10:00:00.000Z", "properties": {
-        **{k: {"type": "rich_text", "rich_text": [{"plain_text": v["rich_text"][0]["text"]["content"]}]} for k, v in props.items() if "rich_text" in v},
-        "Name": {"type": "title", "title": [{"plain_text": "V · A1"}]}, "Stage": {"type": "select", "select": {"name": "Sent to vendor"}},
-        "Sent on": {"type": "date", "date": {"start": "2026-10-03"}}, "QBO total": {"type": "number", "number": 10.0}, "QBO bill": {"type": "url", "url": "https://q"}}}
-    r = rb.parse_page(page)
-    assert r["key"] == "77" and r["stage"] == "Sent to vendor" and r["sent_on"] == "2026-10-03" and r["qbo_total"] == 10.0 and r["bill"] == "A1" and r["pm_reason"] == "why"
-    st = rb.standing(r, TODAY)
-    assert st["stage"] == "Sent to vendor" and st["days"] == 9 and st["text"] == "waiting on the vendor's reply - 9 days" and not st["final"]
-    assert rb.standing({"stage": "Done - statement agrees"}, TODAY)["final"]
-    assert rb.standing({"stage": "", "revised_in_qbo": "2026-10-10"}, TODAY)["text"] == "the clerk has not told the vendor yet - 2 days"
+def test_sheet_round_trip_keeps_what_the_clerk_typed(tmp_path):
+    from openpyxl import Workbook, load_workbook
+    path = tmp_path / "Bill Tracker.xlsx"
+    wb = Workbook(); wb.active.title = "Bills"; wb.active["A1"] = "x"
+    rows = rv.plan([_found(), _found(bill_id="2", ref="B", vendor="W", flags=["paid before the vendor re-issued"], open=0.0)], [], TODAY)
+    assert rv.write_sheet(wb, rows) == 2
+    wb.save(path)
+    xlsx_verify.assert_clean(path)                    # the table ref, the dropdown, the formulas all pass Excel's rules
+    back = rs.read_sheet(path)
+    assert [r["key"] for r in back] == ["1", "2"] and back[0]["stage"] == "To send" and back[0]["vendor_billed"] == 12.0 and back[0]["qbo_now"] == 10.0
+    assert back[0]["bill_date"] == "2026-09-01" and back[0]["revised_in_qbo"] == "2026-10-01" and back[1]["flags"] == "paid before the vendor re-issued"
+    # the clerk types in Excel: a stage from the dropdown, a date, a note
+    wb2 = load_workbook(path); ws = wb2[rs.SHEET]
+    hdr = [c.value for c in ws[1]]
+    ws.cell(row=2, column=hdr.index("Stage") + 1, value="Vendor replied")
+    ws.cell(row=2, column=hdr.index("Sent on") + 1, value=dt.date(2026, 10, 3))
+    ws.cell(row=2, column=hdr.index("Replied on") + 1, value="10/09/2026")
+    ws.cell(row=2, column=hdr.index("Notes") + 1, value="they will re-issue")
+    wb2.save(path)
+    prior = rv.prior_rows(path)
+    assert prior[0]["stage"] == "Vendor replied" and prior[0]["sent_on"] == "2026-10-03" and prior[0]["replied_on"] == "2026-10-09"
+    # the next run rebuilds the sheet: her columns come back, the automation's refresh
+    rows = rv.plan([_found(statement_says="still $12.00 on the 10/31/2026 statement (QBO $10.00)", statement_matched=False)], prior, TODAY)
+    wb3 = load_workbook(path); rv.write_sheet(wb3, rows); wb3.save(path)
+    xlsx_verify.assert_clean(path)
+    back = {r["key"]: r for r in rs.read_sheet(path)}
+    assert set(back) == {"1", "2"}                    # bill 2 fell out of the scan but is mid-process: kept as typed, flagged
+    assert back["2"]["flags"].startswith("not in the last 120 days") and back["2"]["stage"] == "To send"
+    b1 = back["1"]
+    assert b1["stage"] == "Vendor replied" and b1["sent_on"] == "2026-10-03" and b1["replied_on"] == "2026-10-09"
+    assert b1["notes"] == "they will re-issue" and b1["statement_says"].startswith("still $12.00") and b1["where_it_stands"] == "waiting on the re-issued bill - 3 days"
+    # the sheet keeps its place and its dropdown
+    wb4 = load_workbook(path)
+    assert wb4.sheetnames.index(rs.SHEET) == 1 and wb4[rs.SHEET].data_validations.dataValidation[0].formula1 == f'"{rs.STAGE_LIST}"'
+
+
+def test_stage_words_match_loosely():
+    assert rs.stage_of(" sent to vendor ") == "Sent to vendor" and rs.stage_of("DONE") == "Done - statement agrees"
+    assert rs.stage_of("received") == "Revised bill received" and rs.stage_of("") == "" and rs.stage_of("whatever") == ""
+    assert rs.standing({"stage": "Done - statement agrees"}, TODAY)["final"] and len(rs.STAGE_LIST) < 255 and "," not in "".join(rs.STAGES)

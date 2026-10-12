@@ -4,22 +4,24 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
-- 10/12/2026 · **REVISED-bill follow-up as a process (AP-13)** - owner: "did the clerk send the bill to get revised?
-  when? have they responded? with the new revised bill? is the new revised bill uploaded to QBO? that's the part where
-  we can get in a pickle." NEW `revised_bills.py`: every AP run (and by hand) finds each revised bill in the QuickBooks
-  copy (`bill_rows.revised_reason` on the memo; bills created or dated in the last 120 days), the vendor's ORIGINAL
-  total and when the PM changed it (the mirror's change log, last 'amount changed' edit), the open balance, approval,
-  project, and what the vendor's latest statement says (`shared/statement_record`: matched at the revised amount /
-  still the old amount / not on it / no record), flags the pickles (another bill from the same vendor with the same #
-  or # + suffix entered after the revision · amount changed again after the clerk's Sent on · paid before re-issued ·
-  gone from QuickBooks), and upserts one row per bill on the Notion **Revised Bills** board (`shared/revised_board`,
-  keyed by the QuickBooks bill id). The automation writes its own columns; Stage + Sent / Replied / Received / Entered
-  on + Notes are the clerk's; Stage moves forward only, and by the tool only to "Done - statement agrees" or "Dropped".
-  `excel_bill_sync` calls it after the save when `ACB_REVISED_DS_ID` is set (never fails the AP run); the CLI previews
-  by default, `--write` writes. The board was created 10/12 (data source e9a65015-…); it still needs the "Automation
-  Integrator" connection before the first write (Notion: the board's ··· menu -> Connections). Dry run on this Mac:
-  17 revised bills, 11 with an original total from the change log. Tests: `tests/test_revised_bills.py`. First FLOW.md
-  for this tool in the same commit.
+- 10/12/2026 · **REVISED-bill follow-up as a process (AP-13) - in the Bill Tracker.** Owner: "did the clerk send the bill
+  to get revised? when? have they responded? with the new revised bill? is the new revised bill uploaded to QBO? that's
+  the part where we can get in a pickle" - and, the same day, "keep the process in the Excel, forget about Notion, it's
+  only the Excel". NEW `revised_bills.py` + `shared/revised_sheet.py`: every AP run rebuilds a **Revised Bills** sheet
+  (an Excel Table) inside the tracker's own save: every PM-revised bill in the QuickBooks copy (`bill_rows.revised_reason`
+  on the memo; bills created or dated in the last 120 days), the vendor's ORIGINAL total and when the PM changed it (the
+  mirror's change log, last 'amount changed' edit), open balance, approval, project, what the vendor's latest statement
+  says (`shared/statement_record`: matched at the revised amount / still the old amount / not on it / no record), the
+  pickles flagged (another bill from the same vendor with the same # or # + suffix entered after the revision · amount
+  changed again after the clerk's Sent on · paid before re-issued · gone from QuickBooks), and "Where it stands" in plain
+  words with the days. The clerk's columns - **Stage** (a dropdown: To send · Sent to vendor · Vendor replied · Revised
+  bill received · Entered in QBO · Done - statement agrees · Dropped), **Sent on · Replied on · Received on · Entered
+  on · Notes** - are read back before the rebuild (like the Lien tags) and put back as typed; Stage moves forward only,
+  and by the tool only to Done (the statement agrees) or Dropped (the bill left QuickBooks); a bill that leaves the scan
+  while mid-process stays, flagged. A rebuild that fails keeps the last rows. CLI: `revised_bills.py` previews,
+  `--xlsx [PATH]` rebuilds a workbook's sheet (`assert_clean` last). Proven on a copy of the live tracker. Tests:
+  `tests/test_revised_bills.py` (find, flags, forward-only stages, the sheet round trip with typed cells, the dropdown
+  Excel keeps). The Notion board tried earlier the same day is retired before its first row. First FLOW.md for this tool.
 - 10/08/2026 · **Open-in-Excel guard.** `excel_bill_sync` writes nothing while the tracker is open in Excel (`~$Bill
   Tracker.xlsx`, or the 2-character-short lock name, beside it): checked before the Lien/Notes read and again right
   before the save (opened mid-build). Skip = exit 0 (the next run catches up); a lock over `STALE_LOCK_HOURS` (12) =
