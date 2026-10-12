@@ -4,6 +4,23 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/12/2026 · **One row per bill on the ledger's bill feed** (owner: "find out why cowtown shows 277,760.40 of open
+  bills from july and back on the ledger but on the bill tracker excel it shows a smaller figure" -> "fix it, one row per
+  bill"). Cause: the Bill Tracker lists a multi-job bill on the Bills sheet once as "(multiple)" AND on the Inventory
+  sheet once per job, every row carrying the bill's FULL open balance; `load_bill_tracker` lands both sheets and
+  `_fetch_ap` emitted one row per `ap_bill_line` row, so Cowtown 396753 (07/24/2026, 16,020.00, RP7327 / RP7491 /
+  RP7492) showed 4 times = 48,060.00 extra; 21 open bills this way, 1,149,901.21 overstated across the ledger (5.37M
+  shown vs 4.22M). Fix: `_bill_key` (the QuickBooks bill id, else vendor | bill # | date) groups the rows; the
+  Bills-sheet row stands for the bill and the Inventory rows feed NEW `projects` / `clients` / `divisions` / `lines`
+  on it; `client` = the one client or "(multiple)". `ap.summary` counts once per bill too. app.js: filter configs may
+  give `vals: b => [...]` (`mselValsOf` / `mselHit`) - Client / Project # / Division on the Bill Tracker, Pay bills
+  and Liens list every job and a bill passes on ANY of its jobs; `billJobs(b)` walks the job list in the
+  payment panel's by-project index, the vendor page's project box and its suggestions; a "(multiple)" cell reads
+  "RP7327 +2" with the jobs in its tooltip. Two QuickBooks bills with the same bill # stay two bills (Quikrete
+  34736499 x2 on CP790 - a real duplicate entry to check in QuickBooks). Verified on 8792: Cowtown July and back =
+  37 bills, 229,700.40 (= the workbook's Bills sheet); 733 open bills (was 805 rows); 4,234,647.05 open; no bill id
+  twice; Project # RP7491 finds 396753; Select all on that view = those 37 bills. The per-project view
+  `v_ap_by_project` is still line-based (the project page's AP by job) - untouched here.
 - 10/12/2026 · **Pay bills gets the Bill Tracker's Date filter** (owner: "i need the date filter with the month feature
   like the bill tracker to filter by months when paying bills"). The same `dateFilter` component (Month = every month
   ticked, Select all / Deselect all, a pick; Date = from / to with the calendar; Reset) sits after Ref # on the Pay bills

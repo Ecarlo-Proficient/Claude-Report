@@ -228,7 +228,8 @@ function raw(col, v) {
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], liens: [], by_project: {}, bills: [] };
-let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
+let BILLS = [];   // the bills (ONE row per bill; a multi-job bill carries `projects` / `clients` / `divisions`)
+const billJobs = b => (b.projects && b.projects.length) ? b.projects : (b.project_no && b.project_no !== "(multiple)" ? [b.project_no] : []);   // the jobs on a bill
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
@@ -1482,9 +1483,9 @@ const LIEN_SHORT = {
 const lienMSel = {};   // { id: Set }
 let _lienMSelSig = null;   // data signature; the msels rebuild only when it changes (not on a toggle)
 const LIEN_MSEL = [
-  { id: "lfClient", all: "All clients",     get: r => r.client || "",         search: true, lbl: v => v || "(no client)" },
+  { id: "lfClient", all: "All clients",     get: r => r.client || "",         vals: r => r.clients,   search: true, lbl: v => v || "(no client)" },
   { id: "lfVendor", all: "All vendors",     get: r => r.vendor || "",         search: true, lbl: v => v || "(none)" },
-  { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        lbl: v => v || "(none)" },
+  { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        vals: r => r.divisions, lbl: v => v || "(none)" },
   { id: "lfPay",    all: "Any inv. status", get: r => r.inv_ar_status || "",   lbl: v => v || "(no invoice)" },
 ];
 function _lienLabelUpdate(cfg) {
@@ -1529,7 +1530,7 @@ function buildLienMSel(cfg, watch) {
   }
   _lienLabelUpdate(cfg);
 }
-function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(r))) return false; } return true; }
+function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !mselHit(cfg, s, r)) return false; } return true; }
 function renderLiens() {
   // This page is ONLY what's actually been SENT or FILED (owner 2026-08-20) - not the deadline clock.
   const watch = AP.liens || [];
@@ -1961,15 +1962,15 @@ function statusCell(node) { const td = document.createElement("td"); td.classNam
 // component. Vendor + Month are bespoke (pump default / month cascade); Day stays a single drill.
 const billMSel = {};   // { id: Set(selected raw values) }
 const BILL_MSEL = [
-  { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        search: true, lbl: v => v || "(no client)" },
-  { id: "bfProject",  all: "All projects",   get: b => b.project_no || "",    search: true, lbl: v => v || "(no project #)" },
-  { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       lbl: v => v || "(no division)" },
+  { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        vals: b => b.clients,   search: true, lbl: v => v || "(no client)" },
+  { id: "bfProject",  all: "All projects",   get: b => b.project_no || "",    vals: b => b.projects,  search: true, lbl: v => v || "(no project #)" },
+  { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       vals: b => b.divisions, lbl: v => v || "(no division)" },
   { id: "bfPay",      all: "Any pay status", get: b => b.pay_status || "",     lbl: v => v || "(none)" },
   { id: "bfInv",      all: "Any invoice",    get: b => b.invoice_status || "", lbl: v => v || "(none)" },
   { id: "bfAppr",     all: "Any approval",   get: b => b.approved || "",       lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "bfLien",     all: "Any lien",       get: b => b.lien_status || "",    lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
-function _billMSelVals(cfg) { return [...new Set((BILLS || []).map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+function _billMSelVals(cfg) { return _mselVals(BILLS || [], cfg); }   // every value, a multi-job bill's jobs included
 // Toggle updates the label IN PLACE (no rebuild) so an active search survives (owner 2026-08-21).
 function toggleBillMSel(id, val, checked) {
   const s = billMSel[id] || (billMSel[id] = new Set());
@@ -2025,7 +2026,7 @@ function buildBillMSel(cfg) {
   _mselLabelUpdate(cfg);
 }
 function billMSelPasses(b) {
-  for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(b))) return false; }
+  for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !mselHit(cfg, s, b)) return false; }
   return true;
 }
 function buildBillFilters() {
@@ -2383,6 +2384,7 @@ function billRow(b) {
   if (b.project_no) {
     const chip = document.createElement("span"); const dc = divClass(b.division);
     chip.className = "divchip" + (dc ? " " + dc : ""); chip.textContent = b.project_no; ptd.appendChild(chip);
+    if (b.project_no === "(multiple)" && b.projects && b.projects.length) { chip.textContent = `${b.projects[0]} +${b.projects.length - 1}`; chip.title = "One bill across " + b.projects.join(", "); }   // one row per bill: the jobs it spans
     const nm = nameOf(b.project_no); const disp = b.client || nm;
     if (disp) { const s = document.createElement("span"); s.className = "bill-name" + (b.client ? " lnk" : ""); s.textContent = disp;
       s.title = (b.client ? (nm ? `${b.client} · ${nm}` : b.client) : nm) + (b.client ? " - open this client's page" : "");
@@ -2629,7 +2631,7 @@ function renderVendorPage() {
     const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
     // this vendor's projects (bills + payments), the list the box suggests from
     const projs = new Map();
-    for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) if (b.project_no) projs.set(b.project_no, b.client || nameOf(b.project_no) || "");
+    for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) for (const pn of billJobs(b)) projs.set(pn, b.clients && b.clients.length === 1 ? b.clients[0] : (nameOf(pn) || ""));
     for (const p of (d.payments || [])) for (const no of (p.projects || [])) if (!projs.has(no)) projs.set(no, nameOf(no) || "");
     const matches = () => { const t = _vendorProj.trim(); return [...projs].filter(([no, nm]) => !t || _vq(t, [no, nm, nameOf(no)])).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).slice(0, 12); };
     const refocus = () => { const n = $("#vpProj"); if (n) { n.focus(); const pos = n.value.length; try { n.setSelectionRange(pos, pos); } catch {} } };
@@ -2703,7 +2705,7 @@ function renderVendorPage() {
   let rows = rowsAll.filter(b => _vendorType === "all" || (_vendorType === "paid" ? isPaid(b) : !isPaid(b)));
   if (_vendorInv !== "any") rows = rows.filter(b => invState(b) === _vendorInv);
   if (_vendorDate && _vendorDate.active()) rows = rows.filter(b => _vendorDate.passes(b.bill_date));   // Month | Date (from / to)
-  if (_vendorProj.trim()) rows = rows.filter(b => _vq(_vendorProj, [b.project_no, nameOf(b.project_no)]));   // the standalone Project box
+  if (_vendorProj.trim()) rows = rows.filter(b => billJobs(b).some(pn => _vq(_vendorProj, [pn, nameOf(pn)])));   // the standalone Project box - any job on the bill
   if (_vendorQ.trim()) rows = rows.filter(b => refHit(_vendorQ, [b.bill_ref, b.invoice_no]));   // ref # only
   rows.sort((a, b) => _isoDay(a.bill_date).localeCompare(_isoDay(b.bill_date)) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));   // oldest to newest (owner 2026-09-28)
   const baseRows = rows;                                   // before the header filters - what each funnel lists
@@ -3449,7 +3451,12 @@ function payDirtyCount() {
 // the search box survives). The caller owns a `store` ({id -> Set}) and passes an onChange
 // render callback. cfg: { id, all, get, lbl, search }. DOM: `${id}Btn` pill + `${id}Menu` panel.
 // (Pay Bills uses this; the older Bills/Liens builders predate it and stay as they are.)
-function _mselVals(items, cfg) { return [...new Set(items.map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+// A bill is ONE row since 10/12/2026 ("one row per bill"); a bill spanning jobs carries `projects` / `clients` /
+// `divisions` lists, so a filter config may give `vals: b => [...]` - the option list is every value, and a row
+// passes when ANY of its values is ticked. `get` alone = the single value, as before.
+function mselValsOf(cfg, b) { if (cfg.vals) { const v = cfg.vals(b); return v && v.length ? v : [cfg.get(b)]; } return [cfg.get(b)]; }
+function mselHit(cfg, s, b) { return mselValsOf(cfg, b).some(v => s.has(v)); }
+function _mselVals(items, cfg) { return [...new Set(items.flatMap(b => mselValsOf(cfg, b)))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
 function mselLabelUpdate(cfg, store) {
   const btn = $("#" + cfg.id + "Btn"), menu = $("#" + cfg.id + "Menu"); if (!btn) return;
   const s = store[cfg.id] || new Set();
@@ -3493,7 +3500,7 @@ function buildMSel(cfg, items, store, onChange) {
   mselLabelUpdate(cfg, store);
 }
 function mselPasses(item, cfgs, store) {
-  for (const cfg of cfgs) { const s = store[cfg.id]; if (s && s.size && !s.has(cfg.get(item))) return false; }
+  for (const cfg of cfgs) { const s = store[cfg.id]; if (s && s.size && !mselHit(cfg, s, item)) return false; }
   return true;
 }
 
@@ -3502,10 +3509,10 @@ function mselPasses(item, cfgs, store) {
 const payMSel = {};
 let _payMSelSig = null;
 const PAY_MSEL = [
-  { id: "pfClient", all: "All clients",   get: b => b.client || "",      search: true, lbl: v => v || "(no client)" },
+  { id: "pfClient", all: "All clients",   get: b => b.client || "",      vals: b => b.clients,   search: true, lbl: v => v || "(no client)" },
   { id: "pfVendor", all: "All vendors",   get: b => b.vendor || "",      search: true, lbl: v => v || "(none)" },
-  { id: "pfProj",   all: "All projects",  get: b => b.project_no || "",  search: true, lbl: v => v || "(no project #)" },
-  { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     lbl: v => v || "(none)" },
+  { id: "pfProj",   all: "All projects",  get: b => b.project_no || "",  vals: b => b.projects,  search: true, lbl: v => v || "(no project #)" },
+  { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     vals: b => b.divisions, lbl: v => v || "(none)" },
   { id: "pfAppr",   all: "Any approval",  get: b => b.approved || "",     lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "pfLien",   all: "Any lien",      get: b => b.lien_status || "",  lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
@@ -3609,6 +3616,7 @@ function renderPayBills() {
     const cV = document.createElement("td"); cV.className = "left"; const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; cV.appendChild(vs); tr.appendChild(cV);
     const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)";
     const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–";
+    if (b.project_no === "(multiple)" && b.projects && b.projects.length) { cP.textContent = `${b.projects[0]} +${b.projects.length - 1}`; cP.title = "One bill across " + b.projects.join(", "); }
     tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
     const cD = document.createElement("td"); cD.className = "left"; cD.textContent = fmtDateShort(b.bill_date); tr.appendChild(cD);
     // Open balance
@@ -6251,7 +6259,7 @@ function payOpenBillsByDraw() {   // open bills keyed by the DRAW (AR invoice) t
 }
 function payOpenBillsByProject() {   // open bills keyed by project (for RP - see the division rule below)
   const idx = {};
-  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005 && b.project_no) (idx[b.project_no] ||= []).push(b); }
+  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005) for (const pn of billJobs(b)) (idx[pn] ||= []).push(b); }   // a multi-job bill under each of its jobs
   return idx;
 }
 // Division rule (owner 2026-08-25). CP/MFD are STAGED: each draw is its own scope with its own costs

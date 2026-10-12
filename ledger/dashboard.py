@@ -772,6 +772,14 @@ def _bill_memos(bills: list) -> None:
         b["due_date"] = due or None                     # QuickBooks' due date - the vendor page's Unpaid view (owner 2026-10-01)
 
 
+def _bill_key(r) -> str:
+    """ONE identity per bill across the Bills + Inventory sheets: the QuickBooks bill id when the row
+    links to one, else vendor | bill # | bill date. Two QuickBooks bills with the same bill # (a real
+    duplicate entry, e.g. Quikrete 34736499 twice on 09/10/2026) stay two bills."""
+    bid = bill_marks.bill_id_from_link(r["qbo_link"]) if r["qbo_link"] else None
+    return f"id:{bid}" if bid else f"{r['vendor'] or ''}|{r['bill_ref'] or ''}|{r['bill_date'] or ''}"
+
+
 def _fetch_ap(con) -> dict:
     """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
@@ -790,8 +798,11 @@ def _fetch_ap(con) -> dict:
         bid = bill_marks.bill_id_from_link(r["qbo_link"])
         tag = marks.get(bid) if bid else None
         return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
+    # Open AP counted ONCE per bill (10/12/2026): a multi-job bill sits on the Bills sheet as one "(multiple)"
+    # row AND on the Inventory sheet once per job, every row carrying the bill's FULL open balance - summing
+    # rows counted Cowtown 396753 four times (277,760 shown vs 229,700 real; 1.15M across the ledger).
     open_bal, open_lines = 0.0, 0
-    for r in rows:
+    for key, r in {_bill_key(r): r for r in rows}.items():
         ob = r["open_balance"] or 0
         if ob > 0:
             open_bal += ob
@@ -802,11 +813,13 @@ def _fetch_ap(con) -> dict:
         if r["project_no"]:
             by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
     ap["by_project"] = by_project
-    # Full bill list for the Bill Tracker tab. Every row is one bill (open_balance is
-    # per-bill, safe to sum). Description is omitted to keep the payload lean; account
-    # carries the QBO category. Newest first (bill_date is ISO). Each bill is enriched
-    # with its AR invoice (from billing_event, joined on Invoice #) so the Bills tab can
-    # show the real invoice pay status and deep-link to the invoice in QuickBooks.
+    # Full bill list for the Bill Tracker tab. ONE row per bill (owner 2026-10-12: "one row per bill"):
+    # the workbook's Bills-sheet row stands for the bill (its "(multiple)" project / division / client
+    # when it spans jobs) and the Inventory-sheet rows only feed `projects` / `clients` / `divisions` -
+    # the job list the filters match on - so open_balance is per-bill and safe to sum. Description is
+    # omitted to keep the payload lean; account carries the QBO category. Newest first (bill_date is
+    # ISO). Each bill is enriched with its AR invoice (from billing_event, joined on Invoice #) so the
+    # Bills tab can show the real invoice pay status and deep-link to the invoice in QuickBooks.
     bmap = {}
     try:
         for be in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
@@ -817,13 +830,26 @@ def _fetch_ap(con) -> dict:
     proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
     pay = bill_marks.read_pay_marks()             # current check run: {bill_id -> {amount}}
     bills = []
+    groups: dict = {}   # bill key -> [rows], first seen first (newest bill first)
     for r in con.execute(
-        "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
+        "SELECT project_no, division, vendor, bill_ref, bill_date, account, source_sheet, "
         "line_amount, bill_total, open_balance, pay_status, approved, invoice_status, lien_status, "
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
-        b = dict(r)
-        b["client"] = proj_customer.get(b.get("project_no"))
+        groups.setdefault(_bill_key(r), []).append(r)
+    for key, grp in groups.items():
+        head = next((r for r in grp if (r["source_sheet"] or "") == "Bills"), grp[0])
+        b = dict(head)
+        b.pop("source_sheet", None)
+        projs = [r["project_no"] for r in grp if r["project_no"] and r["project_no"] != "(multiple)"]
+        if not projs and head["project_no"]:
+            projs = [head["project_no"]]
+        b["projects"] = list(dict.fromkeys(projs))                       # the jobs on the bill, in order
+        b["divisions"] = list(dict.fromkeys(r["division"] for r in grp if r["division"] and r["division"] != "(multiple)"))
+        b["lines"] = max(1, sum(1 for r in grp if (r["source_sheet"] or "") != "Bills") or len(grp))
+        clients = list(dict.fromkeys(c for c in (proj_customer.get(pn) for pn in b["projects"]) if c))
+        b["clients"] = clients
+        b["client"] = clients[0] if len(clients) == 1 else ("(multiple)" if clients else None)
         bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
         b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
         pm = pay.get(bid) if bid else None           # is this bill in the current pay run?
