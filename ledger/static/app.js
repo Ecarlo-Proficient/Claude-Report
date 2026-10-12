@@ -4912,17 +4912,20 @@ function _ppPaintPayBar() {
 // The draw boxes + the Coverage table sit on top whatever is open; a click on a box or a row opens that draw's
 // details underneath and the boxes stay (owner 2026-09-15). "All draws" = every bill on the job with the draw it
 // sits under. Left / right arrow keys flip between them.
+// One picker instead of a grid of chips (owner 2026-10-11: "instead of this disorder ... a single choice bar that you
+// click and choose"; "adding info more than just the draw info clutters it"): All draws, No draw yet, then every draw
+// newest first by its name alone - the Coverage table below carries the invoice, status and money for each one.
 function _ppTabs(d) {
   const strip = document.createElement("div"); strip.className = "pp-tabs";
-  const mk = (key, lbl, sub, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "pp-tab" + (_pp.view === key ? " on" : "");
-    b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); _ppScrollDetail(); }; return b; };
-  const n = d.draws.filter(x => !x.no_draw).length;
-  strip.appendChild(mk("all", _ppAllLabel(), `${n} ${_ppUnit(n)} · ${_ppAllRows(d.draws).length} bills`, `Every bill on the job, with the ${_pp.isRp ? "scope" : "draw"} it sits under`));
+  const sel = document.createElement("select"); sel.className = "pp-draw-pick"; sel.title = `Pick a ${_pp.isRp ? "scope" : "draw"} - the bills below follow`;
+  const opt = (key, text) => { const o = document.createElement("option"); o.value = key; o.textContent = text; if (_pp.view === key) o.selected = true; sel.appendChild(o); };
+  opt("all", _ppAllLabel());
   for (const dr of d.draws) {
-    const span = _ppSpan(dr);
-    const b = mk(dr.matched_invoice, _ppTitle(dr), dr.no_draw ? `${_ppBillsOf(dr).length} bills` : (dr.scope ? (span || _ppInvLabel(dr)) : _ppInvLabel(dr)), [span ? "Covers " + span : "", _ppStage(dr)].filter(Boolean).join(" · "));
-    strip.appendChild(b);
+    const t = _ppTitle(dr);
+    opt(dr.matched_invoice, t === "Draw" ? `Draw · ${_ppInvLabel(dr)}` : t);   // a draw with no month or number is told apart by its invoice
   }
+  sel.onchange = () => { _pp.view = sel.value; _renderPpDraws(); _ppScrollDetail(); };
+  strip.appendChild(sel);
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
   return strip;
 }

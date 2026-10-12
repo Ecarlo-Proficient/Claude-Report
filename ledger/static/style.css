@@ -1463,6 +1463,13 @@ main small, main .k-sub, main .k-label { font-size: max(.8em, 12px); }
 .pp-tab:hover { border-color: var(--text-dim); }
 .pp-tab.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 700; }
 .pp-tabs-hint { margin-left: auto; font-size: .82em; }
+/* the draw picker: one bar you click and choose (owner 2026-10-11) */
+.pp-draw-pick { font: inherit; font-size: .95em; font-weight: 600; padding: 7px 34px 7px 12px; min-width: 300px; max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text); cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.pp-draw-pick:hover { border-color: var(--text-dim); }
+.pp-draw-pick:focus { outline: none; border-color: var(--accent); }
 .pp-cov-wrap { padding: 4px var(--pad-x) 10px; }
 table.pp-cov tr.pp-cov-row { cursor: pointer; }
 table.pp-cov tr.pp-cov-row:hover > td { background: var(--row-hover); }

@@ -14,6 +14,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
   Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
   2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
+- 10/11/2026 (night, later) · **One draw picker instead of the chip grid** (owner, on the wrapped rows of draw chips:
+  "instead of this disorder what do you think is best? ... a single choice bar that you click and choose"). `_ppTabs`
+  is now one `<select class="pp-draw-pick">`: All draws, No draw yet, then every draw newest first by its NAME alone
+  ("September 2026"; a draw with no month or number says "Draw · Inv 33302") - the owner, on a first cut that carried
+  the invoice, status and bill count: "adding info more than just the draw info clutters it"; the Coverage table
+  carries those. Choosing one sets `_pp.view` as the chips did, ← → still flip, the Coverage table rows still select. Styled as the app's own control (no native
+  chrome, a hairline border, a small chevron). The Coverage table below already lists every draw as a row, so the grid
+  was a second copy of the same list.
 - 10/11/2026 (night) · **Draw periods on the project page - saved on the ledger only** (owner: "a way to change
   period draw dates by moving it in a horizontal <> way and it changes the dates as it goes for all, and then a way to
   edit individual periods themselves without it overlapping the other ones"; "never write" [to QuickBooks]; "more of a
