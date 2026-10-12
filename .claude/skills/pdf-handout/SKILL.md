@@ -48,6 +48,11 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 4. **Straight to the point.** No preamble ("no more paper on your desk"), no rules list, no
    worked example when the screenshot already shows it, no closing offers. Title, effective
    date, the flow, where to click, the choices. One Letter page.
+4a. **Never talk down to the reader (owner 2026-10-11: "hard no").** No subtitle that states the
+   obvious ("Do this in the live file. It only has to be done one time."), no reassurance, no "make sure
+   to". Title, then the steps. Don't double a value the reader already has (Hex given -> no RGB column).
+   Name a section by what it does ("Change entries already in the old colours"), never "(optional)".
+   A caveat stays only when it prevents a real mistake.
 5. **No personal names in anything I write.** Names visible inside the owner's own screenshots
    are his call - leave the crop alone, mention it once.
 
