@@ -53,6 +53,10 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
    to". Title, then the steps. Don't double a value the reader already has (Hex given -> no RGB column).
    Name a section by what it does ("Change entries already in the old colours"), never "(optional)".
    A caveat stays only when it prevents a real mistake.
+   **But a non-obvious section says why (same day):** one opening line on what it does and why
+   ("these steps find every cell of one old colour at once and switch them all"), each click's purpose
+   where it isn't obvious ("that cell is the sample"), and a closing "how it goes wrong" line. Bare
+   steps there read as confusing. Obvious = cut; non-obvious = explain.
 5. **No personal names in anything I write.** Names visible inside the owner's own screenshots
    are his call - leave the crop alone, mention it once.
 
