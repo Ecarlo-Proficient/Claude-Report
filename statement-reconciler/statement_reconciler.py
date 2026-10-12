@@ -2759,7 +2759,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 notes: Optional[dict] = None,
                 disagree: bool = False,
                 markups: Optional[list] = None,
-                revised: Optional[list] = None) -> None:
+                revised: Optional[list] = None,
+                paid: Optional[list] = None) -> None:
     """The vendor's ONE reconciliation workbook. `revised` = the Revised Bills rows (shared/revised_sheet) -
     written as the 2nd sheet; a Summary row that is on it says so in its Finding. `notes` = the clerk's saved notes
     (statement_set.note_key -> {note}); written into her own 'Notes' column so a
@@ -2838,7 +2839,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     # reconciliation is unreliable - surface the gap here and banner it below.
     if line_sum is not None:
         ls_row = r
-        _tieout_row(r, "Sum of parsed lines", round(line_sum, 2), BODY_FONT); r += 1
+        _tieout_row(r, "Lines added up", round(line_sum, 2), BODY_FONT); r += 1
         # Decompose the parsed total when the statement carries a balance-forward
         # lump and/or payment rows, so "Sum of parsed lines" reconciles visibly to
         # the itemized invoices shown in the sections below.
@@ -2849,7 +2850,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 _tieout_row(r, "   · balance forward (prior, not itemized)", bf_amount, BODY_FONT); r += 1
             if payments_total:
                 _tieout_row(r, "   · payments / credits on statement", payments_total, BODY_FONT); r += 1
-        _tieout_row(r, "Parse gap (lines − statement total)",
+        _tieout_row(r, "Difference (lines vs statement total)",
                     f"=E{ls_row}-E{stmt_row}", LABEL_FONT,
                     fill=(SUBTOTAL_FILL if tieout_ok else BAD_FILL)); r += 1
 
@@ -2876,10 +2877,10 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         r += 1
     elif not tieout_ok:
         gap = round((line_sum or 0.0) - stmt_total, 2)
-        msg = (f"⚠ TIE-OUT FAILED - parse incomplete: parsed lines total "
+        msg = (f"⚠ TIE-OUT FAILED - the statement was not read in full: its lines add up to "
                f"${(line_sum or 0.0):,.2f} but the statement's Amount Due is "
                f"${stmt_total:,.2f} (gap ${gap:,.2f}). This reconciliation is NOT "
-               f"reliable - do not action it until the statement is re-parsed.")
+               f"reliable - do not act on it until the statement is read again.")
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=12, color="FFFFFF")
         c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -3221,7 +3222,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
     marked_dir = None
     if revised is not None:
-        rvs.write_sheet(wb, revised, index=1)          # right after the Summary; the marked statement goes after it
+        rvs.write_sheet(wb, revised, paid, index=1)    # right after the Summary; the marked statement goes after it
     if markups:
         try:
             marked_dir = _write_marked_sheet(wb, markups)
@@ -3538,7 +3539,7 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
     vendor_hint = vendor_guess
 
     if not lines:
-        _fail(f"No statement lines parsed from this {file_kind}.")
+        _fail(f"No statement lines could be read from this {file_kind}.")
         print("    Supported formats:")
         for label in TEMPLATE_LABELS.values():
             print(f"      • {label}")
@@ -3802,6 +3803,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
 
     result["_bills"] = bills
     revised = _revised_rows(rows, bills, extras.get("revised_prior") or {})
+    paid = _paid_rows(rows, extras.get("paid_prior") or {}, stmt_date)
     markups = _mark_statements(extras.get("sources") or [], rows, result)
     # what the ledger's record needs (shared/statement_record, 10/09/2026): every row with its
     # bucket, the clerk's note and the job, plus the marked pages - written after the publish
@@ -3814,7 +3816,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
                   "job": (lambda m: m.group(1).upper() if m else "")(qbo_api.PROJ_RE.search(f"{r.qbo_memo} {r.po} {r.address}")),
                   "note": ss.note_for(_notes, r.qbo_bill_id, r.stmt_ref or r.qbo_ref)} for r in rows],
         "files": [f"{ss.CURRENT}/{p.name}" for p, _l in (extras.get("sources") or [])],
-        "excel": f"{ss.CURRENT}/{out.name}" if out else "", "revised": revised}
+        "excel": f"{ss.CURRENT}/{out.name}" if out else "", "revised": revised, "revised_paid": paid}
     result["_markups"] = markups
     result.pop("_bills", None)
 
@@ -3828,7 +3830,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
                 statement_src=None, line_sum=line_sum, tieout_ok=sum_matches,
                 bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines,
                 notes=extras.get("notes"), disagree=bool(extras.get("disagree")),
-                markups=markups, revised=revised)
+                markups=markups, revised=revised, paid=paid)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     result["action"] = "filed" if result["tieout"] else "held"
     t0 = _phase("Appending clerk-performance history")
@@ -4023,6 +4025,34 @@ def _revised_rows(rows: List["ReconRow"], bills: List["QboBill"], prior: dict,
     for row in out:
         row["standing"] = rvs.standing(row, today)
     out.sort(key=lambda r: (r["standing"]["final"], r["standing"]["rank"], r.get("invoice_date") or ""))
+    return out
+
+
+def _paid_rows(rows: List["ReconRow"], prior_notes: dict, stmt_date: str = "", payments: Optional[dict] = None) -> List[dict]:
+    """The sheet's second section (owner 10/12/2026): the bills the statement still shows open that QuickBooks
+    paid - the bill info + the check #, date and amount, so the vendor can apply the payment. Several checks on
+    one bill are joined with ' + '. `payments` = {bill id: [{check_no, check_date, amount}]} (read from the
+    QuickBooks copy when None); the clerk's Notes come back by bill id."""
+    lag = [r for r in rows if r.category == "LIKELY_VENDOR_LAG" and r.qbo_bill_id]
+    if not lag:
+        return []
+    if payments is None:
+        since = ""
+        try:
+            since = (dt.date.fromisoformat(stmt_date) - dt.timedelta(days=400)).isoformat() if stmt_date else ""
+        except ValueError:
+            since = ""
+        payments = rvs.payments_for([r.qbo_bill_id for r in lag], since=since)
+    out = []
+    for r in lag:
+        pays = payments.get(r.qbo_bill_id) or []
+        out.append({"bill_id": r.qbo_bill_id, "invoice": r.stmt_ref or r.qbo_ref, "invoice_date": r.stmt_date or r.qbo_date,
+                    "amount": round(r.stmt_amount or r.qbo_amount, 2),
+                    "check_no": " + ".join(str(p["check_no"] or f"({p['pay_type'].lower()})") for p in pays),
+                    "check_date": pays[-1]["check_date"] if pays else "",
+                    "paid_amount": round(sum(p["amount"] for p in pays), 2) if pays else None,
+                    "notes": prior_notes.get(r.qbo_bill_id, "")})
+    out.sort(key=lambda x: x.get("invoice_date") or "")
     return out
 
 
@@ -4296,9 +4326,11 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
             except Exception as e:
                 _warn(f"could not read the notes on Notion ({e}) - using the last saved ones")
         revised_prior: dict = {}
+        paid_prior: dict = {}
         for f, origin in filed["reports"]:               # the Revised Bills sheet as it stands: the history + what the clerk typed
             if origin != "legacy_done":
                 revised_prior.update(rvs.harvest(f))
+                paid_prior.update(rvs.harvest_paid(f))
         changes = ss.changes_for(docs, merged, state)
         when = dt.datetime.now().strftime("%m/%d/%Y %I:%M %p")
         dates = ", ".join(sorted({ss.us_date(d.as_of) for d in cur_docs}))
@@ -4312,7 +4344,7 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         ok, counts, _tie = reconcile_vendor(
             args, access, cid, result, vendor_id=vendor_id, vendor_name=vendor_name,
             stmt_date=merged.as_of, amt_due=merged.amount_due, lines=merged.lines, out=out,
-            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree, "revised_prior": revised_prior,
+            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree, "revised_prior": revised_prior, "paid_prior": paid_prior,
                     "sources": [(d.path, d.lines) for d in cur_docs]})
         result["vendor_folder"] = folder
         result["_vdir"], result["checked"] = str(vdir), when     # for the ledger's record

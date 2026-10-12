@@ -114,3 +114,40 @@ def test_stage_words_and_standing():
     assert rvs.standing({"stage": "Done - statement agrees"}, TODAY)["final"]
     assert rvs.standing({"stage": "", "revised_on": "2026-10-10"}, TODAY)["text"] == "the clerk has not told the vendor yet - 2 days"
     assert rvs.iso("10/3/2026") == "2026-10-03" and rvs.iso(dt.datetime(2026, 10, 3, 9)) == "2026-10-03" and rvs.iso("x") == ""
+
+
+def test_paid_section_lists_the_check_and_keeps_its_notes(tmp_path):
+    from openpyxl import Workbook, load_workbook
+    rows = [_row("LIKELY_VENDOR_LAG", "398000", "398000", 1500.0, 1500.0, "21", date="2026-08-05"),
+            _row("LIKELY_VENDOR_LAG", "398001", "398001", 250.0, 250.0, "22", date="2026-08-06"),
+            _row("MATCHED", "399126", "399126", 4752.18, 4752.18, "13")]
+    payments = {"21": [{"check_no": "2601", "check_date": "2026-09-20", "amount": 1000.0, "pay_type": "Check"},
+                       {"check_no": "2610", "check_date": "2026-09-27", "amount": 500.0, "pay_type": "Check"}],
+                "22": [{"check_no": "", "check_date": "2026-09-22", "amount": 250.0, "pay_type": "CreditCard"}]}
+    paid = r._paid_rows(rows, {"22": "they said 2 weeks"}, "2026-10-02", payments=payments)
+    assert [p["invoice"] for p in paid] == ["398000", "398001"]
+    assert paid[0]["check_no"] == "2601 + 2610" and paid[0]["check_date"] == "2026-09-27" and paid[0]["paid_amount"] == 1500.0 and paid[0]["amount"] == 1500.0
+    assert paid[1]["check_no"] == "(creditcard)" and paid[1]["notes"] == "they said 2 weeks"
+    path = tmp_path / "Reconciliation - V - as of 10-02-2026.xlsx"
+    wb = Workbook(); wb.active.title = "Summary"
+    rvs.write_sheet(wb, [{"bill_id": "11", "invoice": "400621", "invoice_date": "2026-09-10", "amount_billed": 8768.25, "corrected_amount": 8100.0, "reason": "tax", "stage": "To send"}], paid)
+    wb.save(path); xlsx_verify.assert_clean(path)
+    ws = load_workbook(path)[rvs.SHEET]
+    assert [t for t in ws.tables] == [rvs.TABLE, rvs.PAID_TABLE] and ws.tables[rvs.PAID_TABLE].ref.startswith("A6:H")
+    assert ws["A5"].value == rvs.PAID_TITLE and [c.value for c in ws[6]][:6] == ["Invoice #", "Invoice date", "Amount", "Check #", "Check date", "Paid amount"]
+    assert rvs.harvest(path) and "11" in rvs.harvest(path) and "21" not in rvs.harvest(path)        # the first reader stops at the second section
+    assert rvs.harvest_paid(path) == {"21": "", "22": "they said 2 weeks"}
+
+
+def test_payments_for_reads_the_copy(monkeypatch):
+    import json, sqlite3
+    from shared import qbo_mirror
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE qbo_billpayment (id TEXT, txn_date TEXT, doc_number TEXT, total REAL, name TEXT, deleted INT, json TEXT)")
+    monkeypatch.setattr(qbo_mirror, "_unpack", lambda b: json.loads(b))
+    pay = lambda pid, date, no, lines, ptype="Check": con.execute("INSERT INTO qbo_billpayment VALUES (?,?,?,?,?,0,?)", (pid, date, no, sum(a for _b, a in lines), None, json.dumps({"PayType": ptype, "Line": [{"Amount": a, "LinkedTxn": [{"TxnId": b, "TxnType": "Bill"}]} for b, a in lines]})))
+    pay("p1", "2026-09-20", "2601", [("21", 1000.0), ("99", 5.0)])
+    pay("p2", "2026-09-27", "2610", [("21", 500.0)])
+    pay("p3", "2025-01-01", "1", [("21", 7.0)])                                          # before `since`: left out
+    out = rvs.payments_for(["21", "22"], con=con, since="2026-01-01")
+    assert [p["check_no"] for p in out["21"]] == ["2601", "2610"] and out["21"][0]["amount"] == 1000.0 and "22" not in out and "99" not in out

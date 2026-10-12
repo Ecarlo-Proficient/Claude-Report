@@ -20,6 +20,10 @@ an Excel Table), two parts and nothing else:
       Stage (a dropdown) · Sent on · Replied on · Received on · Entered on · Notes
   and, hidden: _Key = the QuickBooks bill id (the carry-forward key), _Since = the day the row first appeared.
 
+  A SECOND section under it (owner 10/12/2026): the bills the vendor's statement still shows open that
+  QuickBooks paid - the bill info + the check (payment) #, date and amount, for the vendor to apply:
+      Invoice # · Invoice date · Amount · Check # · Check date · Paid amount  |  Notes · _Key
+
 The reconciler (statement-reconciler/statement_reconciler.py) builds the rows each run, reads the old
 workbook's sheet first (`harvest`) so nothing typed is lost, keeps every row ever on the sheet (the
 history), moves Stage forward only - to "Done - statement agrees" when the vendor's statement shows the
@@ -45,6 +49,13 @@ WIDTHS = [w for _, w in BILL_COLS + STATUS_COLS] + [9, 11]
 TYPED = ["Stage", "Sent on", "Replied on", "Received on", "Entered on", "Notes"]   # the clerk's - carried, never overwritten
 DATE_COLS = {"Invoice date", "Sent on", "Replied on", "Received on", "Entered on", SINCE}
 MONEY_COLS = {"Amount billed", "Corrected amount"}
+
+PAID_TITLE = "Paid in QuickBooks - the statement still shows these open"
+PAID_COLS = [("Invoice #", 14), ("Invoice date", 12), ("Amount", 14), ("Check #", 14), ("Check date", 12), ("Paid amount", 14), ("Notes", 40)]
+PAID_HEADERS = [h for h, _ in PAID_COLS] + [KEY]
+PAID_TABLE = "RevisedBillsPaid"
+PAID_DATE_COLS = {"Invoice date", "Check date"}
+PAID_MONEY_COLS = {"Amount", "Paid amount"}
 
 STAGES = ["To send", "Sent to vendor", "Vendor replied", "Revised bill received", "Entered in QBO",
           "Done - statement agrees", "Dropped"]
@@ -150,6 +161,8 @@ def harvest(xlsx: Path) -> Dict[str, dict]:
             return {}
         out: Dict[str, dict] = {}
         for vals in rows:
+            if vals and vals[0] == "Invoice #":          # the second section's header: the paid rows start - not this reader's
+                break
             d: dict = {}
             for h, v in zip(hdr, vals):
                 k = col_key(h)
@@ -173,6 +186,78 @@ def harvest(xlsx: Path) -> Dict[str, dict]:
         return out
     finally:
         wb.close()
+
+
+def harvest_paid(xlsx: Path) -> Dict[str, str]:
+    """The second section's Notes, by bill id (the only column the clerk types there)."""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(xlsx, read_only=True, data_only=True)
+    except Exception:                                  # noqa: BLE001
+        return {}
+    try:
+        if SHEET not in wb.sheetnames:
+            return {}
+        out: Dict[str, str] = {}
+        hdr = None
+        for vals in wb[SHEET].iter_rows(values_only=True):
+            if vals and vals[0] == "Invoice #" and "Check #" in [str(v or "") for v in vals]:
+                hdr = [str(h or "").strip() for h in vals]
+                continue
+            if hdr is None:
+                continue
+            d = dict(zip(hdr, vals))
+            key = str(d.get(KEY) or "").strip()
+            if key:
+                out[key] = str(d.get("Notes") or "").strip()
+        return out
+    finally:
+        wb.close()
+
+
+def payments_for(bill_ids: List[str], con=None, since: str = "") -> Dict[str, List[dict]]:
+    """{bill id: [{check_no, check_date, amount, pay_type}]} - every QuickBooks bill payment that paid
+    (part of) the bill, from the QuickBooks copy. `since` (ISO) bounds the scan by payment date.
+    Best-effort - no mirror / no key = {}."""
+    out: Dict[str, List[dict]] = {}
+    want = {str(b) for b in bill_ids if b}
+    if not want:
+        return out
+    own = con is None
+    if own:
+        try:
+            from shared import qbo_mirror
+            if not qbo_mirror.db_path().exists():
+                return out
+            con = qbo_mirror.connect()
+        except Exception:                              # noqa: BLE001
+            return out
+    try:
+        from shared import qbo_mirror
+        q = "SELECT id, txn_date, doc_number, total, json FROM qbo_billpayment WHERE deleted=0"
+        args: list = []
+        if since:
+            q += " AND txn_date >= ?"
+            args.append(since)
+        for r in con.execute(q, args):
+            try:
+                j = qbo_mirror._unpack(r[4]) or {}
+            except Exception:                          # noqa: BLE001
+                continue
+            for ln in j.get("Line") or []:
+                for lt in ln.get("LinkedTxn") or []:
+                    if lt.get("TxnType") == "Bill" and str(lt.get("TxnId")) in want:
+                        out.setdefault(str(lt.get("TxnId")), []).append({
+                            "check_no": r[2] or "", "check_date": r[1] or "", "amount": round(float(ln.get("Amount") or 0), 2),
+                            "pay_type": j.get("PayType") or "", "payment_id": str(r[0])})
+    except Exception:                                  # noqa: BLE001
+        return {}
+    finally:
+        if own:
+            con.close()
+    for v in out.values():
+        v.sort(key=lambda x: x["check_date"])
+    return out
 
 
 # ─────────────────────────── the vendor's original total (the change log) ───────────────────────────
@@ -217,10 +302,11 @@ def original_totals(bill_ids: List[str]) -> Dict[str, dict]:
 
 # ─────────────────────────── the sheet ───────────────────────────
 
-def write_sheet(wb, rows: List[dict], index: int = 1) -> int:
+def write_sheet(wb, rows: List[dict], paid: Optional[List[dict]] = None, index: int = 1) -> int:
     """Write the sheet (replacing any older one) at `index`: two parts, one Table, the Stage dropdown,
     the colour that says the stage. `rows` = [{bill_id, invoice, invoice_date, amount_billed,
-    corrected_amount, reason, stage, sent_on, replied_on, received_on, entered_on, notes}] (ISO dates)."""
+    corrected_amount, reason, stage, sent_on, replied_on, received_on, entered_on, notes}] (ISO dates).
+    `paid` = the second section: [{bill_id, invoice, invoice_date, amount, check_no, check_date, paid_amount, notes}]."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.formatting.rule import FormulaRule
     from openpyxl.utils import get_column_letter
@@ -279,4 +365,41 @@ def write_sheet(wb, rows: List[dict], index: int = 1) -> int:
         ws.conditional_formatting.add(f"{S}2:{S}{L}", FormulaRule(formula=[f'${S}2="{st}"'], fill=PatternFill("solid", fgColor=fc, bgColor=fc), font=Font(bold=True)))
     D, B = get_column_letter(HEADERS.index("Corrected amount") + 1), get_column_letter(HEADERS.index("Amount billed") + 1)
     ws.conditional_formatting.add(f"{D}2:{D}{L}", FormulaRule(formula=[f'AND(ISNUMBER(${D}2),${D}2<>${B}2)'], font=Font(bold=True, color="1F5C99")))
+    # ── the second section: paid in QuickBooks, the statement still shows it open ──
+    paid = paid or []
+    t = last + 3
+    ws.cell(row=t, column=1, value=PAID_TITLE).font = Font(name="Calibri", size=12, bold=True, color="1F5C99")
+    h = t + 1
+    n_v = len(PAID_COLS) - 1                                 # Invoice # .. Paid amount go to the vendor; Notes is ours
+    for i, name in enumerate(PAID_HEADERS, 1):
+        c = ws.cell(row=h, column=i, value=name)
+        c.fill = PatternFill("solid", fgColor="1F5C99" if i <= n_v else "595959")
+        c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[h].height = 30
+    r_i = h + 1
+    for row in paid:
+        vals = [row.get("invoice", ""), _date(row.get("invoice_date")), row.get("amount"), row.get("check_no", ""), _date(row.get("check_date")),
+                row.get("paid_amount"), row.get("notes", ""), str(row.get("bill_id") or "")]
+        for i, (name, v) in enumerate(zip(PAID_HEADERS, vals), 1):
+            if name in PAID_DATE_COLS:
+                c = ws.cell(row=r_i, column=i, value=v)
+                c.number_format = "mm/dd/yyyy"
+            elif name in PAID_MONEY_COLS:
+                c = ws.cell(row=r_i, column=i, value=round(float(v), 2) if v not in (None, "") else None)
+                c.number_format = '"$"#,##0.00'
+            else:
+                c = xl_text(ws, r_i, i, v if v is not None else "")
+                if name == "Notes":
+                    c.alignment = Alignment(wrap_text=True, vertical="top")
+            if i <= n_v:
+                c.border = box
+        r_i += 1
+    plast = max(r_i - 1, h + 1)
+    if not paid:
+        ws.cell(row=h + 1, column=1, value="(none - every paid bill has dropped off the statement)")
+    tbl2 = Table(displayName=PAID_TABLE, ref=f"A{h}:{get_column_letter(len(PAID_HEADERS))}{plast}")
+    tbl2.tableStyleInfo = TableStyleInfo(name="TableStyleLight1", showFirstColumn=False, showLastColumn=False,
+                                         showRowStripes=False, showColumnStripes=False)
+    ws.add_table(tbl2)
     return len(rows)

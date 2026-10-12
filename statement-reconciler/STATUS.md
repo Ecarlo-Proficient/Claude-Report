@@ -12,6 +12,16 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-12 (later) · **Revised Bills, second section + plain words** (owner: "replace the word parse with something
+  simpler"; "make a second section for the ones that show we haven't paid but in QBO we did, with the bill info and
+  the check payment #, date and amount"). Under the re-issue table the sheet now has **Paid in QuickBooks - the
+  statement still shows these open**: one row per LIKELY_VENDOR_LAG bill - Invoice # · Invoice date · Amount · Check #
+  (several joined with ' + '; a card payment shows "(creditcard)") · Check date · Paid amount, for the vendor to apply,
+  plus a Notes column the clerk keeps (`rvs.harvest_paid`, by bill id). The checks come from the QuickBooks copy's
+  bill payments (`shared/revised_sheet.payments_for`: every payment whose line links the bill, payment date within 400
+  days of the statement). The record carries them as `revised_paid`. The Summary's tie-out says "Lines added up" and
+  "Difference (lines vs statement total)", and a failed tie-out "was not read in full"; "parse" is gone from the
+  workbook. Live on Cowtown: 8 re-issue rows + 21 paid rows.
 - 2026-10-12 · **The Revised Bills sheet + the marked statement from the top** (owner: "the revised bill sheet needs to be
   in the same statement Excel, not a mix ... the bill info with our status on the right"; "move rows 1 and 3 to the side so
   the PDF can go all the way up and line up with the legend, merge those two"; "when the stage goes to Done move those
