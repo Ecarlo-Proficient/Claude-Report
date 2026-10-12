@@ -262,12 +262,14 @@ on the network). What it shows:
   rep (last-editor attribution), warm-account cards with each account's full touch log, and a
   searchable/filterable all-customers table that links out to Notion. Edits stay in Notion; the tab
   never writes.
-- **Draw periods** (project page, MFD / CP) - AN EXAMPLE ONLY, it never writes (owner 2026-10-11). The **Draw
-  periods** button on the draw tabs opens an editor above the Draw overview: ‹ › and a slider move every draw's period
-  by the same days (the Period column shows the staged span), each draw has Start / End date boxes limited by its
-  neighbours so nothing overlaps; closing the editor drops it all. Nothing reaches QuickBooks (where the period lives,
-  on the invoice memo), the ledger or Notion. `ledger/draw_periods.py` keeps the period rules (`period_of`,
-  `memo_with`, `check`) and lists a job's periods from the mirror on the command line.
+- **Draw periods** (project page, MFD / CP) - saved on the ledger only, never QuickBooks (owner 2026-10-11). The
+  **Draw periods** button on the draw tabs opens an editor above the Draw overview: ‹ › and a slider move every draw's
+  period by the same days (the Period column follows), each draw has Start / End date boxes limited by its neighbours
+  so nothing overlaps, **Save** keeps the windows in `draw_period` (`/api/draw-periods/save`; a window equal to the
+  invoice's is not kept). The page then uses the saved window as the draw's period (overview + the subs matched into
+  the draw) and shows "as invoiced" on hover. The invoice memo in QuickBooks, the Bill Tracker and Notion stay as they
+  are. `ledger/draw_periods.py` also keeps the period rules (`period_of`, `memo_with`, `check`) and lists a job's
+  periods from the mirror on the command line.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
 - **QBO changes** (Audit - five pages off ONE tab-page) — what changed in QuickBooks: the mirror's change log

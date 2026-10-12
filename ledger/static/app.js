@@ -4926,27 +4926,32 @@ function _ppTabs(d) {
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
   if (!_pp.isRp && d.draws.some(x => !x.no_draw && x.period_start && x.period_end)) {   // draws with a period on the invoice: the editor (owner 2026-10-11)
     const b = document.createElement("button"); b.type = "button"; b.className = "btn small pp-pe-btn" + (_pp.pe ? " on" : ""); b.textContent = _pp.pe ? "Close draw periods" : "Draw periods";
-    b.title = "An example: slide every draw's period together, or set one draw's dates - shown in the Draw overview, written nowhere";
+    b.title = "Slide every draw's period together, or set one draw's dates, and save them on the ledger - the invoices in QuickBooks stay as they are";
     b.onclick = () => { if (_pp.pe) _pp.pe = null; else _pePrime(d); _renderPpDraws(); }; strip.appendChild(b); }
   return strip;
 }
 // ── Draw periods (owner 2026-10-11: "change period draw dates by moving it in a horizontal <> way and it changes the
 // dates as it goes for all, and then a way to edit individual periods themselves without it overlapping the other
-// ones" - then: "just as an example, never write"). AN EXAMPLE ONLY: the dates are staged on the page and shown in the
-// Draw overview; nothing is written - not to QuickBooks (where the period lives, on the invoice memo), not to the
-// ledger, not to Notion. ‹ › and the slider move EVERY draw by the same days; a draw's own dates are typed in boxes
-// whose limits are its neighbours, so nothing can overlap. Closing the editor drops it all.
+// ones" - "never write" to QuickBooks - "a feature inside the page ... put save but only on the ledger"). The dates
+// are staged on the page, the Draw overview follows, and SAVE keeps them on the ledger (/api/draw-periods/save ->
+// draw_period): from then on the page uses the saved window as the draw's period, with "as invoiced" beside it.
+// QuickBooks (where the period lives, on the invoice memo), the Bill Tracker and Notion are never touched. ‹ › and the
+// slider move EVERY draw by the same days; a draw's own dates are typed in boxes whose limits are its neighbours, so
+// nothing can overlap.
 const _isoAdd = (iso, days) => { const [y, m, d] = String(iso).split("-").map(Number); const t = new Date(y, m - 1, d + days); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
 const _isoDays = (a, b) => Math.round((new Date(b + "T00:00") - new Date(a + "T00:00")) / 86400000);
 function _pePrime(d) {
   const rows = d.draws.filter(x => !x.no_draw && x.period_start && x.period_end && (x.invoices || []).some(i => i.qbo_txn_id))
     .map(x => ({ key: x.matched_invoice, label: _ppTitle(x), inv: _ppInvRange(x.invoice_nos || (x.invoice_no ? [x.invoice_no] : [])),
-                 ids: (x.invoices || []).map(i => i.qbo_txn_id).filter(Boolean), start0: x.period_start, end0: x.period_end, start: x.period_start, end: x.period_end }))
-    .sort((a, b) => a.start0.localeCompare(b.start0));
-  _pp.pe = { rows, offset: 0 };
+                 ids: (x.invoices || []).map(i => i.qbo_txn_id).filter(Boolean),
+                 start0: x.inv_period_start || x.period_start, end0: x.inv_period_end || x.period_end,   // as invoiced
+                 s1: x.period_start, e1: x.period_end,                                                     // as the page holds it now (saved, or the invoice's)
+                 start: x.period_start, end: x.period_end }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+  _pp.pe = { rows, offset: 0, busy: false, msg: "" };
 }
-function _peDraft(dr) {   // the staged span for a draw, "" when unchanged
-  const pe = _pp.pe; if (!pe) return ""; const r = pe.rows.find(x => x.key === dr.matched_invoice); if (!r || (r.start === r.start0 && r.end === r.end0)) return "";
+function _peDraft(dr) {   // the staged span for a draw, "" when it is what the page already holds (saved, or as invoiced)
+  const pe = _pp.pe; if (!pe) return ""; const r = pe.rows.find(x => x.key === dr.matched_invoice); if (!r || (r.start === r.s1 && r.end === r.e1)) return "";
   return fmtDate(r.start) + " – " + fmtDate(r.end);
 }
 function _peProblem(pe) {   // the first thing that stops a write, in plain words ("" when none)
@@ -4959,7 +4964,7 @@ function _peShift(pe, delta) { if (!delta) return; for (const r of pe.rows) { r.
 function _ppPeriodsPanel(d) {
   const pe = _pp.pe, box = document.createElement("div"); box.className = "pp-periods";
   const head = document.createElement("div"); head.className = "pp-pe-head";
-  head.innerHTML = `<b>Draw periods</b><span class="pp-pe-ex">example only - nothing is written anywhere</span><span class="dim">‹ › moves every draw · type a date to set one draw (its neighbours are its limits) · the Draw overview shows the result</span>`;
+  head.innerHTML = `<b>Draw periods</b><span class="dim">‹ › moves every draw · type a date to set one draw (its neighbours are its limits) · Save keeps them on the ledger only - the invoices in QuickBooks stay as they are</span>`;
   box.appendChild(head);
   // shift row
   const sh = document.createElement("div"); sh.className = "pp-pe-shift";
@@ -4970,8 +4975,8 @@ function _ppPeriodsPanel(d) {
   sh.appendChild(range);
   sh.appendChild(mkBtn("›", 1, "Every period one day later"));
   const lab = document.createElement("span"); lab.className = "pp-pe-off"; lab.id = "ppPeOff"; sh.appendChild(lab);
-  const reset = document.createElement("a"); reset.href = "#"; reset.className = "pp-pe-reset"; reset.textContent = "back to as invoiced"; reset.title = "Drop every staged change";
-  reset.onclick = (e) => { e.preventDefault(); _pePrime(d); _renderPpDraws(); }; sh.appendChild(reset);
+  const reset = document.createElement("a"); reset.href = "#"; reset.className = "pp-pe-reset"; reset.textContent = "back to as invoiced"; reset.title = "Every draw back to the window on its invoice (then Save to keep that)";
+  reset.onclick = (e) => { e.preventDefault(); for (const r of pe.rows) { r.start = r.start0; r.end = r.end0; } pe.offset = 0; _renderPpDraws(); }; sh.appendChild(reset);
   box.appendChild(sh);
   // one row per draw, oldest first
   const t = document.createElement("table"); t.className = "grid pp-pe-tbl";
@@ -4990,25 +4995,39 @@ function _ppPeriodsPanel(d) {
       td.appendChild(inp); return td; };
     tr.appendChild(mkDate("start")); tr.appendChild(mkDate("end"));
     tr.appendChild(leftText(String(_isoDays(r.start, r.end) + 1)));
-    { const td = leftText(changed ? `was ${fmtDate(r.start0)} – ${fmtDate(r.end0)}` : "same"); if (!changed) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(changed ? `${fmtDate(r.start0)} – ${fmtDate(r.end0)}` : "same"); if (!changed) td.classList.add("dim"); tr.appendChild(td); }
     tb.appendChild(tr);
   });
   t.appendChild(tb); box.appendChild(t);
-  // what is staged (an example - nothing leaves the page)
+  // Save - on the ledger only
   const act = document.createElement("div"); act.className = "pp-pe-act";
-  const changed = pe.rows.filter(r => r.start !== r.start0 || r.end !== r.end0), problem = _peProblem(pe);
+  const changed = pe.rows.filter(r => r.start !== r.start0 || r.end !== r.end0), dirty = pe.rows.some(r => r.start !== r.s1 || r.end !== r.e1), problem = _peProblem(pe);
   const s = document.createElement("span"); s.className = problem ? "pp-pe-bad" : "dim";
-  s.textContent = problem || (changed.length ? `${changed.length} draw${changed.length === 1 ? "" : "s"} moved on the page - as an example only, the invoices in QuickBooks are untouched` : "nothing moved yet");
+  s.textContent = problem || (dirty ? `${changed.length} draw${changed.length === 1 ? "" : "s"} off the invoice window - not saved yet` : (changed.length ? `${changed.length} draw${changed.length === 1 ? "" : "s"} set on the ledger` : "every draw as invoiced"));
   act.appendChild(s);
+  const sv = document.createElement("button"); sv.type = "button"; sv.className = "btn small primary"; sv.textContent = pe.busy ? "Saving…" : "Save"; sv.disabled = pe.busy || !!problem || !dirty;
+  sv.title = "Keep these windows on the ledger (this page uses them from now on) - QuickBooks is not touched"; sv.onclick = () => _peSave(); act.appendChild(sv);
+  if (pe.msg) { const m = document.createElement("span"); m.className = /fail|not |refused|overlap/i.test(pe.msg) ? "pp-pe-bad" : "pp-pe-ok"; m.textContent = pe.msg; act.appendChild(m); }
   box.appendChild(act);
   _rePaintPe(box);
   return box;
 }
+async function _peSave() {
+  const pe = _pp.pe; if (!pe || pe.busy) return; pe.busy = true; pe.msg = ""; _renderPpDraws();
+  const periods = []; for (const r of pe.rows) for (const id of r.ids) periods.push({ id, start: r.start, end: r.end, inv_start: r.start0, inv_end: r.end0, label: r.label });
+  let res; try { res = await (await fetch("/api/draw-periods/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: _pp.pn, periods }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  pe.busy = false;
+  if (!res.ok) { pe.msg = "Not saved: " + (res.error || "failed"); _renderPpDraws(); return; }
+  toast(res.saved ? `${res.saved} draw period${res.saved === 1 ? "" : "s"} saved on the ledger` : "Every draw back to as invoiced");
+  await openProjectPage(_pp.pn);           // the page re-reads the job with the saved windows
+  _pePrime(_pp.d); _renderPpDraws();       // the editor stays open on the fresh page
+}
 function _rePaintPe(box) {   // the offset label + the staged spans in the Coverage table, without a full redraw (the slider is live)
   const pe = _pp.pe; if (!pe) return;
-  const lab = (box || document).querySelector("#ppPeOff") || $("#ppPeOff"); if (lab) lab.textContent = pe.offset ? `${pe.offset > 0 ? "+" : ""}${pe.offset} day${Math.abs(pe.offset) === 1 ? "" : "s"}` : "as in QuickBooks";
+  const lab = (box || document).querySelector("#ppPeOff") || $("#ppPeOff"); if (lab) lab.textContent = pe.offset ? `${pe.offset > 0 ? "+" : ""}${pe.offset} day${Math.abs(pe.offset) === 1 ? "" : "s"}` : "no shift";
   for (const td of $$("td.pp-period-cell")) { const r = pe.rows.find(x => x.key === td.dataset.key); if (!r) continue;
-    const draft = r.start !== r.start0 || r.end !== r.end0; td.textContent = _ppShortDates(draft ? fmtDate(r.start) + " – " + fmtDate(r.end) : fmtDate(r.start0) + " – " + fmtDate(r.end0)); td.classList.toggle("pp-period-draft", draft); }
+    const draft = r.start !== r.s1 || r.end !== r.e1; td.textContent = _ppShortDates(fmtDate(r.start) + " – " + fmtDate(r.end)); td.classList.toggle("pp-period-draft", draft); }
 }
 function _ppScrollDetail() { /* the page stays put when a draw is picked (owner 2026-09-23: "when i click a draw do not make my screen go down") */ }
 // The Draw overview (owner 2026-09-30: "it's not how we get funded, it's an overview of transactions per draw"):
@@ -5096,7 +5115,10 @@ function _ppCoverage(d) {
     const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (_pp.view === dr.matched_invoice ? " sel" : "");   // ONE highlight: the draw you picked (owner 2026-09-23)
     tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
     { const draft = _peDraft(dr), sp0 = _ppShortDates(draft || _ppSpan(dr)); const td = leftText(sp0 || "–"); if (!sp0) td.classList.add("dim");
-      td.classList.add("pp-period-cell"); td.dataset.key = dr.matched_invoice; if (draft) { td.classList.add("pp-period-draft"); td.title = "staged - not in QuickBooks yet"; } tr.appendChild(td); }
+      td.classList.add("pp-period-cell"); td.dataset.key = dr.matched_invoice;
+      if (draft) { td.classList.add("pp-period-draft"); td.title = "not saved yet"; }
+      else if (dr.period_source === "ledger") { td.classList.add("pp-period-saved"); td.title = `set on the ledger${dr.period_saved_at ? " " + fmtDate(dr.period_saved_at) : ""} · as invoiced ${fmtDate(dr.inv_period_start)} – ${fmtDate(dr.inv_period_end)} · QuickBooks unchanged`; }
+      tr.appendChild(td); }
     tr.appendChild(leftText(_ppTitle(dr)));
     { const td = document.createElement("td"); td.className = "left pp-invst"; const st = _ppInvStatus(dr); const sp = document.createElement("span"); sp.className = st.cls; sp.textContent = st.text; if (st.tip) td.title = st.tip; td.appendChild(sp); tr.appendChild(td); }
     { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (_ppInvRange(nos) || "–"));

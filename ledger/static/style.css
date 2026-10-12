@@ -2442,7 +2442,7 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .pp-pe-act { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .pp-pe-bad { color: var(--neg-text, #b3261e); font-weight: 600; }
 .pp-pe-ok { color: var(--ok-text, #2e7d32); font-weight: 600; }
-.pp-pe-ex { font-size: .8em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border)); border-radius: 6px; padding: 1px 7px; }
+td.pp-period-saved { text-decoration: underline dotted; text-underline-offset: 3px; }   /* a window set on the ledger (hover: as invoiced) */
 td.pp-period-draft { color: var(--accent-text); font-weight: 600; }
 .rc-change { margin: 0 var(--pad-x) 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
 .rc-ch-head { display: flex; align-items: center; gap: 12px; font-weight: 600; }

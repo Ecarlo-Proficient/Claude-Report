@@ -14,20 +14,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
   Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
   2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
-- 10/11/2026 (night) · **Draw periods editor on the project page - an example only, it never writes** (owner: "a way
-  to change period draw dates by moving it in a horizontal <> way and it changes the dates as it goes for all, and then
-  a way to edit individual periods themselves without it overlapping the other ones"; then "just as an example, never
-  write"). On an MFD / CP job whose invoices carry a period, a **Draw periods** button on the draw tabs opens the
-  editor above the Draw overview: ‹ › and a slider move EVERY draw's period by the same days (the Coverage table's
-  Period column shows the staged span in the accent colour); one row per draw, oldest first, with Start / End date
-  boxes whose min / max are the neighbouring draws (a typed date is clamped, so nothing overlaps), Days, and "as
-  invoiced"; "back to as invoiced" drops it all, so does closing the editor. NOTHING IS WRITTEN - not to QuickBooks
-  (where the period lives, on the invoice memo), not to the ledger, not to Notion; the badge on the editor says so.
-  NEW `ledger/draw_periods.py` keeps the vocabulary should a real change ever be asked for - `period_of`, `memo_with`
-  (the dates swapped in place, every other word kept), `check` (end before start, longer than 120 days, overlapping
-  draws; several invoices on one draw share one window) - and lists a job's periods from the mirror on the command
-  line. No route, no write path (a plan / commit pair was built and removed the same evening on the owner's word).
-  Tests: `tests/test_draw_periods.py`. Checked in the preview on MFD325 (shift, type, clamp, the overview following).
+- 10/11/2026 (night) · **Draw periods on the project page - saved on the ledger only** (owner: "a way to change
+  period draw dates by moving it in a horizontal <> way and it changes the dates as it goes for all, and then a way to
+  edit individual periods themselves without it overlapping the other ones"; "never write" [to QuickBooks]; "more of a
+  feature inside the page ... put save but only on the ledger"). On an MFD / CP job whose invoices carry a period, a
+  **Draw periods** button on the draw tabs opens the editor above the Draw overview: ‹ › and a slider move EVERY
+  draw's period by the same days (the Coverage table's Period column follows, staged in the accent colour); one row
+  per draw, oldest first, Start / End date boxes whose min / max are the neighbouring draws (a typed date is clamped,
+  so nothing overlaps), Days, and the window "as invoiced"; "back to as invoiced" stages every draw back. **Save**
+  keeps the windows on the ledger - NEW table `draw_period` (one row per invoice of the draw; a window equal to the
+  invoice's is not kept) via `/api/draw-periods/save` (`draw_periods.save`, refused on an overlap, replaces the job's
+  rows). From then on the project page uses the saved window as the draw's period (`_fetch_project_page` applies
+  `draw_periods.saved` before the subs are matched into the draw; `period_source` = ledger / invoice,
+  `inv_period_start/end` ride along), the Coverage cell is dotted-underlined with "set on the ledger · as invoiced a –
+  b" on hover, and the editor reopens on the saved windows. QuickBooks (where the period lives, on the invoice memo),
+  the Bill Tracker and Notion are never touched. `draw_periods.py` also keeps the period rules (`period_of`,
+  `memo_with`, `check`) and a read-only listing from the mirror. A QuickBooks write path was built first and removed
+  the same evening on the owner's word. Tests: `tests/test_draw_periods.py`. Checked in the preview on MFD325:
+  shift +2, Save (13 draws), the page re-read with the saved windows, back to as invoiced + Save (0 kept).
 - 10/11/2026 (later) · **An invoice's story under its Audit row** (owner: "add ... if the invoices were deleted with
   notion invoice tracker data and more so the history of invoices and the creation date"). `/api/qboaudit/invoice?id=`
   (`_invoice_history`): from the mirror - created in QuickBooks (`MetaData.CreateTime`, the mirror's `created`), the

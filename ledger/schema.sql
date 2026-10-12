@@ -356,6 +356,13 @@ CREATE TABLE IF NOT EXISTS project_note (        -- the owner's notes on a job (
     text        TEXT NOT NULL,
     at          TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS draw_period (         -- a draw's period as set on the ledger (project page, 2026-10-11): QuickBooks untouched
+    invoice_id  TEXT PRIMARY KEY,                    -- QBO invoice id (every invoice of a draw carries the same window)
+    project_no  TEXT NOT NULL,
+    start       TEXT NOT NULL,                       -- YYYY-MM-DD
+    end         TEXT NOT NULL,
+    saved_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS bill_mark (
     bill_id     TEXT PRIMARY KEY,      -- QBO bill TxnId (the workbook _Key)
     lien        TEXT,                  -- 'Notice Sent' | 'Lien Filed' | '✓ Released' | '' (cleared)

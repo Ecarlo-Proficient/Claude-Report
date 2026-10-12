@@ -62,6 +62,7 @@ import dup_customers      # noqa: E402  (local: one project # on two QBO custome
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
 import invoice_view       # noqa: E402  (local: the invoice viewer - an invoice as QuickBooks holds it: lines, payments, joint checks; /api/invoice/view)
 import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
+import draw_periods       # noqa: E402  (local: a job's draw periods as set on the ledger - the project page's editor; never QBO)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
 import server_status      # noqa: E402  (local: the office server as the ledger watches it - server-status.json + writer.json -> one judgement)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
@@ -2641,6 +2642,22 @@ def _fetch_project_page(con, pn: str) -> dict:
     is_rp = pn.startswith("RP")
     raw = [] if is_rp else [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
     draws = _draws_by_invoice(con, pn, division, raw, scopes=is_rp)   # same-draw invoices = one draw; RP = scopes between invoice dates
+    # a draw's period as SET ON THE LEDGER (the page's Draw periods editor, owner 2026-10-11: "save but only on the ledger")
+    # wins over the invoice memo's for everything on this page - the Draw overview and the subs matched into the draw;
+    # the memo's window rides along as "as invoiced". QuickBooks is never touched.
+    if not is_rp:
+        held = draw_periods.saved(con, pn)
+        for d in draws:
+            if d.get("no_draw"):
+                continue
+            inv = d.get("period") or _draw_period_range(d.get("matched_invoice") or "")
+            d["inv_period_start"], d["inv_period_end"] = inv[0], inv[1]
+            hit = next((held[str(i.get("qbo_txn_id"))] for i in (d.get("invoices") or []) if str(i.get("qbo_txn_id")) in held), None)
+            if hit:
+                d["period"] = (hit[0], hit[1])
+                d["period_source"], d["period_saved_at"] = "ledger", hit[2]
+            else:
+                d["period_source"] = "invoice"
     # draw order = invoice date, then recency; the "no draw yet" bucket last
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
     pay = bill_marks.read_pay_marks()
@@ -3941,6 +3958,8 @@ class Handler(BaseHTTPRequestHandler):
             self._check_reapply()
         elif p == "/api/reclassify/commit":   # THE QBO WRITE: move the ticked lines, only the preview the owner confirmed
             self._reclassify_commit()
+        elif p == "/api/draw-periods/save":   # a ledger write - a job's draw periods as set on the page (draw_period); never QBO
+            self._draw_periods_save()
         elif p == "/api/checkdrift/bulk":     # Clear copy, step 1: prove every listed check again LIVE (no write)
             self._check_bulk(False)
         elif p == "/api/checkdrift/bulk/commit":  # THE QBO WRITE: every confirmed clear copy that still proves
@@ -4722,6 +4741,30 @@ class Handler(BaseHTTPRequestHandler):
         if res.get("ok"):
             r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
             res["mirror_refreshed"] = r.returncode == 0
+        self._json(res)
+
+    def _draw_periods_save(self):
+        """{project, periods: [{id, start, end, inv_start, inv_end, label}]} for every draw of the job that carries a
+        period -> the windows that differ from the invoice are kept on the ledger (draw_period), the rest dropped.
+        Refused on an overlap. Ledger only - QuickBooks, the Bill Tracker and Notion never see it."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        pn = str(body.get("project") or "").strip().upper()
+        if not _PROJ_RE.match(pn):
+            return self._json({"ok": False, "error": "project required"}, 400)
+        try:
+            con = sqlite3.connect(self.db_path)
+            try:
+                res = draw_periods.save(con, pn, list(body.get("periods") or [])[:200])
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            return self._json({"ok": False, "error": f"write failed: {e}"}, 500)
         self._json(res)
 
     def _reclassify_commit(self):

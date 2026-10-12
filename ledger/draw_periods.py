@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-draw_periods.py - Draw periods, AS AN EXAMPLE ONLY (the owner 10/11/2026: "a way to change period draw dates by moving
-it in a horizontal <> way and it changes the dates as it goes for all, and then a way to edit individual periods
-themselves without it overlapping the other ones" - and then: "just as an example, never write").
+draw_periods.py - Draw periods on the ledger (the owner 10/11/2026: "a way to change period draw dates by moving it in
+a horizontal <> way and it changes the dates as it goes for all, and then a way to edit individual periods themselves
+without it overlapping the other ones" - "never write" to QuickBooks - "a feature inside the page ... put save but
+only on the ledger").
 
 A draw's period is the "(Period:MM/DD/YYYY - MM/DD/YYYY)" on its invoice's memo in QuickBooks. The ledger's project
-page lets the owner slide every period together or type one draw's dates between its neighbours and see the result
-in the Draw overview - and that is all it does. NOTHING IS WRITTEN: not to QuickBooks, not to the ledger, not to
-Notion. The rules below (read a period, rewrite a memo's period in place, refuse overlaps) are the shared vocabulary
-should a real change ever be asked for; today only the page uses the overlap rule, through its own date limits.
+page lets the owner slide every period together or type one draw's dates between its neighbours, and SAVE them -
+on the ledger only (`draw_period`, one row per invoice of the draw): the project page then uses the saved window
+as the draw's period (the Draw overview, the subs matched into the draw) and shows "as invoiced" beside it.
+QuickBooks, the Bill Tracker and Notion are never touched; a saved window that equals the invoice's is not kept.
+
+    saved(con, project)               {invoice id: (start, end, saved_at)} - what the ledger holds for the job
+    save(con, project, periods)       periods = [{id, start, end, inv_start, inv_end, label}] for EVERY draw of the
+                                      job that carries a period; refused on an overlap; replaces the job's rows
+                                      with the windows that differ from the invoice; returns how many are kept
+    period_of / memo_with / check     the period vocabulary (read, rewrite in place, the overlap rule)
 
 Command line:  ledger/draw_periods.py MFD325            every draw's period on the job, from the mirror (read-only)
 """
@@ -80,6 +87,40 @@ def check(periods: list) -> str:
         if s2 <= e1:
             return f"{l2} ({_us(s2)} - {_us(e2)}) overlaps {l1} ({_us(s1)} - {_us(e1)})"
     return ""
+
+
+_TABLE = ("CREATE TABLE IF NOT EXISTS draw_period (invoice_id TEXT PRIMARY KEY, project_no TEXT NOT NULL, "
+          "start TEXT NOT NULL, end TEXT NOT NULL, saved_at TEXT NOT NULL)")
+
+
+def saved(con, project: str) -> dict:
+    """{invoice id: (start, end, saved_at)} - the windows set on the ledger for this job ({} when none / no table)."""
+    try:
+        return {str(r[0]): (r[1], r[2], r[3]) for r in
+                con.execute("SELECT invoice_id, start, end, saved_at FROM draw_period WHERE project_no=?", ((project or "").upper(),))}
+    except Exception:            # noqa: BLE001 - an older ledger without the table
+        return {}
+
+
+def save(con, project: str, periods: list) -> dict:
+    """Replace the job's saved windows with the ones that differ from the invoice. Refused on an overlap or a
+    window that is not one. Ledger only."""
+    project = (project or "").strip().upper()
+    rows = [p for p in (periods or []) if isinstance(p, dict) and str(p.get("id") or "").strip()]
+    if not project or not rows:
+        return {"ok": False, "error": "project and periods required"}
+    why = check(rows)
+    if why:
+        return {"ok": False, "error": why}
+    keep = [p for p in rows if (p.get("start"), p.get("end")) != (p.get("inv_start"), p.get("inv_end"))]
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    con.execute(_TABLE)
+    con.execute("DELETE FROM draw_period WHERE project_no=?", (project,))
+    for p in keep:
+        con.execute("INSERT OR REPLACE INTO draw_period(invoice_id, project_no, start, end, saved_at) VALUES (?,?,?,?,?)",
+                    (str(p["id"]).strip(), project, p["start"], p["end"], now))
+    con.commit()
+    return {"ok": True, "saved": len(keep), "saved_at": now}
 
 
 def main() -> None:
