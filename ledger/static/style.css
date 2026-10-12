@@ -2611,3 +2611,11 @@ td.stmt-cell { white-space: nowrap; }
   .rv-project .record-tools { grid-area: tools; justify-content: flex-start; margin-left: 0; max-width: none; }
   .rv-project .record-stats { grid-area: stats; margin-left: 0; }
 }
+
+/* ── Revised bills (AP-13 follow-up board, owner 2026-10-12) ─────────────────────────────────────────────────── */
+.rev-pill.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); } .rev-pill.warn .stmt-dot { background: var(--warn); }
+.rev-pill.info { color: color-mix(in srgb, #2f6fd6 80%, var(--text)); border-color: color-mix(in srgb, #2f6fd6 45%, var(--border)); background: color-mix(in srgb, #2f6fd6 12%, var(--surface)); } .rev-pill.info .stmt-dot { background: #2f6fd6; }
+.rev-pill { cursor: default; }
+tr.rev-flagged td.rev-flags { color: var(--neg-text); font-weight: 600; }
+td.rev-late { color: var(--warn-text); font-weight: 600; }
+#revTable td { white-space: nowrap; } #revTable td.inv-memo, #revTable td.rev-flags { white-space: normal; max-width: 320px; }

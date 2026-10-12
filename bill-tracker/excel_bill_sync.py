@@ -2815,6 +2815,15 @@ def main() -> int:
         return 2
     print(f"  ✓ saved {OUTPUT_PATH}")
 
+    # The REVISED-bill follow-up board (owner 10/12/2026: "where do the revised bills stand - sent? replied? re-issued?
+    # in QBO?"): one Notion row per PM-revised bill, from the QuickBooks copy + the statement records. Off until
+    # ACB_REVISED_DS_ID is set; never fails the AP run.
+    try:
+        import revised_bills
+        revised_bills.run(write=not args.dry_run)
+    except Exception as e:                                # noqa: BLE001
+        print(f"  revised bills: skipped ({e})")
+
     # 600 on the owner's Mac (his own account). On the office server the file
     # belongs to the automation user, and 600 locked every person out of the
     # live tracker (docker/STATUS 10/05) - there the share's own permissions

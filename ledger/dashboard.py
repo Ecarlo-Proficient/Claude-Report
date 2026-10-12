@@ -49,6 +49,7 @@ from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven, wip_audi
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
 from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
 from shared import statement_record  # the vendor statement record the reconciler writes (Vendor Center bubble + Statement view)
+from shared import revised_board      # the Notion Revised Bills board (AP-13): read-only here, /api/revisions
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -3898,6 +3899,8 @@ class Handler(BaseHTTPRequestHandler):
             self._statement_file(self._query(), "file")
         elif path == "/api/server":          # the office server monitor: server-status.json + writer.json -> ok / late / down / failing / standing down
             self._json(server_status.read(paths.accounting_base() / "_automation"))
+        elif path == "/api/revisions":       # the REVISED-bill follow-up board (Notion, written by bill-tracker/revised_bills.py) + where each stands
+            self._revisions(self._query())
         elif path == "/api/bill-payment/stubs":     # the printed-stub history for a vendor / payment (status vs QBO now) + the column registry
             self._bp_stubs(self._query())
         elif path == "/api/bill-payment/stub/file":  # one printed stub's PDF, by history id (the file as it went out, even if QBO changed)
@@ -4108,6 +4111,36 @@ class Handler(BaseHTTPRequestHandler):
                  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                  ".xls": "application/vnd.ms-excel"}.get(target.suffix.lower(), "application/octet-stream")
         self._send(200, target.read_bytes(), ctype)
+
+    # ── revised bills: the Notion board the clerk works, read live (owner 2026-10-12) ─────────────────────────
+    _rev_cache: dict = {"at": 0.0, "data": None}
+
+    def _revisions(self, q: dict):
+        now = time.time()
+        c = type(self)._rev_cache
+        if c["data"] is None or now - c["at"] > 60 or q.get("fresh"):
+            ds = revised_board.ds_id()
+            if not ds:
+                c["data"] = {"ok": False, "error": "the Revised Bills board is not set up on this Mac (ACB_REVISED_DS_ID in machine.env)", "rows": []}
+            else:
+                try:
+                    from shared.notion_client import NotionClient
+                    rows = revised_board.read_rows(NotionClient(), ds)
+                    today = _dt.date.today()
+                    for r in rows:
+                        r["standing"] = revised_board.standing(r, today)
+                        r["flag_list"] = [f for f in (r.get("flags") or "").split(" · ") if f]
+                    rows.sort(key=lambda r: (not r["flag_list"], r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
+                    c["data"] = {"ok": True, "rows": rows, "read_at": _dt.datetime.now().isoformat(timespec="minutes"),
+                                 "board_url": f"https://www.notion.so/{ds.replace('-', '')}"}
+                except Exception as e:                    # noqa: BLE001 - no token / board not shared = an answer
+                    msg = _scrub(str(e))
+                    if "object_not_found" in msg or " 404 " in msg:
+                        msg = ("The Revised Bills board on Notion is not connected to the Automation Integrator yet - open the board, "
+                               "its ··· menu, Connections, add Automation Integrator. Then Refresh here.")
+                    c["data"] = {"ok": False, "error": msg, "rows": []}
+            c["at"] = now
+        self._json(c["data"])
 
     # ── bill payment stubs (payment on top, bills below) + their print history ──────────────
     def _bp_stubs(self, q: dict):

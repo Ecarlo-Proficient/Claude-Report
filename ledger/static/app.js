@@ -269,7 +269,7 @@ const WAIVERS_ENABLED = false;
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
-  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
+  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills", "revised"] },   // Revised bills: the AP-13 follow-up board (owner 2026-10-12)   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
   { id: "audit",     label: "Audit",     tabs: ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared", "qboar", "qboardel", "dupcustomers", "qboother"],
     cats: [["AP", ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared"]], ["AR", ["qboar", "qboardel"]], ["Company", ["dupcustomers", "qboother"]]] },   // the sub-tab row shows each category's name before its pages
@@ -277,7 +277,7 @@ const NAV_GROUPS = [
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
-  projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
+  projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", revised: "Revised bills", invoices: "Invoice Tracker", customercenter: "Customer Center",
   payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
   qboap: "Bills changed", qboapdel: "Bills deleted", qboar: "Invoices changed", qboardel: "Invoices deleted", qboother: "Other changes",   // short on the tab; the page title says it in full
   wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
@@ -343,6 +343,7 @@ function setTab(t) {
   if (t === "billaudit") loadAccounting();
   if (PAGE_OF[t] === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
+  if (t === "revised") loadRevised();
   if (t === "uncleared") loadUncleared();
   if (t === "dupcustomers") loadDupCustomers();
   if (t === "reclassify") loadReclassify();
@@ -2857,6 +2858,7 @@ let _stmtOpen = null;   // bucket -> open? (per page visit)
 async function _renderVendorStatement(d, body, seq) {
   $("#recordSub").textContent = "Vendor statement, as the reconciler last checked it against QuickBooks";
   const host = document.createElement("div"); host.className = "stmt-wrap"; body.appendChild(host); skeletonInto(host, 4);
+  if (!REV) { try { REV = await (await fetch("/api/revisions")).json(); } catch { REV = { ok: false, rows: [] }; } }   // the revised-bill stages, for the legend
   let j; try { j = await (await fetch("/api/statement?v=" + encodeURIComponent(d.vendor))).json(); } catch { j = { ok: false, error: "could not load the statement record" }; }
   if (seq !== _vpSeq || _vendorView !== "statement" || !_vendorPageShowing(d)) return;
   host.innerHTML = "";
@@ -2924,6 +2926,7 @@ async function _renderVendorStatement(d, body, seq) {
       row.appendChild(a);
       const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = ln.amount != null ? moneyC(ln.amount) : ""; row.appendChild(amt);
       const sub = []; if (ln.job) sub.push(ln.job); if (key === "mismatch" && ln.qbo_amount != null) sub.push(`QBO ${moneyC(ln.qbo_amount)}`); if (ln.note) sub.push("“" + ln.note + "”");
+      { const rv = ln.ref ? revFor(d.vendor, ln.ref) : null; if (rv) sub.push(`revised bill: ${rv.stage || "To send"} - ${rv.standing.text}`); }
       if (sub.length) { const s2 = document.createElement("span"); s2.className = "sub"; s2.textContent = sub.join(" · "); s2.title = sub.join(" · "); row.appendChild(s2); }
       row.onclick = (e) => { if (e.metaKey || e.ctrlKey) return _stmtWhere(ln, r, d.vendor); _stmtFocus(ln.k, host, "page"); };
       list.appendChild(row);
@@ -2964,6 +2967,68 @@ async function openProcessRow(text) {
     if (hit) { hit.scrollIntoView({ block: "center" }); hit.classList.remove("flash-row"); void hit.offsetWidth; hit.classList.add("flash-row"); return; }
     await new Promise(res => setTimeout(res, 100));
   }
+}
+
+
+// ── Revised bills: the AP-13 follow-up as a process (owner 2026-10-12: "did the clerk send the bill to get revised? when?
+// have they responded? with the new revised bill? is the new revised bill uploaded to qbo?"). bill-tracker/revised_bills.py
+// keeps one Notion row per PM-revised bill (the QuickBooks copy + the statement records: original vs revised total, what the
+// vendor's statement says, the pickles flagged); the clerk sets the Stage and the four dates on Notion; the ledger reads the
+// board (/api/revisions) and says where each one stands and for how long.
+let REV = null;
+const REV_STAGE_CLS = { "To send": "bad", "Sent to vendor": "warn", "Vendor replied": "warn", "Revised bill received": "info", "Entered in QBO": "ok", "Done - statement agrees": "ok", "Dropped": "none" };
+function revPill(stage) { const s = document.createElement("span"); s.className = "stmt-pill rev-pill " + (REV_STAGE_CLS[stage] || "dim"); const d = document.createElement("span"); d.className = "stmt-dot"; s.appendChild(d); s.appendChild(document.createTextNode(stage || "–")); return s; }
+async function loadRevised(force) {
+  const table = $("#revTable"); if (!table) return;
+  if (REV && REV.ok && !force) { renderRevised(); return; }
+  const note = $("#revNote"); if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 5);
+  try { REV = await (await fetch("/api/revisions" + (force ? "?fresh=1" : ""))).json(); } catch (e) { REV = { ok: false, error: String(e), rows: [] }; }
+  renderRevised();
+}
+let _revStage = "open";   // open (default) | all | a stage name
+function renderRevised() {
+  const table = $("#revTable"), note = $("#revNote"), chips = $("#revChips"), board = $("#revBoard"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody"); thead.innerHTML = ""; tbody.innerHTML = ""; chips.innerHTML = "";
+  if (!REV || !REV.ok) { if (note) note.textContent = ""; tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((REV && REV.error) || "could not read the board")}</td></tr>`; if (board) board.hidden = true; return; }
+  if (board && REV.board_url) { board.href = REV.board_url; board.hidden = false; }
+  const all = REV.rows || [];
+  const openRows = all.filter(r => !r.standing.final);
+  if (note) note.textContent = `(${openRows.length} open · ${all.length} on the board · read ${REV.read_at ? fmtDate(REV.read_at, true) : "–"})`;
+  const stages = ["To send", "Sent to vendor", "Vendor replied", "Revised bill received", "Entered in QBO", "Done - statement agrees", "Dropped"];
+  const chip = (key, label, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (_revStage === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`; b.onclick = () => { _revStage = key; renderRevised(); }; chips.appendChild(b); };
+  chip("open", "Open", openRows.length); chip("flagged", "Flagged", all.filter(r => r.flag_list.length).length);
+  for (const st of stages) { const n = all.filter(r => (r.stage || "To send") === st).length; if (n) chip(st, st, n); }
+  chip("all", "All", all.length);
+  let rows = _revStage === "open" ? openRows : _revStage === "all" ? all : _revStage === "flagged" ? all.filter(r => r.flag_list.length) : all.filter(r => (r.stage || "To send") === _revStage);
+  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Date", "left"], ["Project", "left"], ["PM's reason", "left"], ["Vendor billed", "right"], ["QBO now", "right"], ["Open", "right"],
+                ["Stage", "left"], ["Where it stands", "left"], ["Sent", "left"], ["Replied", "left"], ["Received", "left"], ["Entered", "left"], ["Statement says", "left"], ["Flags", "left"], ["Notion", "left"]];
+  const htr = document.createElement("tr"); for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
+  if (!rows.length) { tbody.innerHTML = `<tr><td class="left" colspan="${cols.length}" style="padding:14px;color:var(--text-dim)">Nothing here.</td></tr>`; return; }
+  for (const r of rows) {
+    const tr = document.createElement("tr"); if (r.flag_list.length) tr.classList.add("rev-flagged");
+    { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); openVendorPage(r.vendor); }; td.appendChild(a); tr.appendChild(td); }
+    tr.appendChild(qboLinkCell(r.bill || "–", r.qbo_bill || (r.key ? qboUrl("bill", r.key) : ""), "Open this bill in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.bill_date)));
+    tr.appendChild(_vpProjCell(r.project ? [r.project] : []));
+    { const td = leftText(r.pm_reason || "–"); td.title = r.pm_reason || ""; td.className += " inv-memo"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.vendor_original != null) td.appendChild(moneyCellC(r.vendor_original)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.qbo_total != null) td.appendChild(moneyCellC(r.qbo_total)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.open_balance != null) td.appendChild(moneyCellC(r.open_balance)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; td.appendChild(revPill(r.stage || "To send")); tr.appendChild(td); }
+    { const td = leftText(r.standing.text || ""); if (!r.standing.final && (r.standing.days || 0) > 14) td.classList.add("rev-late"); tr.appendChild(td); }
+    for (const k of ["sent_on", "replied_on", "received_on", "entered_on"]) { const td = leftText(r[k] ? fmtDateShort(r[k]) : "–"); if (!r[k]) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(r.statement_says || "–"); td.title = r.statement_says || ""; tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left rev-flags"; td.textContent = r.flag_list.join(" · ") || "–"; if (!r.flag_list.length) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; if (r.url) { const a = document.createElement("a"); a.href = r.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "open ↗"; a.title = "The row on the Notion board - the clerk's stage, dates and notes"; td.appendChild(a); } else td.textContent = "–"; tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+}
+// the revised-bill standing for one bill, used by the vendor page's Statement legend (vendor + bill # folded the same way)
+function revFor(vendor, ref) {
+  if (!REV || !REV.ok) return null;
+  const vk = stmtKey(vendor), rk = stmtKey(ref);
+  return (REV.rows || []).find(r => stmtKey(r.vendor) === vk && stmtKey(r.bill) === rk) || null;
 }
 
 // ── The office server monitor (owner 2026-10-09, the day the Synology went live: "make sure we can monitor action") ──
@@ -10878,6 +10943,7 @@ function init() {
   { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
   { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("review"); }; }
   { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
+  { const el = $("#btnRevRefresh"); if (el) el.onclick = () => loadRevised(true); }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
   // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
   // above the fold"); remembered per person, and forced open while one of them is active.
