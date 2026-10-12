@@ -38,6 +38,9 @@ Record (version 1):
                 is an index into `pages` (None = read but not found on the page); top /
                 bottom are image pixels. Also every QBO bill not on the statement
                 (bucket "unlisted", no page).
+  revised     [{bill_id, invoice, invoice_date, amount_billed, corrected_amount, reason, stage, sent_on,
+                replied_on, received_on, entered_on, notes, revised_on}]  the Revised Bills sheet's rows
+                (shared/revised_sheet) - the ledger's Vendors -> Revised bills reads these
   unread      [{page, top, bottom, text}]     rows on the page that look like a bill with no
                                               band - the tool may have missed them
   not_found   ["ref · date · amount"]         lines read but not located on any page
@@ -231,6 +234,7 @@ def build(result: dict, *, status: str, standing: str, notion_url: str = "",
         "open_items": result.get("open_items") or {},
         "statements": result.get("statements") or [],
         "files": rec_in.get("files") or [], "excel": rec_in.get("excel") or "",
+        "revised": [{k: v for k, v in r.items() if k != "standing"} for r in (rec_in.get("revised") or [])],
         "notion_url": notion_url or "",
         "pages": pages, "lines": lines, "unread": unread, "not_found": not_found,
         "located": located, "total": total,
@@ -269,7 +273,8 @@ def summary(rec: dict) -> dict:
                                     "checked_at", "clean", "tieout", "gap", "amount_due", "merged_total",
                                     "matched", "counts", "open_items", "notion_url", "located", "total")} | {
         "pages": len(rec.get("pages") or []), "lines": len(rec.get("lines") or []),
-        "unread": len(rec.get("unread") or [])}
+        "unread": len(rec.get("unread") or []), "revised": len(rec.get("revised") or []),
+        "revised_open": sum(1 for r in (rec.get("revised") or []) if (r.get("stage") or "To send") not in ("Done - statement agrees", "Dropped"))}
 
 
 def read_all(base: Optional[Path] = None) -> dict:

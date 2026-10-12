@@ -97,22 +97,7 @@ def approval_state(bill: dict) -> str:
     return bill_approval.approval_state(bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"))
 
 
-def revised_reason(memo: str, allow_first_line: bool = False) -> str:
-    """The reason off a `REVISED - <reason>` memo line, or "" when there is none.
-    The PM writes it on the SECOND memo line (line 1 stays AP's project line), so
-    line 1 is skipped by default: in the paper era AP itself opened line 1 with
-    REVISED followed by the project line (`REVISED - CP861 - 4231 STATE HWY 161`),
-    which is not a reason and not a vendor follow-up - 16 such bills sit in the
-    2026 population. Pass allow_first_line=True for a bill entered under the QBO
-    workflow, where a first-line REVISED can only be a PM who typed it in the wrong
-    place. A bare REVISED returns "(no reason given)" so the bill still gets chased."""
-    lines = (memo or "").splitlines()
-    for line in (lines if allow_first_line else lines[1:]):
-        t = line.strip()
-        if t.upper().startswith("REVISED"):
-            rest = t[len("REVISED"):].lstrip(" -:\u2013").strip()
-            return rest or "(no reason given)"
-    return ""
+revised_reason = bill_approval.revised_reason   # moved to shared/bill_approval 10/12/2026 (the statement reconciler reads it too)
 
 
 # ─────────────────────── invoice → payment date map ───────────────────────

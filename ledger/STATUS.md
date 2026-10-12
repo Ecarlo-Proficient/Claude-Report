@@ -5,14 +5,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 
 ## DONE / FINALIZED
 - 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
-  stand" - "it's only the Excel"). `/api/revisions` reads the live Bill Tracker's **Revised Bills** sheet
-  (`shared/revised_sheet.read_sheet`, 60 s cache, the file's write time shown) and judges each row (`standing`: the
-  stage, since when, "waiting on the vendor's reply - 9 days"); the page shows chips per stage (Open · Flagged · each
-  stage · All), then one row per revised bill: vendor (opens the vendor page), bill # (QuickBooks), date, project, the
-  PM's reason, vendor billed vs QBO now, open, the Stage pill, where it stands (amber past 14 days), the clerk's four
-  dates, what the statement says, the flags (red), her Notes. The vendor page's Statement legend adds "revised bill:
-  <stage> - <standing>" under a line that is one. No sheet yet (the office server has not run the new AP code) = the
-  page says so in one line.
+  stand" - "in the same statement Excel, not a mix"). `/api/revisions` reads every vendor's statement record
+  (`revised` rows the reconciler writes from each workbook's Revised Bills sheet, 60 s cache) and judges each row
+  (`shared/revised_sheet.standing`: the stage, since when, "waiting on the vendor's reply - 9 days"); chips per stage
+  (Open · each stage · All), then one row per bill: vendor (opens the Statement view), invoice # (QuickBooks), invoice
+  date, amount billed vs corrected, the reason as the vendor reads it, the Stage pill, where it stands (amber past 14
+  days), the clerk's four dates, her Notes. The Statement legend adds "revised bill: <stage> - <standing>" under a line
+  that is one. The ledger never writes the workbook.
 - 2026-10-11 · **Invoice viewer + Gross profit rule** (owner: "invoice # not clickable i want that to open just like
   attachment and see the invoice load from qbo ... see the line items as is so you don't have to leave the ledger";
   "Jpi mayhil ... show clearly that you are opening the popup but ... there are more invoices adding to the total";

@@ -106,6 +106,7 @@ from shared import xlsx_verify
 import statement_set as ss  # noqa: E402  (tool-local: one vendor = one running record)
 import statement_markup as sm  # noqa: E402  (tool-local: the marked-up copy of the statement)
 from shared import statement_record as sr  # noqa: E402  (the record the ledger's Vendor Center reads)
+from shared import revised_sheet as rvs  # noqa: E402  (the Revised Bills sheet: the vendor must re-issue, the clerk's status)
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -2757,14 +2758,17 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 stmt_lines: Optional[list] = None,
                 notes: Optional[dict] = None,
                 disagree: bool = False,
-                markups: Optional[list] = None) -> None:
-    """The vendor's ONE reconciliation workbook. `notes` = the clerk's saved notes
+                markups: Optional[list] = None,
+                revised: Optional[list] = None) -> None:
+    """The vendor's ONE reconciliation workbook. `revised` = the Revised Bills rows (shared/revised_sheet) -
+    written as the 2nd sheet; a Summary row that is on it says so in its Finding. `notes` = the clerk's saved notes
     (statement_set.note_key -> {note}); written into her own 'Notes' column so a
     re-run never loses them. `disagree` = the parse is fine, the vendor's statements
     differ. `markups` add the 'Statement (marked)' sheet. Which statements were
     used and what changed since the last one live on the Notion page (owner 10/08:
     no Statements / Changes sheets)."""
     notes = notes or {}
+    revised_stage = {str(r.get("bill_id")): rvs.stage_of(r.get("stage")) or "To send" for r in (revised or []) if r.get("bill_id")}
     # QBO open as-of stmt_date: exclude post-statement bills from the displayed
     # total so the reconciliation math lines up with the statement snapshot.
     def _as_of(b: QboBill) -> bool:
@@ -3031,6 +3035,9 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         else:
             link_cell.font = BODY_FONT
 
+        finding = rr.notes or ""
+        if rr.qbo_bill_id and rr.qbo_bill_id in revised_stage:        # on the Revised Bills sheet: say where it stands
+            finding = (finding + " · " if finding else "") + f"revised bill: {revised_stage[rr.qbo_bill_id]}"
         cells = [
             (rr.stmt_ref, LEFT, None),
             (rr.qbo_ref, LEFT, None),
@@ -3042,7 +3049,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             (rr.qbo_date, CENTER, None),
             (date_check, CENTER, GREEN_FONT if date_check == CHECK_OK else (RED_FONT if date_check == CHECK_NO else DIM_FONT)),
             (approved_text, CENTER, approved_font),
-            (rr.notes or "", LEFT, None),
+            (finding, LEFT, None),
         ]
         # Compare cells occupy columns 2..12 (column 1 is the ↗ link above).
         for i, (val, align, font) in enumerate(cells, 2):
@@ -3213,6 +3220,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     s.freeze_panes = "A3"
 
     marked_dir = None
+    if revised is not None:
+        rvs.write_sheet(wb, revised, index=1)          # right after the Summary; the marked statement goes after it
     if markups:
         try:
             marked_dir = _write_marked_sheet(wb, markups)
@@ -3252,7 +3261,7 @@ def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
     the RIGHT of the first page (column P). The statement file is only read. Returns
     the temp dir to clean after save."""
     from openpyxl.drawing.image import Image as XLImage
-    ws = wb.create_sheet("Statement (marked)", 1)
+    ws = wb.create_sheet("Statement (marked)")        # after Summary and Revised Bills
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 4
     for col in "BCDEFGHIJKLMN":               # 13 x ~75px = the 1000px page picture
@@ -3264,26 +3273,26 @@ def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.page_setup.orientation = "landscape"
-    ws["A1"] = "Statement - each bill row coloured by what the check found"
-    ws["A1"].font = Font(bold=True, name="Arial", size=12)
-    r = 3
+    # The page starts at A1 (owner 10/12/2026: "move rows 1 and 3 to the side so the PDF can go all the way up and
+    # line up with the legend"); the one caption per statement - what it is + what was found, said once - sits
+    # beside it in the legend column, the colour key under it.
+    r = 1
     tmp = Path(tempfile.mkdtemp(prefix="stmt_marked_"))
     legend_row = None
+    cap = 1
     for k, (name, res) in enumerate(markups):
         ok = res.located == res.total and not res.unread_rows
-        msg = (f"{name}: {res.located} of {res.total} lines found on the page"
-               + (f" · {len(res.unread_rows)} row(s) on the page NOT read" if res.unread_rows else "")
+        msg = (f"{name} - {res.located} of {res.total} bill rows found and coloured"
+               + (f" · {len(res.unread_rows)} row(s) NOT read" if res.unread_rows else "")
                + (" · all accounted for" if ok else ""))
-        xl_text(ws, r, 1, msg).font = Font(bold=True, name="Arial", size=11,
-                                           color="2E7D32" if ok else "C62828")
-        r += 1
+        xl_text(ws, cap, LEGEND_COL, msg).font = Font(bold=True, name="Arial", size=11, color="2E7D32" if ok else "C62828")
+        cap += 1
         for t in res.not_found:
-            xl_text(ws, r, 2, f"read but not found on the page: {t}").font = Font(name="Arial", size=10, color="C62828")
-            r += 1
+            xl_text(ws, cap, LEGEND_COL, f"read but not found on the page: {t}").font = Font(name="Arial", size=10, color="C62828")
+            cap += 1
         for t in res.unread_rows:
-            xl_text(ws, r, 2, f"on the page, not read: {t}").font = Font(name="Arial", size=10, color="C62828")
-            r += 1
-        r += 1
+            xl_text(ws, cap, LEGEND_COL, f"on the page, not read: {t}").font = Font(name="Arial", size=10, color="C62828")
+            cap += 1
         for i, im in enumerate(res.pages):
             w, h = im.size
             if w > MARKED_WIDTH:
@@ -3297,7 +3306,7 @@ def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
             ws.add_image(img, f"A{r}")
             r += int(img.height / 20) + 2
         r += 1
-    lr = legend_row or 3
+    lr = cap + 1
     ws.cell(row=lr, column=LEGEND_COL, value="Colour key").font = Font(bold=True, name="Arial", size=11)
     for key, (label, rgb) in sm.BUCKETS.items():
         lr += 1
@@ -3792,6 +3801,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     result["clean"] = (not result["open_items"]) and sum_matches
 
     result["_bills"] = bills
+    revised = _revised_rows(rows, bills, extras.get("revised_prior") or {})
     markups = _mark_statements(extras.get("sources") or [], rows, result)
     # what the ledger's record needs (shared/statement_record, 10/09/2026): every row with its
     # bucket, the clerk's note and the job, plus the marked pages - written after the publish
@@ -3804,7 +3814,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
                   "job": (lambda m: m.group(1).upper() if m else "")(qbo_api.PROJ_RE.search(f"{r.qbo_memo} {r.po} {r.address}")),
                   "note": ss.note_for(_notes, r.qbo_bill_id, r.stmt_ref or r.qbo_ref)} for r in rows],
         "files": [f"{ss.CURRENT}/{p.name}" for p, _l in (extras.get("sources") or [])],
-        "excel": f"{ss.CURRENT}/{out.name}" if out else ""}
+        "excel": f"{ss.CURRENT}/{out.name}" if out else "", "revised": revised}
     result["_markups"] = markups
     result.pop("_bills", None)
 
@@ -3818,7 +3828,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
                 statement_src=None, line_sum=line_sum, tieout_ok=sum_matches,
                 bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines,
                 notes=extras.get("notes"), disagree=bool(extras.get("disagree")),
-                markups=markups)
+                markups=markups, revised=revised)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     result["action"] = "filed" if result["tieout"] else "held"
     t0 = _phase("Appending clerk-performance history")
@@ -3951,6 +3961,68 @@ def _board_items(rows: List["ReconRow"], bills: List["QboBill"], unprinted: list
     for pr in unprinted or []:
         out.append({"kind": "print", "ref": pr.ref, "date": pr.date,
                     "amount": pr.amount, "bill_id": "", "job": ""})
+    return out
+
+
+def _revised_rows(rows: List["ReconRow"], bills: List["QboBill"], prior: dict,
+                  today: Optional[dt.date] = None, originals: Optional[dict] = None) -> List[dict]:
+    """The Revised Bills sheet (shared/revised_sheet): every bill the vendor must re-issue - a Summary row
+    where the statement's amount is not QuickBooks' (tax added, amount differs) and every QuickBooks bill a
+    PM revised (the REVISED memo line) - with the clerk's status read back from the old sheet (`prior`,
+    keyed by bill id). Rows once on the sheet stay (the history). Stage moves forward only: blank ->
+    To send; a bill the statement now shows at the corrected amount -> Done - statement agrees.
+    `originals` = {bill id: {original, revised_on}} from the change log (read here when None)."""
+    today = today or dt.date.today()
+    by_id = {b.bill_id: b for b in bills}
+    matched_ids = {r.qbo_bill_id for r in rows if r.category == "MATCHED" and r.qbo_bill_id}
+    cand: Dict[str, dict] = {}
+    for r in rows:
+        if r.category not in ("VENDOR_TAX_VIOLATION", "CLERK_AMOUNT_MISMATCH") or not r.qbo_bill_id:
+            continue
+        b = by_id.get(r.qbo_bill_id)
+        pm = bill_approval.revised_reason(b.memo, allow_first_line=bool(b.created and b.created >= bill_approval.APPROVAL_WORKFLOW_START.isoformat())) if b else ""
+        if r.category == "VENDOR_TAX_VIOLATION":
+            reason = "Tax-exempt job - please remove the sales tax"
+        else:
+            reason = (pm[0].upper() + pm[1:].lower()) if pm else f"Amount differs - please re-issue at ${r.qbo_amount:,.2f}"
+        cand[r.qbo_bill_id] = {"bill_id": r.qbo_bill_id, "invoice": r.stmt_ref or r.qbo_ref, "invoice_date": r.stmt_date or r.qbo_date,
+                               "amount_billed": round(r.stmt_amount, 2), "corrected_amount": round(r.qbo_amount, 2), "reason": reason}
+    pm_bills = []
+    for b in bills:
+        if b.bill_id in cand or b.bill_id in matched_ids:
+            continue
+        pm = bill_approval.revised_reason(b.memo, allow_first_line=bool(b.created and b.created >= bill_approval.APPROVAL_WORKFLOW_START.isoformat()))
+        if pm:
+            pm_bills.append((b, pm))
+    if originals is None:
+        originals = rvs.original_totals([b.bill_id for b, _pm in pm_bills]) if pm_bills else {}
+    for b, pm in pm_bills:
+        o = originals.get(b.bill_id) or {}
+        cand[b.bill_id] = {"bill_id": b.bill_id, "invoice": b.doc_number, "invoice_date": b.txn_date,
+                           "amount_billed": round(float(o["original"]), 2) if o.get("original") is not None else None,
+                           "corrected_amount": round(b.total_amount, 2), "reason": pm[0].upper() + pm[1:].lower(),
+                           "revised_on": o.get("revised_on") or ""}
+    out: List[dict] = []
+    for bid, c in cand.items():
+        p = prior.get(bid) or {}
+        stage = rvs.stage_of(p.get("stage")) or "To send"
+        row = dict(c, stage=stage, sent_on=p.get("sent_on", ""), replied_on=p.get("replied_on", ""), received_on=p.get("received_on", ""),
+                   entered_on=p.get("entered_on", ""), notes=p.get("notes", ""),
+                   revised_on=c.get("revised_on") or p.get("since") or today.isoformat())   # the PM's change date, else the day the row first appeared
+        out.append(row)
+    for bid, p in prior.items():                       # the history: rows no longer asked for stay as they were
+        if bid in cand:
+            continue
+        stage = rvs.stage_of(p.get("stage")) or "To send"
+        if bid in matched_ids and stage not in rvs.FINAL:
+            stage = "Done - statement agrees"           # the vendor's statement now shows the corrected amount
+        out.append({"bill_id": bid, "invoice": p.get("invoice", ""), "invoice_date": p.get("invoice_date", ""), "amount_billed": p.get("amount_billed"),
+                    "corrected_amount": p.get("corrected_amount"), "reason": p.get("reason", ""), "stage": stage, "sent_on": p.get("sent_on", ""),
+                    "replied_on": p.get("replied_on", ""), "received_on": p.get("received_on", ""), "entered_on": p.get("entered_on", ""),
+                    "notes": p.get("notes", ""), "revised_on": p.get("since", "")})
+    for row in out:
+        row["standing"] = rvs.standing(row, today)
+    out.sort(key=lambda r: (r["standing"]["final"], r["standing"]["rank"], r.get("invoice_date") or ""))
     return out
 
 
@@ -4223,6 +4295,10 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
                         notes.pop(k, None)            # she cleared it on Notion
             except Exception as e:
                 _warn(f"could not read the notes on Notion ({e}) - using the last saved ones")
+        revised_prior: dict = {}
+        for f, origin in filed["reports"]:               # the Revised Bills sheet as it stands: the history + what the clerk typed
+            if origin != "legacy_done":
+                revised_prior.update(rvs.harvest(f))
         changes = ss.changes_for(docs, merged, state)
         when = dt.datetime.now().strftime("%m/%d/%Y %I:%M %p")
         dates = ", ".join(sorted({ss.us_date(d.as_of) for d in cur_docs}))
@@ -4236,7 +4312,7 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         ok, counts, _tie = reconcile_vendor(
             args, access, cid, result, vendor_id=vendor_id, vendor_name=vendor_name,
             stmt_date=merged.as_of, amt_due=merged.amount_due, lines=merged.lines, out=out,
-            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree,
+            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree, "revised_prior": revised_prior,
                     "sources": [(d.path, d.lines) for d in cur_docs]})
         result["vendor_folder"] = folder
         result["_vdir"], result["checked"] = str(vdir), when     # for the ledger's record

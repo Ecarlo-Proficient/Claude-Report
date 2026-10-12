@@ -12,6 +12,23 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-12 · **The Revised Bills sheet + the marked statement from the top** (owner: "the revised bill sheet needs to be
+  in the same statement Excel, not a mix ... the bill info with our status on the right"; "move rows 1 and 3 to the side so
+  the PDF can go all the way up and line up with the legend, merge those two"; "when the stage goes to Done move those
+  bills in the Summary up and keep the Revised Bills sheet as the history"). Every vendor workbook gains a 2nd sheet
+  **Revised Bills** (`shared/revised_sheet`, an Excel Table): LEFT the bill info the clerk copies into the email (Invoice
+  # · Invoice date · Amount billed · Corrected amount · Reason), RIGHT our status (Stage dropdown · Sent on · Replied on
+  · Received on · Entered on · Notes), `_Key` = the QuickBooks bill id, hidden. Rows = every bill the vendor must
+  re-issue: the Summary's tax-added and amount-mismatch rows (the owner's "missing bills from Summary") + every pulled
+  QuickBooks bill with a PM's `REVISED - <reason>` line (`shared/bill_approval.revised_reason`, moved from bill-tracker;
+  its original total from the mirror's change log when there is one). `_revised_rows`: the old workbook's sheet is read
+  first (`rvs.harvest`, like the notes) so the clerk's columns come back as typed; every row ever on the sheet stays (the
+  history); Stage moves forward only - blank -> To send, and a history row whose bill the statement now shows at the
+  corrected amount -> **Done - statement agrees** (that bill sits in the Summary's matched block from then on, its
+  Finding saying "revised bill: Done"). A Summary row on the sheet carries "revised bill: <stage>" in Finding. The rows
+  also go on the ledger's record (`revised`), which Vendors -> Revised bills reads. **Statement (marked)**: the page
+  starts at A1; the one caption per statement (file + "N of M bill rows found and coloured" + what was not read) sits in
+  the legend column above the colour key; the sheet comes after Revised Bills. Tests: `tests/test_revised_bills.py`.
 - 2026-10-09 (night) · **The ledger's record copy** (owner: "make the vendor ledger have a record copy of vendor
   statements so it can show, when paying, reconciled as of"). After the Notion publish every live run writes
   `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` ->

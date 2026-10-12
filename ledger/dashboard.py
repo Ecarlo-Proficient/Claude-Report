@@ -1255,16 +1255,6 @@ def _freshness(con) -> dict:
     return out
 
 
-def _sheet_names(path) -> list:
-    """The workbook's sheet names without loading its cells (zip + workbook.xml)."""
-    import zipfile
-    try:
-        with zipfile.ZipFile(path) as z:
-            return re.findall(r'<sheet [^>]*name="([^"]+)"', z.read("xl/workbook.xml").decode("utf-8", "replace"))
-    except Exception:                                      # noqa: BLE001
-        return []
-
-
 def _fetch_actions(con) -> dict:
     """Map action_key → {url, status} from the `action` table (Notion mirror).
     Empty (not an error) if sync_actions hasn't run."""
@@ -4126,27 +4116,31 @@ class Handler(BaseHTTPRequestHandler):
     _rev_cache: dict = {"at": 0.0, "data": None}
 
     def _revisions(self, q: dict):
-        """The Revised Bills sheet of the live Bill Tracker, read as the clerk typed it (60 s cache)."""
+        """Every vendor's Revised Bills rows, from the statement records on the share (60 s cache)."""
         now = time.time()
         c = type(self)._rev_cache
         if c["data"] is None or now - c["at"] > 60 or q.get("fresh"):
-            path = Path(paths.bill_tracker_xlsx())
-            if not path.exists():
-                c["data"] = {"ok": False, "error": "the Bill Tracker is not on disk (is the Accounting share mounted?)", "rows": []}
-            else:
-                try:
-                    rows = revised_sheet.read_sheet(path)
-                    if not rows and revised_sheet.SHEET not in _sheet_names(path):
-                        c["data"] = {"ok": False, "error": "the Bill Tracker has no Revised Bills sheet yet - the next AP run on the office server adds it", "rows": []}
-                    else:
-                        today = _dt.date.today()
-                        for r in rows:
+            try:
+                base = statement_record.root()
+                if not base.is_dir():
+                    c["data"] = {"ok": False, "error": "the Accounting share is not mounted on this Mac - the statement records live there", "rows": []}
+                else:
+                    today = _dt.date.today()
+                    rows = []
+                    newest = ""
+                    for d in statement_record.vendor_dirs(base):
+                        rec = statement_record.read(d)
+                        if not rec:
+                            continue
+                        newest = max(newest, rec.get("checked_at") or "")
+                        for r in rec.get("revised") or []:
+                            r = dict(r, vendor=rec.get("vendor") or d.name, key=str(r.get("bill_id") or ""), as_of=rec.get("as_of") or "")
                             r["standing"] = revised_sheet.standing(r, today)
-                            r["flag_list"] = [f for f in (r.get("flags") or "").split(" · ") if f]
-                        rows.sort(key=lambda r: (not r["flag_list"], r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
-                        c["data"] = {"ok": True, "rows": rows, "read_at": _dt.datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"), "file": str(path)}
-                except Exception as e:                    # noqa: BLE001 - a locked / half-written file is an answer
-                    c["data"] = {"ok": False, "error": _scrub(str(e)), "rows": []}
+                            rows.append(r)
+                    rows.sort(key=lambda r: (r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
+                    c["data"] = {"ok": True, "rows": rows, "read_at": newest[:16]}
+            except Exception as e:                        # noqa: BLE001
+                c["data"] = {"ok": False, "error": _scrub(str(e)), "rows": []}
             c["at"] = now
         self._json(c["data"])
 

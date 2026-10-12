@@ -28,8 +28,13 @@ restate them here. Business/strategic context lives in session memory, not in th
    `invoice-sync/setup_keychain.py`) and metadata-only diagnostics.
 3. **QBO is production-only.** No sandbox/env toggle. `quickbooks.api.intuit.com` is hardcoded by design.
 4. **Logs and data dumps go to `~/Library/Logs/Proficient/`** — never inside this folder (it's Claude-visible/synced).
-5. **Excel outputs are plain:** white/black only, no fills, no hidden rows, label + amount on the same row,
-   split into separate sheets rather than crowding one. (Binding — don't re-litigate.)
+5. **Plain Excel is for the BANK and anything leaving the company; INTERNAL workbooks get colour (the user
+   2026-10-12: "black and white makes it bland and makes it hard to see what the point of the sheet is").**
+   Outside-facing (bank, lender, client): white/black only, no fills. Internal (the Bill Tracker, the WIP
+   review tabs, analysis workbooks, anything the clerks work in): colour by SECTION (what goes out vs ours vs
+   what the clerk types) + conditional formatting where the colour IS the status - and SIMPLE: a few hues
+   with a meaning each, never decoration. Still: no hidden rows, label + amount on the same row, split into
+   separate sheets rather than crowding one.
    **Named exception — the `AR Aging` tab of `Open_Invoices.xlsx` (the user 2026-08-05, "add more
    color").** Colour and collapsed rows were asked for there explicitly: green→red aging buckets,
    blue client banding, red/green vendor status, and a grey `n/a` block on RP vendor cells. Colour

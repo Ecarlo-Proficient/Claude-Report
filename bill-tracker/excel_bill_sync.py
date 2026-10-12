@@ -2703,13 +2703,6 @@ def main() -> int:
     else:
         print("  no existing workbook — first run, nothing to preserve")
 
-    # The Revised Bills sheet's typed columns (Stage, the four dates, Notes) - the clerk's, carried forward
-    # like the Lien tags (owner 10/12/2026: "keep the process in the Excel")
-    import revised_bills
-    revised_prior = revised_bills.prior_rows(OUTPUT_PATH)
-    if revised_prior:
-        print(f"  {len(revised_prior)} Revised Bills row(s) read back (the clerk's Stage / dates / Notes carried forward)")
-
     # Audit Status marks (Audit - Coding) — persist across runs AND push into the
     # Bills Notes so the two stay consistent (the audit is the entry point).
     audit_marks = preserve_audit_marks(OUTPUT_PATH)
@@ -2797,14 +2790,6 @@ def main() -> int:
                            vendor_root=vendor_root, vendor_map=vendor_map,
                            audit_marks=audit_marks, closed_through=closed_through)
 
-    # the REVISED-bill follow-up sheet (AP-13 as a process): every PM-revised bill in the QuickBooks copy, the vendor's
-    # original total, what the statement says, the pickles flagged; the clerk's columns put back as typed
-    try:
-        n_rev = revised_bills.add_sheet(wb, revised_prior, today=dt.date.today())
-        print(f"  Revised Bills: {n_rev} bill(s) on the sheet")
-    except Exception as e:                                # noqa: BLE001 - the tracker still ships; the old rows are kept
-        print(f"  Revised Bills: could not rebuild ({e}) - the sheet keeps the last rows")
-        revised_bills.keep_sheet(wb, revised_prior)
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
           f"across 3 themed sheets + cost-code History log")

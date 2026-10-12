@@ -1,6 +1,6 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/09/2026 (night) - **the ledger's record copy**: after the Notion publish, every live run writes `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` -> `shared/statement_record`); status / standing / Notion URL as the board wrote them, every line with its bucket and where its band sits on which page (`statement_markup.Result.bands` / `.unread`), the clerk's note, the QBO bill; an unreadable run only turns the status. The ledger's Vendor Center shows it (bubble, Statement view, pay run). `INBOX_ROOT` now comes from `statement_record.root()` (one place for the SharePoint move). Earlier the same day: the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
+Last changed: 10/12/2026 - **Revised Bills sheet** in every vendor workbook (`shared/revised_sheet`): the bills the vendor must re-issue (the Summary's tax / mismatch rows + a PM's REVISED memo, original total from the change log), bill info left for the email, the clerk's Stage + dates right, carried forward like the notes, the history kept, Done when the statement agrees; the Summary's Finding names the stage; the record carries the rows for the ledger. **Statement (marked)** starts at A1, its caption beside the legend. Earlier: 10/09/2026 (night) - **the ledger's record copy**: after the Notion publish, every live run writes `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` -> `shared/statement_record`); status / standing / Notion URL as the board wrote them, every line with its bucket and where its band sits on which page (`statement_markup.Result.bands` / `.unread`), the clerk's note, the QBO bill; an unreadable run only turns the status. The ledger's Vendor Center shows it (bubble, Statement view, pay run). `INBOX_ROOT` now comes from `statement_record.root()` (one place for the SharePoint move). Earlier the same day: the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
 Earlier 10/09: statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
 Earlier 10/08 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
 Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
@@ -36,7 +36,7 @@ flowchart LR
     NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
     PREV{"--dry-run?"}:::gate
 
-    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Notes col) · Statement (marked)")]:::out
+    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Notes col) · Revised Bills (bill info | the clerk's Stage + dates, the history) · Statement (marked)")]:::out
     HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
     HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
     PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
@@ -54,7 +54,7 @@ flowchart LR
     QBO --> REC
     FILED --> NOTES --> REC
     MBX --> PS --> REC
-    REC --> MARK --> PREV
+    REC --> RVB["_revised_rows<br/>tax / mismatch rows + REVISED memos<br/>+ the old sheet's status (harvest)<br/>Stage forward only, Done when matched"]:::tool --> MARK --> PREV
     PREV -- yes --> PRINT
     PREV -- no --> XLSX
     PREV -- no --> HIST
