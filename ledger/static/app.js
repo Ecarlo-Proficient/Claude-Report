@@ -4924,10 +4924,6 @@ function _ppTabs(d) {
     strip.appendChild(b);
   }
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
-  if (!_pp.isRp && d.draws.some(x => !x.no_draw && x.period_start && x.period_end)) {   // draws with a period on the invoice: the editor (owner 2026-10-11)
-    const b = document.createElement("button"); b.type = "button"; b.className = "btn small pp-pe-btn" + (_pp.pe ? " on" : ""); b.textContent = _pp.pe ? "Close draw periods" : "Draw periods";
-    b.title = "Slide every draw's period together, or set one draw's dates, and save them on the ledger - the invoices in QuickBooks stay as they are";
-    b.onclick = () => { if (_pp.pe) _pp.pe = null; else _pePrime(d); _renderPpDraws(); }; strip.appendChild(b); }
   return strip;
 }
 // ── Draw periods (owner 2026-10-11: "change period draw dates by moving it in a horizontal <> way and it changes the
@@ -4937,7 +4933,8 @@ function _ppTabs(d) {
 // draw_period): from then on the page uses the saved window as the draw's period, with "as invoiced" beside it.
 // QuickBooks (where the period lives, on the invoice memo), the Bill Tracker and Notion are never touched. ‹ › and the
 // slider move EVERY draw by the same days; a draw's own dates are typed in boxes whose limits are its neighbours, so
-// nothing can overlap.
+// nothing can overlap. Out of the way on purpose (owner, same day: "hide the feature, don't make it an essential feature,
+// it's something just to check things"): no button on the page - the link sits inside the Draw overview's ⓘ help.
 const _isoAdd = (iso, days) => { const [y, m, d] = String(iso).split("-").map(Number); const t = new Date(y, m - 1, d + days); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
 const _isoDays = (a, b) => Math.round((new Date(b + "T00:00") - new Date(a + "T00:00")) / 86400000);
 function _pePrime(d) {
@@ -4964,7 +4961,8 @@ function _peShift(pe, delta) { if (!delta) return; for (const r of pe.rows) { r.
 function _ppPeriodsPanel(d) {
   const pe = _pp.pe, box = document.createElement("div"); box.className = "pp-periods";
   const head = document.createElement("div"); head.className = "pp-pe-head";
-  head.innerHTML = `<b>Draw periods</b><span class="dim">‹ › moves every draw · type a date to set one draw (its neighbours are its limits) · Save keeps them on the ledger only - the invoices in QuickBooks stay as they are</span>`;
+  head.innerHTML = `<b>Draw periods</b><span class="dim">a check, not the books: ‹ › moves every draw · type a date to set one draw (its neighbours are its limits) · Save keeps them on the ledger only - the invoices in QuickBooks stay as they are</span>`;
+  { const x = document.createElement("button"); x.type = "button"; x.className = "btn tiny subtle pp-pe-x"; x.textContent = "close"; x.onclick = () => { _pp.pe = null; _pp.covHelp = false; _renderPpDraws(); }; head.appendChild(x); }
   box.appendChild(head);
   // shift row
   const sh = document.createElement("div"); sh.className = "pp-pe-shift";
@@ -5151,6 +5149,13 @@ function _ppCoverage(d) {
   const cap = document.createElement("p"); cap.className = "hint help-pop pp-cov-help"; cap.hidden = true; cap.textContent = _pp.isRp
     ? `An RP job has no draws: each invoice is a scope · Costs dated = the bills (materials we pay + subs) dated after the previous invoice up to this one · Left of the line = the invoice (status, net billed, retained) · Right of the line = how it did: Billed (gross) incl. retainage - Costs = Gross profit; Overhead = ${ohPct} of billed (gross); Net = gross - costs - overhead · click a worked-out cell for its formula, a row to open that scope underneath.`
     : `Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices of the same draw are one draw · Left of the line = the invoice (status, net billed, retained) · Right of the line = how it did: Billed (gross) incl. retainage - Costs = Gross profit; Overhead = ${ohPct} of billed (gross); Net = gross - costs - overhead · click a worked-out cell for its formula, a row to open that draw underneath.`;
+  if (!_pp.isRp && d.draws.some(x => !x.no_draw && x.period_start && x.period_end)) {   // a check, not a feature: behind ⓘ (owner 2026-10-11)
+    cap.appendChild(document.createTextNode(" · "));
+    const a = document.createElement("a"); a.href = "#"; a.className = "pp-pe-link"; a.textContent = _pp.pe ? "close draw periods" : "check draw periods";
+    a.title = "Try a different period schedule - slide every draw or set one; Save keeps it on the ledger only, the invoices in QuickBooks stay as they are";
+    a.onclick = (e) => { e.preventDefault(); if (_pp.pe) _pp.pe = null; else _pePrime(d); _pp.covHelp = !_pp.pe ? false : true; _renderPpDraws(); };
+    cap.appendChild(a); }
+  if (_pp.covHelp) cap.hidden = false;   // the help stays open while the editor is (it is the way back)
   wrap.appendChild(cap);
   return wrap;
 }

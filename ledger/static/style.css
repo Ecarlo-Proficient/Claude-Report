@@ -2428,8 +2428,8 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .filters.rc-pick input[type="search"] { flex: 0 0 150px; min-width: 0; width: 150px; }
 .filters.rc-pick input[type="date"] { width: 140px; }
 /* Draw periods editor on the project page (owner 2026-10-11): shift all with ‹ › / the slider, or type one draw's dates */
-.pp-pe-btn { margin-left: auto; }
-.pp-pe-btn.on { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.pp-pe-link { color: var(--accent-text); }
+.pp-pe-x { margin-left: auto; }
 .pp-periods { margin: 0 var(--pad-x) 12px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); display: flex; flex-direction: column; gap: 10px; }
 .pp-pe-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
 .pp-pe-shift { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

@@ -32,6 +32,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   `memo_with`, `check`) and a read-only listing from the mirror. A QuickBooks write path was built first and removed
   the same evening on the owner's word. Tests: `tests/test_draw_periods.py`. Checked in the preview on MFD325:
   shift +2, Save (13 draws), the page re-read with the saved windows, back to as invoiced + Save (0 kept).
+  Same night, the owner: "hide the feature, don't make it an essential feature, it's something just to check things"
+  - the button left the draw tabs; the editor opens from a "check draw periods" link inside the Draw overview's ⓘ
+  help (the help stays open while the editor is, and the editor has its own close). A saved window still shows its
+  dotted underline in the overview, so a job with a checked schedule is never silent about it.
 - 10/11/2026 (later) · **An invoice's story under its Audit row** (owner: "add ... if the invoices were deleted with
   notion invoice tracker data and more so the history of invoices and the creation date"). `/api/qboaudit/invoice?id=`
   (`_invoice_history`): from the mirror - created in QuickBooks (`MetaData.CreateTime`, the mirror's `created`), the

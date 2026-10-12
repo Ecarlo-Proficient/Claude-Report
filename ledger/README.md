@@ -262,8 +262,9 @@ on the network). What it shows:
   rep (last-editor attribution), warm-account cards with each account's full touch log, and a
   searchable/filterable all-customers table that links out to Notion. Edits stay in Notion; the tab
   never writes.
-- **Draw periods** (project page, MFD / CP) - saved on the ledger only, never QuickBooks (owner 2026-10-11). The
-  **Draw periods** button on the draw tabs opens an editor above the Draw overview: ‹ › and a slider move every draw's
+- **Draw periods** (project page, MFD / CP) - saved on the ledger only, never QuickBooks (owner 2026-10-11); hidden
+  on purpose ("something just to check things"): a **check draw periods** link inside the Draw overview's ⓘ help
+  opens an editor above the overview: ‹ › and a slider move every draw's
   period by the same days (the Period column follows), each draw has Start / End date boxes limited by its neighbours
   so nothing overlaps, **Save** keeps the windows in `draw_period` (`/api/draw-periods/save`; a window equal to the
   invoice's is not kept). The page then uses the saved window as the draw's period (overview + the subs matched into
