@@ -3781,6 +3781,9 @@ async function openPayQbo() {
 }
 function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
 function _pqNotApproved() { return PQ ? PQ.d.vendors.flatMap(v => v.bills.filter(b => b.not_approved).map(b => ({ ...b, vendor: v.vendor }))) : []; }
+// "VENDOR · 1, 2; OTHER VENDOR · 3" - the vendor once, its bill #s after it (owner 2026-10-12: "if same vendor why are you keeping the name?")
+function _pqByVendor(rows) { const by = new Map(); for (const x of rows) (by.get(x.vendor) || by.set(x.vendor, []).get(x.vendor)).push(x.doc || x.bill_id);
+  return [...by].map(([v, docs]) => `${v} · ${docs.join(", ")}`).join("; "); }
 function _pqNet(v) {
   const ids = PQ.credits.get(v.vendor_id) || new Set();
   return Math.round((v.total - (v.credits || []).filter(c => ids.has(c.id)).reduce((t, c) => t + c.balance, 0)) * 100) / 100;
@@ -3838,7 +3841,7 @@ function renderPayQbo() {
   const na = _pqNotApproved();
   if (na.length) { const box = document.createElement("div"); box.className = "pq-na-box";
     const h = document.createElement("b"); h.textContent = `Paying ${na.length} Not Approved bill${na.length !== 1 ? "s" : ""}: `; box.appendChild(h);
-    box.appendChild(document.createTextNode(na.map(x => `${x.vendor} · ${x.doc || x.bill_id}`).join(", ") + " - the memo in QuickBooks says NOT APPROVED. The yellow rows below are these."));
+    box.appendChild(document.createTextNode(_pqByVendor(na) + " - the memo in QuickBooks says NOT APPROVED. The yellow rows below are these."));
     body.appendChild(box); }
   if (!d.vendors.length) { line("Nothing left to pay in the saved run.", "neg"); return; }
   // one band per vendor: the reference, the bills, the credits (unticked)
@@ -3902,7 +3905,7 @@ async function payQboWrite(btn) {
     + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
   const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
   const na = _pqNotApproved();
-  const naLine = na.length ? `\n\nPAYING ${na.length} NOT APPROVED BILL${na.length !== 1 ? "S" : ""}: ${na.map(x => `${x.vendor} · ${x.doc || x.bill_id}`).join(", ")}` : "";
+  const naLine = na.length ? `\n\nPAYING ${na.length} NOT APPROVED BILL${na.length !== 1 ? "S" : ""}: ${_pqByVendor(na)}` : "";
   if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
     + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}${naLine}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
   btn.disabled = true; btn.textContent = "Confirm with Touch ID on this Mac…";
@@ -10853,6 +10856,45 @@ async function openBillScan(f, el) {
   } catch (e) { el.disabled = false; el.textContent = orig; }
 }
 
+// ── Keyboard on every filter bar (owner 2026-10-12: "when i press cmd f, and then tab i expect the select to go from
+// left to right so i can tab to vendor and immediately start typing their name once it shows tab and it saves the
+// check mark and goes to the next one"). ⌘F lands in Ref #; Tab walks the bar left to right (the buttons are in the
+// tab order). On a filter's button, typing a letter opens its menu with that letter in the search box (a menu with no
+// search box jumps to the first option starting with it); the first match is outlined = what Tab will tick. Tab ticks
+// it (if not ticked already), closes the menu and moves to the next control; Enter ticks it and stays; Esc closes.
+function _mselKeys(btn, menu, closeOthers) {
+  const opts = () => [...menu.querySelectorAll(".msel-opt")].filter(l => !l.hidden);
+  const mark = () => { menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); const f = opts()[0]; if (f) { f.classList.add("msel-next"); f.scrollIntoView({ block: "nearest" }); } };
+  const open = () => { if (menu.hidden) { closeOthers(); menu.hidden = false; _placeMenu(btn, menu); } };
+  const close = () => { menu.hidden = true; menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); };
+  const tickFirst = () => { const f = opts()[0]; if (!f) return false; const cb = f.querySelector("input[type=checkbox]"); if (cb && !cb.checked) cb.click(); return true; };
+  const next = (back) => { const bar = btn.closest(".bill-filters") || btn.closest(".widget-head, .vp-bar") || document;   // the whole bar, not the button's own .fld
+    const all = [...bar.querySelectorAll("button, input, select")].filter(x => x.offsetParent && !x.disabled && !x.closest(".msel-menu") && x.tabIndex >= 0);
+    const i = all.indexOf(btn); const t = all[i + (back ? -1 : 1)]; if (t) { t.focus(); if (t.select && t.type === "search") t.select(); } };
+  let prefix = "", pt = 0;
+  const jump = (ch) => {   // no search box: the first option starting with what was typed (letters typed quickly add up)
+    const now = Date.now(); prefix = (now - pt < 900 ? prefix : "") + ch.toLowerCase(); pt = now;
+    const hit = [...menu.querySelectorAll(".msel-opt")].find(l => l.textContent.trim().toLowerCase().startsWith(prefix));
+    menu.querySelectorAll(".msel-opt").forEach(l => l.hidden = false);
+    if (hit) { menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); hit.classList.add("msel-next"); hit.scrollIntoView({ block: "nearest" }); } };
+  btn.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Tab") { if (!menu.hidden && opts().some(l => l.classList.contains("msel-next"))) { e.preventDefault(); const f = menu.querySelector(".msel-opt.msel-next input"); if (f && !f.checked) f.click(); close(); next(e.shiftKey); } else close(); return; }
+    if (e.key === "Escape") { close(); return; }
+    if (e.key.length !== 1 || e.key === " ") return;
+    e.preventDefault(); open();
+    const q = menu.querySelector("input.msel-search");
+    if (q) { q.value = e.key; q.dispatchEvent(new Event("input", { bubbles: true })); q.focus(); q.setSelectionRange(1, 1); mark(); }
+    else jump(e.key);
+  });
+  menu.addEventListener("keydown", (e) => {
+    const q = e.target && e.target.matches && e.target.matches("input.msel-search") ? e.target : null;
+    if (e.key === "Tab" && q) { e.preventDefault(); if (!e.shiftKey) tickFirst(); close(); btn.focus(); next(e.shiftKey); return; }
+    if (e.key === "Enter" && q) { e.preventDefault(); tickFirst(); mark(); return; }
+    if (e.key === "Escape") { e.preventDefault(); close(); btn.focus(); return; }
+  });
+  menu.addEventListener("input", (e) => { if (e.target && e.target.matches && e.target.matches("input.msel-search")) mark(); });
+}
 function showScanMenu(files, el) {
   _closeScanMenu();
   const menu = document.createElement("div"); menu.className = "scan-menu"; menu.id = "scanMenu";
@@ -10892,6 +10934,7 @@ function init() {
     if (btn && menu) {
       btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; _closeMsels(menuId); menu.hidden = !open; if (open) _placeMenu(btn, menu); });   // one menu open at a time; pinned to the viewport so no card clips it
       document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
+      _mselKeys(btn, menu, () => _closeMsels(menuId));
     }
   }
 

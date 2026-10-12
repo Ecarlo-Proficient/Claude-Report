@@ -46,6 +46,7 @@ import datetime as dt
 import getpass
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -69,6 +70,8 @@ LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "pay-bills"
 TOKEN_TTL = 20 * 60               # a review is good for 20 minutes, once
 FUTURE_DAYS = 30                  # a payment date may run this far ahead of today, no further
 ACCOUNT_DAYS = 365                # only accounts that paid bills in this window are offered
+DEFAULT_ACCOUNT = "Frost Bank Vendor"   # offered first = the review's default (owner 2026-10-12)
+HIDE_ACCOUNT_RE = re.compile(r"^\s*OLD\b", re.I)   # an account the owner renamed "OLD ..." is retired: never offered (owner 2026-10-12)
 
 
 # ───────────────────────── guardrails (owner 2026-09-28: "level 3 high access only") ─────────────────────────
@@ -309,8 +312,8 @@ def accounts() -> list:
         con.close()
     out = [{"id": str(a["Id"]), "name": a.get("FullyQualifiedName") or a.get("Name") or "",
             "type": "card" if a.get("AccountType") == "Credit Card" else "bank", "uses": uses.get(str(a["Id"]), 0)}
-           for a in accts if uses.get(str(a["Id"]))]
-    out.sort(key=lambda a: (-a["uses"], a["name"].lower()))
+           for a in accts if uses.get(str(a["Id"])) and not HIDE_ACCOUNT_RE.match(a.get("Name") or "")]
+    out.sort(key=lambda a: (0 if a["name"].lower().startswith(DEFAULT_ACCOUNT.lower()) else 1, -a["uses"], a["name"].lower()))
     return out
 
 

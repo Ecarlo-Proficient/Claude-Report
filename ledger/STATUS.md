@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/12/2026 · **Filter bars by keyboard; Pay from default; the warning by vendor** (owner: "if same vendor why are
+  you keeping the name? just do vendor and the bill # separated by comma" / "default pay from Frost Bank Vendor,
+  remove OLD account from showing" / "when i press cmd f, and then tab i expect the select to go from left to right
+  so i can tab to vendor and immediately start typing their name once it shows tab and it saves the check mark and
+  goes to the next one"). (1) The Not Approved box and the Are you sure? list read "VENDOR · 1, 2; OTHER · 3"
+  (`_pqByVendor`). (2) `pay_bills.accounts()`: an account named "OLD ..." is never offered (`HIDE_ACCOUNT_RE`) and
+  the account starting "Frost Bank Vendor" is listed first (`DEFAULT_ACCOUNT`) = the review's default. (3) NEW
+  `_mselKeys` on every filter-bar multi-select (Bill Tracker, Liens, Pay bills, Invoices, the vendor page's): on a
+  filter's button a typed letter opens its menu with the letter in the search box (a menu without one jumps to the
+  first option starting with it), the first match is outlined (`.msel-opt.msel-next` = what Tab will tick); Tab
+  ticks it, closes the menu and moves to the next control of the bar; Enter ticks and stays; Esc closes. ⌘F still
+  lands in Ref #; the bar's buttons are the tab order. Verified on 8792 by keys: Ref # -> Tab -> "cow" -> Tab =
+  Cowtown ticked, focus on the Date switch; 3 Tabs -> "r" -> Tab = RP ticked, focus on Approved; mocked review:
+  box groups by vendor, Pay from = Frost Bank Vendor.
 - 10/12/2026 · **Pay in QuickBooks: a NOT APPROVED bill stays on the run, warned loudly** (owner: "need to bypass, i
   want it to warn me but not remove it. make it easy to see, Paying Not Approved bill, x, y, z, then highlight the row
   yellow"). `pay_bills._plan_live` no longer skips a bill whose memo says NOT APPROVED; the row carries

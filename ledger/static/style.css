@@ -2148,6 +2148,7 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 
 /* Pay in QuickBooks (the saved pay run -> bill payments): the controls, the per-vendor reference, the credits */
 .pq-head-btns { display: inline-flex; gap: 8px; }
+.msel-opt.msel-next { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, transparent); }   /* what Tab / Enter will tick */
 /* the review's text lines sit inside the widget's gutter like every other widget (owner 2026-10-12: the lettering
    hugged the left edge); the grid itself stays flush with the widget like every other grid */
 #payQboBody { padding: 0 var(--pad-x) 12px; }
