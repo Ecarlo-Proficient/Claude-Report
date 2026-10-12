@@ -893,6 +893,10 @@ flowchart LR
     QBO --> CCAUD --> P8
 ```
 
+**`one-offs/schedule_simple_build.py`** (read-only on its source) - the plain schedule the owner chose
+2026-10-11: calendar to 12/31 on Main + Completed, the Legend colours as cell styles, optional phase
+dropdowns. No tables or formulas. It supersedes:
+
 **`one-offs/schedule_v3_build.py`** (read-only on its source) - rebuilds the owner's horizontal RP
 schedule workbook (one row per job, stages on a Mon-Sat calendar) as a new file: Flatwork / Foundation
 tables on Main and an empty twin on Completed, per-table phase dropdowns fed by the Legend's phase tables,
