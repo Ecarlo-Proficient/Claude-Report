@@ -60,6 +60,7 @@ shared/                the ONLY importable common code
 ├─ wip_audit.py        the WIP change log (wip_field_audit): wip_writer appends every contract/CO/ETC/billed/costs change with its source; the ledger reads it per job (2026-09-17)
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
+├─ qbo_api.get_form_pdf  QuickBooks' printed invoice PDF (read-only) - ledger invoice viewer (ledger/invoice_view.py + invoice_pdf.py)
 ├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing + THE period-tag parser (wip ↔ health ↔ bill-tracker ↔ project-pnl)

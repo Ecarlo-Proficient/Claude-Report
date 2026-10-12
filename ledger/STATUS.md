@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-11 · **Invoice viewer + Gross profit rule** (owner: "invoice # not clickable i want that to open just like
+  attachment and see the invoice load from qbo ... see the line items as is so you don't have to leave the ledger";
+  "Jpi mayhil ... show clearly that you are opening the popup but ... there are more invoices adding to the total";
+  "a line divider here and make gross profit bold"). Project page draw table: the Invoice # is a link (a count badge
+  when a draw has several) -> the viewer: left = the invoice from the mirror (`invoice_view.py`: customer, dates,
+  status, memo, every line as typed, each payment with its check # and joint-check supplier, balance due); right =
+  QuickBooks' own printed invoice (`invoice_pdf.py` -> `/api/invoice/pdf`, cached per SyncToken in Application
+  Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
+  Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
+  2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
 - 10/11/2026 · **Audit view in categories** (owner: "the audit into an audit and then to categories, AP, AR, etc. I need
   the checks QuickBooks changed first for AP and invoices changed after saved ... are the invoices getting deleted as
   well. That's something we never checked"). `NAV_GROUPS` gains **Audit** between Customers and Company; its sub-tab row

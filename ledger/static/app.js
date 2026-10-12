@@ -1007,6 +1007,123 @@ async function _bvRender() {
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
   list.hidden = files.length < 2;
 }
+// The INVOICE viewer (owner 2026-10-11: "invoice # not clickable i want that to open just like attachment and see the
+// invoice load from qbo ... also see the line items as is so you don't have to leave the ledger"). Left: the invoice as
+// QuickBooks holds it (header, every line as typed, what is open, every payment - a joint check names its supplier);
+// right: QuickBooks' own printed copy of it, plus any file attached. A draw billed on SEVERAL invoices (MFD192, three
+// contracts: "a multi contract draw that is an odd ball") opens with a strip across the top: every invoice of the draw,
+// the ones counted so far filled in and the running total counting up to the draw total as ← → move the focus.
+let _iv = null;
+function openInvoiceViewer(nos, index, ctx) {
+  nos = (nos || []).map(String).filter(Boolean); if (!nos.length) return;
+  _iv = { nos, i: Math.max(0, Math.min(index || 0, nos.length - 1)), ctx: ctx || {}, data: null, shown: 0 };
+  let ov = $("#attViewer");
+  if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) _ivClose(); }; }
+  if (!window.__ivKeys) { window.__ivKeys = true; document.addEventListener("keydown", (e) => { if (!_iv || !$("#attViewer")) return;
+    if (e.key === "ArrowRight") _ivGo(1); else if (e.key === "ArrowLeft") _ivGo(-1);
+    else if (e.key === "Escape") { const dl = document.querySelector("#attViewer .xdlg.att-full"); if (dl) { dl.classList.remove("att-full"); _attFullSync(dl); } else _ivClose(); }
+    else return; e.preventDefault(); e.stopImmediatePropagation(); }, true); }
+  ov.innerHTML = `<div class="xdlg att-dlg bv-dlg iv-dlg" role="dialog"><div class="att-head"><h3>Invoice ${_ge(nos.join(", "))}</h3><span class="dim">loading…</span><button class="btn small" id="attClose">Close</button></div><div class="tr-note">Reading the invoice${nos.length > 1 ? "s" : ""} from QuickBooks…</div></div>`;
+  $("#attClose").onclick = _ivClose;
+  fetch(`/api/invoice/view?nos=${encodeURIComponent(nos.join(","))}&project=${encodeURIComponent(_iv.ctx.project || "")}`).then(r => r.json()).then(d => {
+    if (!_iv) return; _iv.data = d; _ivRender();
+  }).catch(e => { if (_iv) { _iv.data = { ok: false, error: String(e) }; _ivRender(); } });
+}
+function _ivClose() { const ov = $("#attViewer"); if (ov) ov.remove(); _iv = null; }
+function _ivGo(step) { if (!_iv || !_iv.data) return; const n = _iv.i + step; if (n < 0 || n >= _iv.nos.length) return; _iv.i = n; _ivRender(); }
+function _ivCount(el, from, to) {   // the running total counts up (or down) to its new value
+  const t0 = performance.now(), dur = 450;
+  const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = money(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function _ivRender() {
+  const ov = $("#attViewer"); if (!ov || !_iv) return;
+  const d = _iv.data || {}, many = _iv.nos.length > 1;
+  if (!d.ok) { ov.querySelector(".xdlg").innerHTML = `<div class="att-head"><h3>Invoice ${_ge(_iv.nos.join(", "))}</h3><button class="btn small" id="attClose">Close</button></div><div class="tr-note">${_ge(d.error || "could not read the invoice")}</div>`; $("#attClose").onclick = _ivClose; return; }
+  const invs = d.invoices || [], inv = invs[_iv.i] || {};
+  const title = `Invoice ${inv.doc_number || _iv.nos[_iv.i]}${_iv.ctx.title ? " · " + _iv.ctx.title : ""}`;
+  ov.innerHTML = `<div class="xdlg att-dlg bv-dlg iv-dlg" role="dialog">
+    <div class="att-head">${many ? `<button class="btn small" id="ivPrev" ${_iv.i === 0 ? "disabled" : ""} title="Previous invoice (←)">←</button><span class="bv-pos">${_iv.i + 1} of ${_iv.nos.length}</span><button class="btn small" id="ivNext" ${_iv.i >= _iv.nos.length - 1 ? "disabled" : ""} title="Next invoice (→)">→</button>` : ""}
+      <h3>${_ge(title)}</h3><span class="dim" id="attStatus"></span><button class="btn small" id="attClose">Close</button></div>
+    ${many ? `<div class="iv-draw" id="ivDraw"></div>` : ""}
+    <div class="bv-body"><div class="bv-info" id="ivInfo"></div><div class="bv-scan"><div class="att-list" id="attList"></div><div class="att-view" id="attView"></div></div></div></div>`;
+  $("#attClose").onclick = _ivClose;
+  if (many) { $("#ivPrev").onclick = () => _ivGo(-1); $("#ivNext").onclick = () => _ivGo(1); _ivDrawStrip(invs); }
+  _ivInfo(inv);
+  _ivScan(inv);
+}
+// the draw strip: 34417 + 34418 + 34419 = the draw; the ones up to the focus are counted, the focus is ringed
+function _ivDrawStrip(invs) {
+  const host = $("#ivDraw"); if (!host) return;
+  const total = num(_iv.data.total), run = invs.slice(0, _iv.i + 1).reduce((s, x) => s + num(x.total), 0);
+  const chips = document.createElement("div"); chips.className = "iv-chips";
+  invs.forEach((x, k) => {
+    if (k) { const p = document.createElement("span"); p.className = "iv-plus"; p.textContent = "+"; chips.appendChild(p); }
+    const c = document.createElement("button"); c.type = "button"; c.className = "iv-chip" + (k < _iv.i ? " counted" : "") + (k === _iv.i ? " on" : "");
+    c.innerHTML = `<span class="iv-chip-no">${_ge(x.doc_number)}</span><span class="iv-chip-amt">${_ge(x.missing ? "not in QuickBooks" : money(x.total))}</span>`;
+    c.title = x.missing ? "" : (x.lines || []).map(l => l.description || l.item).filter(Boolean).slice(0, 3).join(" · ");
+    c.onclick = () => { _iv.i = k; _ivRender(); }; chips.appendChild(c);
+  });
+  const eq = document.createElement("span"); eq.className = "iv-plus"; eq.textContent = "="; chips.appendChild(eq);
+  const tot = document.createElement("span"); tot.className = "iv-chip iv-total"; tot.innerHTML = `<span class="iv-chip-no">Draw total</span><span class="iv-chip-amt">${_ge(money(total))}</span>`; chips.appendChild(tot);
+  host.appendChild(chips);
+  const bar = document.createElement("div"); bar.className = "iv-bar"; const fill = document.createElement("div"); fill.className = "iv-fill"; bar.appendChild(fill);
+  // one segment per invoice, so you can see each one's share of the draw
+  invs.forEach((x, k) => { const sg = document.createElement("div"); sg.className = "iv-seg" + (k <= _iv.i ? " in" : "") + (k === _iv.i ? " on" : ""); sg.style.flexBasis = (total ? num(x.total) / total * 100 : 0) + "%"; fill.appendChild(sg); });
+  host.appendChild(bar);
+  const lab = document.createElement("div"); lab.className = "iv-run";
+  lab.innerHTML = `<b class="iv-run-amt"></b> of ${_ge(money(total))} · ${_iv.i + 1} of ${invs.length} invoices counted${num(_iv.data.open) > 0.005 ? ` · <span class="neg">${_ge(money(_iv.data.open))} open on the draw</span>` : ` · <span class="pos">draw paid</span>`}`;
+  host.appendChild(lab);
+  _ivCount(lab.querySelector(".iv-run-amt"), _iv.shown || 0, run); _iv.shown = run;
+}
+function _ivInfo(inv) {
+  const host = $("#ivInfo"); if (!host) return; host.innerHTML = "";
+  if (inv.missing) { host.innerHTML = `<div class="tr-note">Invoice ${_ge(inv.doc_number)} is not in the QuickBooks copy - Resync</div>`; return; }
+  const kv = document.createElement("table"); kv.className = "bv-kv";
+  const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("tr"); const a = document.createElement("th"); a.textContent = k; const c = document.createElement("td"); if (cls) c.className = cls; if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
+  add("Customer", inv.customer); add("Invoice #", inv.doc_number); add("Date", inv.date ? fmtDate(inv.date) : null);
+  add("Due", inv.due ? fmtDate(inv.due) + (inv.terms ? " · " + inv.terms : "") : null);
+  const paidAmt = num(inv.total) - num(inv.balance);
+  if (num(inv.balance) <= 0.005) add("Status", "Paid", "pos");
+  else if (paidAmt > 0.005) add("Status", `Short · ${moneyC(paidAmt)} paid · ${moneyC(inv.balance)} open`, "neg");
+  else add("Status", `Unpaid · ${moneyC(inv.balance)} open`, "neg");
+  if (inv.memo) { const m = document.createElement("div"); m.className = "bv-memo"; m.textContent = inv.memo; add("Memo", m); }
+  host.appendChild(kv);
+  // the lines as typed in QuickBooks
+  const t = document.createElement("table"); t.className = "grid iv-lines";
+  t.innerHTML = `<thead><tr><th class='left'>Product / service</th><th class='left'>Description</th><th class='right'>Qty</th><th class='right'>Rate</th><th class='right'>Amount</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const ln of inv.lines || []) { const tr = document.createElement("tr"); if (num(ln.amount) < 0) tr.className = "iv-neg";
+    tr.appendChild(leftText(ln.item || "–")); { const td = leftText(ln.description || "–"); td.classList.add("iv-desc"); tr.appendChild(td); }
+    tr.appendChild(rightText(ln.qty == null ? "" : String(ln.qty))); tr.appendChild(rightText(ln.rate == null ? "" : moneyC(ln.rate))); tr.appendChild(rightText(moneyC(ln.amount))); tb.appendChild(tr); }
+  const row = (lab, v, cls) => { const tr = document.createElement("tr"); tr.className = cls; tr.innerHTML = `<td class="left" colspan="4">${_ge(lab)}</td><td class="right">${_ge(v)}</td>`; tb.appendChild(tr); };
+  row("Total", moneyC(inv.total), "bv-tot");
+  for (const p of inv.payments || []) {
+    const who = p.kind === "joint" ? `joint check · ${p.to}${p.how === "amount only" ? " (amount only)" : ""}` : p.kind === "open" ? `joint check · not paid out yet${p.memo ? " · " + p.memo : ""}` : "to us";
+    row(`Payment ${fmtDate(p.date)}${p.ref ? " · check " + p.ref : ""} · ${who}`, "(" + moneyC(p.applied) + ")", "iv-pay iv-pay-" + p.kind);
+  }
+  row("Balance due", moneyC(inv.balance), "iv-due" + (num(inv.balance) > 0.005 ? " neg" : ""));
+  t.appendChild(tb); host.appendChild(t);
+  const a = document.createElement("a"); a.className = "btn small"; a.href = qboUrl("invoice", inv.id); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; host.appendChild(a);
+}
+// right side: QuickBooks' printed invoice first, then any file attached to it (a pay app), fetched fresh
+async function _ivScan(inv) {
+  const list = $("#attList"), view = $("#attView"), st = $("#attStatus"); if (!list || inv.missing) return;
+  const mine = _iv.i;
+  const pdfUrl = `/api/invoice/pdf?id=${encodeURIComponent(inv.id)}&sync=${encodeURIComponent(inv.sync || "0")}`;
+  const files = [{ name: `Invoice ${inv.doc_number} (QuickBooks)`, url: pdfUrl, pdf: true }];
+  const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
+    const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || "");
+    view.innerHTML = `<div class="att-tools"><b>${_ge(f.name)}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a></div>`
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}#toolbar=1&view=FitH" title="invoice"></iframe>`); _attZoomable(view); };
+  const paint = () => { list.innerHTML = ""; files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name; b.onclick = () => show(f, b); list.appendChild(b); if (k === 0 && !view.firstChild) show(f, b); else if (k === 0) b.classList.add("on"); }); list.hidden = files.length < 2; };
+  paint();
+  st.textContent = "";
+  let r; try { r = await (await fetch(`/api/attachment?id=${encodeURIComponent(inv.id)}&type=Invoice`)).json(); } catch (e) { r = null; }
+  if (!_iv || _iv.i !== mine || !r || !r.ok) return;
+  for (const f of r.files || []) files.push(f);
+  if (files.length > 1) { paint(); st.textContent = `${files.length - 1} file${files.length === 2 ? "" : "s"} attached`; }
+}
 async function openAttachmentViewer(type, id, title, expected) {
   let ov = $("#attViewer");
   if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) ov.remove(); }; }
@@ -4645,7 +4762,7 @@ function _ppProjectedVsActual(p, r0, pn) {
   row("Net billed", null, money(netB), p.billed_gap ? { word: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null, { sub: "gross billed - retained = what the GC pays now" });
   const over = cost - etc;
   row("ETC · Costs to date", money(etc), money(cost), etc ? { v: over, base: etc, good: -1, word: (over > 0.5 ? "Over budget" : "Under budget") + ` - ${(cost / etc * 100).toFixed(0)}% of ETC spent` } : null);
-  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { sub: "projected: contract - ETC · actual: gross billed - costs" });
+  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-sub", sub: "projected: contract - ETC · actual: gross billed - costs" });   // a rule above + bold: the subtotal (owner 2026-10-11)
   row(`Overhead · ${+(rate * 100).toFixed(2)}% of contract`, "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: /^MFD/i.test(pn) ? "MFD rate" : "company rate" });
   row("Net profit", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && billedG ? { v: netA - netP, base: Math.abs(netP) || contract, good: 1, word: netA - netP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-total", sub: "gross billed - costs - overhead" });
   t.appendChild(tb); wrap.appendChild(t);
@@ -4897,7 +5014,13 @@ function _ppCoverage(d) {
     { const sp0 = _ppShortDates(_ppSpan(dr)); const td = leftText(sp0 || "–"); if (!sp0) td.classList.add("dim"); tr.appendChild(td); }
     tr.appendChild(leftText(_ppTitle(dr)));
     { const td = document.createElement("td"); td.className = "left pp-invst"; const st = _ppInvStatus(dr); const sp = document.createElement("span"); sp.className = st.cls; sp.textContent = st.text; if (st.tip) td.title = st.tip; td.appendChild(sp); tr.appendChild(td); }
-    { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (_ppInvRange(nos) || "–")); if (nos.length > 1) td.title = `${nos.join(", ")} - ${nos.length} invoices dated the same day, one draw`; tr.appendChild(td); }
+    { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (_ppInvRange(nos) || "–"));
+      if (nos.length > 1) td.title = `${nos.join(", ")} - ${nos.length} invoices, one draw`;
+      if (!dr.no_draw && nos.length) { const s0 = td.firstChild; s0.className = "inv-open" + (nos.length > 1 ? " multi" : ""); s0.setAttribute("role", "button"); s0.tabIndex = 0;   // opens the invoice viewer (owner 2026-10-11)
+        if (nos.length > 1) { const k = document.createElement("span"); k.className = "inv-count"; k.textContent = nos.length; s0.appendChild(k); }
+        const go = (e) => { e.stopPropagation(); openInvoiceViewer(nos, 0, { project: _pp.pn, title: _ppTitle(dr) }); };
+        s0.onclick = go; s0.onkeydown = (e) => { if (e.key === "Enter") go(e); }; }
+      tr.appendChild(td); }
     tr.appendChild(leftText(dr.ar_date ? _ppShortDates(fmtDateShort(dr.ar_date)) : "–"));
     if (dr.no_draw) {
       tr.appendChild(rt("–", "dim")); tr.appendChild(rt("–", "dim")); tr.appendChild(rt("–", "dim pp-div")); tr.appendChild(rt(m(costs)));
@@ -4928,6 +5051,7 @@ if (!window.__ppKeys) { window.__ppKeys = true;   // ← → flip between All dr
   document.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     if (typeof _pp === "undefined" || !_pp || !_pp.d) return;
+    if ($("#attViewer")) return;   // a viewer is open: the arrows flip its pages, not the draws
     const rv = $("#recordView"); if (!rv || rv.hidden || !$("#ppDraws")) return;
     const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     const keys = ["all", ..._pp.d.draws.map(x => x.matched_invoice)];

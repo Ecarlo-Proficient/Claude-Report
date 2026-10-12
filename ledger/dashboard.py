@@ -60,6 +60,7 @@ import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - 
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
+import invoice_view       # noqa: E402  (local: the invoice viewer - an invoice as QuickBooks holds it: lines, payments, joint checks; /api/invoice/view)
 import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
 import server_status      # noqa: E402  (local: the office server as the ledger watches it - server-status.json + writer.json -> one judgement)
@@ -3539,6 +3540,24 @@ class Handler(BaseHTTPRequestHandler):
                     "lines": [{"description": ln.get("description"), "cost_code": ln.get("cost_code"), "account": ln.get("account"),
                                "project_no": ln.get("project_no"), "amount": ln.get("amount")} for ln in lines]})
 
+    def _invoice_pdf(self, q: dict) -> None:
+        """Subprocess invoice_pdf.py (never an import, like attachments.py) and send the PDF it cached."""
+        inv, sync = str(q.get("id") or "").strip(), str(q.get("sync") or "0").strip()
+        if not inv.isdigit() or not sync.isdigit():
+            return self._send(400, b"bad invoice id", "text/plain; charset=utf-8")
+        try:
+            out = subprocess.check_output([sys.executable, str(PROJECT_ROOT / "ledger" / "invoice_pdf.py"), inv, "--sync", sync],
+                                          cwd=str(PROJECT_ROOT), stderr=subprocess.DEVNULL, timeout=120)
+            lines = [ln for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
+            r = json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"}
+        except subprocess.TimeoutExpired:
+            r = {"ok": False, "error": "QuickBooks took too long to print the invoice"}
+        except Exception as e:                          # noqa: BLE001
+            r = {"ok": False, "error": f"invoice PDF failed: {e}"}
+        if not r.get("ok"):
+            return self._send(502, str(r.get("error") or "failed").encode(), "text/plain; charset=utf-8")
+        self._send(200, Path(r["path"]).read_bytes(), "application/pdf")
+
     def _attachment(self, q: dict) -> None:
         """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
         import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
@@ -3787,6 +3806,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_project_page(con, self._query().get("no", "")))
             finally:
                 con.close()
+        elif path == "/api/invoice/view":    # the invoice viewer: one or more invoices (a draw) from the QBO mirror - header, lines as typed, payments
+            q = self._query()
+            self._json(invoice_view.view((q.get("nos") or "").split(","), q.get("project") or ""))
+        elif path == "/api/invoice/pdf":     # QuickBooks' printed copy of one invoice (cached per version), for the viewer's right side
+            self._invoice_pdf(self._query())
         elif path == "/api/invoice/page":    # on-demand: the invoice page - QBO details, the draw's bills by vendor + pay status, subs
             con = _connect(self.db_path)
             try:

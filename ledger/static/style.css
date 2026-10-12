@@ -1845,6 +1845,8 @@ table.pp-pva td.pp-pva-diff.pos { color: var(--pos); font-weight: 600; }
 table.pp-pva td.pp-pva-diff.warn { color: var(--warn-text); font-weight: 600; }
 table.pp-pva tr.pp-pva-total td { border-top: 2px solid var(--text); border-bottom: 0; font-weight: 800; }
 table.pp-pva tr.pp-pva-total td.pp-pva-act { font-size: 1.15em; }
+table.pp-pva tr.pp-pva-sub td { border-top: 2px solid var(--text) !important; font-weight: 800; }   /* Gross profit: the line under the costs, bold (owner 2026-10-11) */
+table.pp-pva tr.pp-pva-sub td.pp-pva-proj { color: var(--text); }
 table.pp-bills tr.pp-tot > td { border-top: 1px solid var(--text); font-weight: 700; padding-top: 7px; padding-bottom: 7px; }
 table.pp-bills tr.pp-tot td.pp-tot-amt { text-align: right; font-variant-numeric: tabular-nums; }
 table.pp-bills tr.pp-grand > td { border-top: 3px double var(--text); font-size: 1.04em; }
@@ -2500,3 +2502,43 @@ td.stmt-cell { white-space: nowrap; }
 .sp-row.sp-srv .sp-l { white-space: normal; }
 .flash-row { animation: rowFlash 2.4s ease-out; }
 @keyframes rowFlash { 0% { background: color-mix(in srgb, var(--accent) 35%, transparent); } 100% { background: transparent; } }
+
+/* ── the invoice viewer (owner 2026-10-11): an invoice # opens QuickBooks' copy beside its lines + payments;
+   a draw on several invoices shows them adding up to the draw total ── */
+.inv-open { color: var(--accent-text); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; font-weight: 600; }
+.inv-open:hover, .inv-open:focus-visible { text-decoration-color: currentColor; outline: none; }
+.inv-open .inv-count { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 8px; font-size: .78em; line-height: 1.5; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); text-decoration: none; vertical-align: 1px; }
+.iv-draw { margin: 0 0 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.iv-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.iv-plus { color: var(--text-dim); font-weight: 700; }
+.iv-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); font: inherit; cursor: pointer; transition: background .25s, border-color .25s, color .25s, box-shadow .25s; }
+.iv-chip .iv-chip-no { font-size: .78em; font-weight: 600; }
+.iv-chip .iv-chip-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+.iv-chip.counted { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.iv-chip.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.iv-chip.iv-total { cursor: default; color: var(--text); border: 2px solid var(--text); }
+.iv-bar { margin-top: 9px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, var(--surface)); overflow: hidden; }
+.iv-fill { display: flex; height: 100%; }
+.iv-seg { height: 100%; background: transparent; border-right: 2px solid var(--surface); transition: background .35s; }
+.iv-seg.in { background: color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+.iv-seg.on { background: var(--accent); }
+.iv-run { margin-top: 6px; font-size: .9em; color: var(--text-dim); }
+.iv-run .iv-run-amt { color: var(--text); font-size: 1.1em; font-variant-numeric: tabular-nums; }
+.iv-run .neg { color: var(--neg-text); font-weight: 600; } .iv-run .pos { color: var(--pos); font-weight: 600; }
+.iv-lines { width: 100%; margin: 10px 0; font-size: .9em; border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 20%, var(--border)); font-variant-numeric: tabular-nums; }
+.iv-lines th, .iv-lines td { border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); padding: 5px 8px; }
+.iv-lines thead th { background: color-mix(in srgb, var(--text) 12%, var(--surface)); color: var(--text); font-weight: 700; position: static; }
+.iv-lines td.iv-desc { white-space: normal; }
+.iv-lines tr.iv-neg td { color: var(--neg-text); }
+.iv-lines tr.bv-tot td { font-weight: 800; border-top: 2px solid var(--text); }
+.iv-lines tr.iv-pay td { color: var(--text-dim); font-weight: 500; }
+.iv-lines tr.iv-pay-open td { color: var(--neg-text); }
+.iv-lines tr.iv-due td { font-weight: 800; border-top: 2px solid var(--text); background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.iv-lines tr.iv-due.neg td:last-child { color: var(--neg-text); }
+.xdlg.att-full .iv-draw, .xdlg.att-full #ivPrev, .xdlg.att-full #ivNext { display: none; }
+.iv-lines { table-layout: fixed; }
+.iv-lines th, .iv-lines td { overflow-wrap: anywhere; }
+.iv-lines th:nth-child(1), .iv-lines td:nth-child(1) { width: 24%; }
+.iv-lines th:nth-child(3), .iv-lines td:nth-child(3) { width: 38px; }
+.iv-lines th:nth-child(4), .iv-lines td:nth-child(4), .iv-lines th:nth-child(5), .iv-lines td:nth-child(5) { width: 23%; }
+.iv-lines tbody td { white-space: normal; } .iv-lines tbody td:last-child { white-space: nowrap; }
