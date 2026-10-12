@@ -4,6 +4,22 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/11/2026 · **Audit view in categories** (owner: "the audit into an audit and then to categories, AP, AR, etc. I need
+  the checks QuickBooks changed first for AP and invoices changed after saved ... are the invoices getting deleted as
+  well. That's something we never checked"). `NAV_GROUPS` gains **Audit** between Customers and Company; its sub-tab row
+  is captioned by category (`cats` on the group, `.subcat` caption, the row wraps instead of clipping): **AP** = Checks
+  QBO changed · Bills changed · Bills deleted · Bills to fix · Uncleared checks; **AR** = Invoices changed · Invoices
+  deleted; **Company** = Duplicate customers · Other changes. Company keeps Money · Reclassify transactions · Processes.
+  The QBO changes page is ONE tab-page serving five tabs (`PAGE_OF` -> `qboaudit`; `QA_SCOPES` = title + row filter:
+  AP entities Bill / BillPayment / Purchase / VendorCredit / PurchaseOrder, AR entities Invoice / Payment / CreditMemo /
+  SalesReceipt / RefundReceipt / Estimate; "deleted" = kind deleted or flag voided; Other = every remaining entity);
+  the flag chips count the open category only, a chip from another category never hides a page, column funnels and
+  sort are remembered per category (`hf*` keyed by tab), the empty line names the category and offers the new **All**
+  window (3650 days = since the change log began 09/23/2026). `shared/qbo_mirror.change_flags`: a deleted Invoice is
+  *deleted open invoice* (money still owed) or *deleted paid invoice* (test added). `TAB_ALIAS.qboaudit -> qboap`
+  keeps old deep links. Finding on the way: the mirror has logged Invoice deletions since 09/23 (34 created · 60 edited ·
+  0 deleted); the watch existed, the page did not. Checked in the preview: Audit row at desktop and phone width, light
+  and dark; AR Invoices changed (12 flagged / 30 days) and Invoices deleted (none, All). LEDGER_VERSION 1.6.0.
 - 10/09/2026 (night) · **Vendor statements in the ledger + the office server monitor** (owner: "record copy of vendor
   statements ... notion style bubble ... put it in the vendor center ... the highlighted ones with the legend side
   floating as you scroll ... cmd/ctrl clicked takes you to the process of where it's at"; "now that we have the live,

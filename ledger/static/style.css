@@ -118,13 +118,17 @@ a.btn { display: inline-block; text-decoration: none; }   /* a link dressed as a
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 /* Second-level nav: the active group's tabs, a lighter second row of the same strip. */
-.subtabs { display: flex; gap: 4px; padding: 5px 16px 6px; background: var(--surface-2);
-  border-top: 1px solid var(--border); overflow-x: auto; }
+.subtabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 16px 6px; background: var(--surface-2);
+  border-top: 1px solid var(--border); }   /* wraps rather than clips (the Audit row carries three categories, 2026-10-11) */
 .subtabs[hidden] { display: none; }
 .subtab { font: inherit; font-size: .93em; cursor: pointer; white-space: nowrap;
   padding: 5px 12px; border: none; background: none; color: var(--text-dim); border-radius: 7px; }
 .subtab:hover { color: var(--text); background: var(--row-hover); }
 .subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+/* a category name inside the sub-tab row (Audit: AP · AR · Company) - a caption, not a button */
+.subcat { align-self: center; font-size: .74em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim);
+  padding: 0 4px 0 10px; white-space: nowrap; }
+.subcat:not(:first-child) { margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--border); }
 .tab-page { display: flex; flex-direction: column; gap: 18px; }
 .tab-page[hidden] { display: none; }
 [hidden] { display: none !important; }   /* the hidden attribute always wins - rows with their own display:flex/grid were still painted (groups, 2026-09-08) */

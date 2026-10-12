@@ -76,7 +76,7 @@ STATIC = HERE / "static"
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
 # 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
-LEDGER_VERSION = "1.5.0"
+LEDGER_VERSION = "1.6.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -3677,7 +3677,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_accounting_audits())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
-        elif path == "/api/qboaudit":      # the QBO Audit page: the mirror's change log (deleted / edited / unapplied), flagged
+        elif path == "/api/qboaudit":      # the Audit view's QBO changes pages: the mirror's change log (deleted / edited / unapplied), flagged; the page scopes it AP / AR / other
             try:
                 self._json(_fetch_qbo_changes(int(self._query().get("days") or 30), self.db_path))
             except Exception as e:         # noqa: BLE001

@@ -261,27 +261,37 @@ const WAIVERS_ENABLED = false;
 
 // ── Nav (owner 2026-09-23: "remove Vendors and Customers from Company and reinstate them as their own"):
 // Projects = the WIP as the page · Vendors = Bill Tracker / Vendor Center · Customers = Invoice Tracker / Customer
-// Center / Payments received / Sales pipeline · Company = Money / the audits / Processes · a tools group only the gear reaches.
+// Center / Payments received / Sales pipeline · Audit = every audit, in categories (owner 2026-10-11: "the audit into an
+// audit and then to categories, AP, AR" - AP: Checks QBO changed first, then bills changed / deleted, Bills to fix, Uncleared;
+// AR: invoices changed after saved, invoices deleted or voided; Company: duplicate customers, the other QBO changes) ·
+// Company = Money / Reclassify / Processes · a tools group only the gear reaches.
 // Every old tab name is an alias that lands on its page (and scrolls to its section where it became one), so every
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers", "reclassify", "processes"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30); Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
+  { id: "audit",     label: "Audit",     tabs: ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared", "qboar", "qboardel", "dupcustomers", "qboother"],
+    cats: [["AP", ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared"]], ["AR", ["qboar", "qboardel"]], ["Company", ["dupcustomers", "qboother"]]] },   // the sub-tab row shows each category's name before its pages
+  { id: "company",   label: "Company",   tabs: ["money", "reclassify", "processes"] },   // Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
+  qboap: "Bills changed", qboapdel: "Bills deleted", qboar: "Invoices changed", qboardel: "Invoices deleted", qboother: "Other changes",   // short on the tab; the page title says it in full
   wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
 };
+// ONE page serves several tabs: the QBO changes page is scoped by the Audit tab that opened it (QA_SCOPES), so every
+// scoped tab shows the `qboaudit` tab-page.
+const PAGE_OF = { qboap: "qboaudit", qboapdel: "qboaudit", qboar: "qboaudit", qboardel: "qboaudit", qboother: "qboaudit" };
 const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
 // old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
                     clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "billaudit",
                     health: "money", subloc: "money", costs: "money", graph: "processes", systems: "processes",
-                    rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
+                    rpreview: "review",     // the RP review became the per-division WIP review (2026-09-15)
+                    qboaudit: "qboap" };    // the one QBO changes page became the Audit categories (2026-10-11)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
 function buildGroupBar() {
@@ -297,11 +307,11 @@ function buildSubTabs(g, active) {
   const bar = $("#subtabbar"); if (!bar) return;
   if (!g || g.tabs.length <= 1) { bar.hidden = true; bar.innerHTML = ""; return; }   // single-page group: no second row
   bar.hidden = false; bar.innerHTML = "";
-  for (const t of g.tabs) {
-    const b = document.createElement("button"); b.className = "subtab" + (t === active ? " active" : "");
-    b.textContent = TAB_LABELS[t] || t; b.onclick = () => setTab(t);
-    bar.appendChild(b);
-  }
+  const add = t => { const b = document.createElement("button"); b.className = "subtab" + (t === active ? " active" : "");
+    b.textContent = TAB_LABELS[t] || t; b.onclick = () => setTab(t); bar.appendChild(b); };
+  if (g.cats) {                              // categories (Audit: AP · AR · Company): the name, then its pages
+    for (const [label, tabs] of g.cats) { const c = document.createElement("span"); c.className = "subcat"; c.textContent = label; bar.appendChild(c); tabs.forEach(add); }
+  } else g.tabs.forEach(add);
 }
 let activeTab = "projects";
 function setTab(t) {
@@ -312,7 +322,7 @@ function setTab(t) {
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
   { const rv = $("#recordView"); if (rv) { if (!rv.hidden) _recSave(null); rv.hidden = true; } }   // leaving a record view when a tab is picked (a refresh no longer reopens it)
-  $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
+  { const page = PAGE_OF[t] || t; $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== page; }); }
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
@@ -321,7 +331,7 @@ function setTab(t) {
   if (t === "customercenter") renderCustomers();
   if (t === "payments") renderPayments();
   if (t === "billaudit") loadAccounting();
-  if (t === "qboaudit") loadQboAudit();
+  if (PAGE_OF[t] === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
   if (t === "uncleared") loadUncleared();
   if (t === "dupcustomers") loadDupCustomers();
@@ -9093,6 +9103,21 @@ function wrRunProgress(label, onDone) {
 // previous refresh, with QuickBooks' own time and plain-word flags (shared/qbo_mirror.change_flags); the mirror keeps
 // the before record. Born of 2026-09-18, when the audit log blamed the owner for deletions a connected app made.
 let QA = null, qaDays = 30, qaFlag = null, qaShowOk = false;
+// ONE page, scoped by the Audit tab that opened it (owner 2026-10-11: "the audit into an audit and then to categories, AP,
+// AR ... invoices changed after saved ... are the invoices getting deleted as well"). AP = the vendor side, AR = the
+// client side; a deletion or a void is its own page on each side so it is never lost among the edits; everything else
+// (lists, journal entries, deposits, transfers) is Other.
+const QA_AP = new Set(["Bill", "BillPayment", "Purchase", "VendorCredit", "PurchaseOrder"]);
+const QA_AR = new Set(["Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt", "Estimate"]);
+const qaGone = c => c.kind === "deleted" || c.flags.includes("voided");
+const QA_SCOPES = {
+  qboap:    { title: "Bills changed after they were saved", empty: "No bill, expense or bill payment changed", pass: c => QA_AP.has(c.entity) && !qaGone(c) },
+  qboapdel: { title: "Bills deleted or voided", empty: "No bill, expense or bill payment deleted or voided", pass: c => QA_AP.has(c.entity) && qaGone(c) },
+  qboar:    { title: "Invoices changed after they were saved", empty: "No invoice, payment or credit memo changed", pass: c => QA_AR.has(c.entity) && !qaGone(c) },
+  qboardel: { title: "Invoices deleted or voided", empty: "No invoice, payment or credit memo deleted or voided", pass: c => QA_AR.has(c.entity) && qaGone(c) },
+  qboother: { title: "Other QuickBooks changes - lists, journal entries, deposits, transfers", empty: "Nothing else changed", pass: c => !QA_AP.has(c.entity) && !QA_AR.has(c.entity) },
+};
+const qaScopeKey = () => QA_SCOPES[activeTab] ? activeTab : "qboap";
 const QA_ENTITY = { Bill: "Bill", BillPayment: "Bill payment", Purchase: "Expense", Invoice: "Invoice", Payment: "Payment received", JournalEntry: "Journal entry",
   VendorCredit: "Vendor credit", CreditMemo: "Credit memo", Deposit: "Deposit", Transfer: "Transfer", PurchaseOrder: "Purchase order", Estimate: "Estimate",
   Customer: "Customer", Vendor: "Vendor", Account: "Account", Item: "Item", Class: "Class", Term: "Term", PaymentMethod: "Payment method" };
@@ -9112,8 +9137,6 @@ async function qaSetOk(c, ok) {   // a ledger write (qbo_change_ok) - never Quic
     if (!r.ok) throw new Error(r.error || "failed");
     c.ok_at = ok ? r.marked_at : null;
     for (const k of (QA.changes || [])) if (k.parent_id === c.id) k.ok_at = c.ok_at;
-    if (ok && c.flags) for (const f of c.flags) if (QA.flag_counts && QA.flag_counts[f]) QA.flag_counts[f] -= 1;
-    if (!ok && c.flags) for (const f of c.flags) if (QA.flag_counts) QA.flag_counts[f] = (QA.flag_counts[f] || 0) + 1;
     const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y);
   } catch (e) { toast ? toast("Could not save: " + e.message) : alert("Could not save: " + e.message); }
 }
@@ -9172,10 +9195,13 @@ function renderQboAudit() {
     tbody.innerHTML = QA && QA.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(QA.error)}</td></tr>` : "";
     return;
   }
-  const everything = QA.changes || [], fc = QA.flag_counts || {};
+  const sk = qaScopeKey(), scope = QA_SCOPES[sk], everything = (QA.changes || []).filter(c => c.parent_id || scope.pass(c));
+  { const h = $("#qaTitle"); if (h) h.textContent = scope.title; }
   const kids = {}; for (const c of everything) if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);   // bills a check lost, under the check
   const okd = everything.filter(c => !c.parent_id && c.ok_at);   // the owner's "that's OK" - off the list unless asked for
   const all = everything.filter(c => !c.parent_id && (qaShowOk || !c.ok_at)), flagged = all.filter(c => c.flags.length && !c.ok_at);
+  const fc = {}; for (const c of flagged) for (const f of c.flags) fc[f] = (fc[f] || 0) + 1;   // the chips count THIS category
+  if (qaFlag && !fc[qaFlag]) qaFlag = null;                       // a chip picked on another category does not hide this one
   if (note) note.textContent = `refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
   if (stats) stats.innerHTML = "";
   filt.innerHTML = "";
@@ -9189,16 +9215,16 @@ function renderQboAudit() {
   const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
   const base = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
     && refHit(q, [c.doc_number, c.doc_before]));   // ref # only - type / vendor / project / class are the column funnels
-  const rows = hfSorted("qboaudit", base.filter(c => hfPasses("qboaudit", c)));
+  const rows = hfSorted(sk, base.filter(c => hfPasses(sk, c)));   // column funnels + sort remembered per category
   const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left", "qatype"], ["No.", "left"], ["Vendor / client", "left", "qaparty"], ["Project", "left", "qaproj"], ["Class", "left", "qaclass"],
     ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
   thead.innerHTML = "";
   { const tr = document.createElement("tr");
     for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
-      if (hk) hfDecorate(th, "qboaudit", hk, () => base.filter(r => hfPasses("qboaudit", r, hk)), renderQboAudit); tr.appendChild(th); }
+      if (hk) hfDecorate(th, sk, hk, () => base.filter(r => hfPasses(sk, r, hk)), renderQboAudit); tr.appendChild(th); }
     thead.appendChild(tr); }
   tbody.innerHTML = "";
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${_ge(all.length ? "Nothing matches." : `${scope.empty} in this window - widen it (All = since the change log began, 09/23/2026) or refresh from QuickBooks.`)}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
   const qaRow = (c, child) => {
     const tr = document.createElement("tr");

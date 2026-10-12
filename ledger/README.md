@@ -224,9 +224,12 @@ component below; never rebuild one from scratch, and add to this list when a new
 - **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;
   a checkbox per row and a select-all for bulk actions; a voided payment says VOIDED.
 - Groups elsewhere follow the central `GRP_KINDS` mechanism.
-- **Four views** (owner 2026-09-23): Projects · Vendors (Bill Tracker · Vendor Center) · Customers (Invoice Tracker ·
-  Customer Center · Payments received · Sales pipeline) · Company (Money · QBO Audit) + the gear. A new company-wide
-  list is a sub-tab of the view it belongs to, never a fifth view.
+- **Five views** (owner 2026-09-23, Audit split out 2026-10-11): Projects · Vendors (Bill Tracker · Vendor Center ·
+  Pay bills) · Customers (Invoice Tracker · Customer Center · Payments received · Sales pipeline) · **Audit** (in
+  categories - AP: Checks QBO changed · Bills changed · Bills deleted · Bills to fix · Uncleared checks; AR: Invoices
+  changed · Invoices deleted; Company: Duplicate customers · Other changes) · Company (Money · Reclassify transactions ·
+  Processes) + the gear. A new company-wide list is a sub-tab of the view it belongs to, never a sixth view; a new
+  audit goes under its category on Audit (`cats` on the group).
 - **Stats are one line each** (label · value · note · source), never boxed tiles - "no big waste spacer blocks".
 - **A click never scrolls the page** (a draw, a group, a filter): re-render in place, restore `scrollY`.
 
@@ -261,21 +264,27 @@ on the network). What it shows:
   never writes.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
-- **QBO Audit** (Company) — what changed in QuickBooks: the mirror's change log (`/api/qboaudit?days=`), every
-  record deleted / edited / restored / added since the previous refresh with QuickBooks' own time and plain-word
-  flags (deleted paid bill, payment unapplied, reopened, voided, class dropped…), tiles + chips + search, **Refresh
-  from QuickBooks** (the `mirror` pipeline); the Bill Tracker audits sit underneath. QuickBooks' API never says who -
-  the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged as the owner).
-- **Uncleared checks** (Company) - every check QuickBooks still shows as uncleared (not matched = not deposited),
+- **QBO changes** (Audit - five pages off ONE tab-page) — what changed in QuickBooks: the mirror's change log
+  (`/api/qboaudit?days=`), every record deleted / edited / restored / added since the previous refresh with
+  QuickBooks' own time and plain-word flags (deleted paid bill, deleted open invoice, payment unapplied, reopened,
+  voided, class dropped…), chips + search, **Refresh from QuickBooks** (the `mirror` pipeline). The page is scoped by
+  the tab that opened it (`QA_SCOPES` in app.js): **AP · Bills changed** (bills, expenses, bill payments, vendor
+  credits, purchase orders edited) · **AP · Bills deleted** (deleted or voided) · **AR · Invoices changed** (invoices,
+  payments received, credit memos edited after they were saved - an edit can be a fix: OK it) · **AR · Invoices
+  deleted** (deleted or voided; *deleted open invoice* = money was still owed) · **Company · Other changes** (lists,
+  journal entries, deposits, transfers). The window has an **All** stop (since the log began, 09/23/2026). QuickBooks'
+  API never says who - the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged
+  as the owner); split into categories 2026-10-11.
+- **Uncleared checks** (Audit · AP) - every check QuickBooks still shows as uncleared (not matched = not deposited),
   from QBO's TransactionList `cleared=Uncleared` filter via `ledger/load_uncleared_checks.py`; each bank account's
   matched-through date; accounts never matched to a bank feed (Joint Checks) kept apart. `/api/uncleared`.
-- **Duplicate customers** (Company) - a project # carried by two ACTIVE QuickBooks customers (sync-all's "duplicate
+- **Duplicate customers** (Audit · Company) - a project # carried by two ACTIVE QuickBooks customers (sync-all's "duplicate
   customers for ..." lines). Every tool uses one customer per project # (`shared/qbo_api.pick_customer`: exact name,
   most invoices, oldest) and misses whatever sits on the other. One band per project: its status (Both have invoices ·
   Money on duplicate · Name typo · Separate job? · Empty duplicate), the customer the tools use, every invoice # and
   bill # on the skipped one. A project leaves once the extra customer is inactive and the mirror refreshed.
   `ledger/dup_customers.py` over the mirror (`/api/dupcustomers`; run it alone to print the list). Read-only.
-- **Checks QBO changed** (Company) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
+- **Checks QBO changed** (Audit · AP, first) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
   one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
