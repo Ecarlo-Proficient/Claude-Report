@@ -10,6 +10,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   bar (`#pfDate`, state `payRunDate`) and filters on the bill date, so a check run can be one month's bills and
   **Select all shown** ticks only that month. Built with the other pay filters (once per bill-set change, state kept).
   Verified on 8792: 805 open bills -> Sep 2026 = 270 rows all 09/2026; from 09/01 to 09/15 = 142; Reset = 805 again.
+  Follow-up the same day (owner: "only show me the months min and max that is being shown"): the month list is ONLY the
+  months of the bills on the screen - every other filter applied, the date filter itself not (`_payMonthsShown`,
+  `_payFilterPass(b, skipDate)`), rebuilt on each render. Open bills = 13 months (a paid bill's Dec 2026 gone); one
+  vendor picked = just its Aug + Sep 2026; "In this pay run" with nothing on it = no months.
 - 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
   stand" - "in the same statement Excel, not a mix"). `/api/revisions` reads every vendor's statement record
   (`revised` rows the reconciler writes from each workbook's Revised Bills sheet, 60 s cache) and judges each row

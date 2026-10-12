@@ -3511,22 +3511,25 @@ const PAY_MSEL = [
 ];
 // The Date filter is the Bill Tracker's (Month | Date from-to, every month ticked by default) on the bill date,
 // so a check run can be one month's bills (owner 2026-10-12: "filter by months when paying bills"); "Select all shown"
-// then ticks only that month. Built once (its state survives re-renders), rebuilt when the bill set changes.
+// then ticks only that month. Its month list is ONLY the months of the bills on the screen - the other filters applied,
+// the date filter itself not (owner 2026-10-12: "only show me the months min and max that is being shown"), so a paid
+// bill's month or a month no open bill sits in never appears; the list follows every other filter on each render.
 let payRunDate = null;
+function _payMonthsShown() { return _payMarkable().filter(b => _payFilterPass(b, true)).map(b => b.bill_date); }
 function buildPayFilters() {
   for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills);
-  if (!payRunDate) payRunDate = dateFilter("pfDate", () => _payMarkable().map(b => b.bill_date), renderPayBills);
+  if (!payRunDate) payRunDate = dateFilter("pfDate", _payMonthsShown, renderPayBills);
   payRunDate.build();
 }
 
 const payFunded = b => (b.inv_ar_status === "Paid") || (b.invoice_status === "Invoice paid");
-function _payFilterPass(b) {
+function _payFilterPass(b, skipDate) {   // skipDate: every filter but the Date one (what months are on the screen)
   const st = payState(b);
   const show = $("#pfShow") ? $("#pfShow").value : "open";
   if (show === "run") { if (!st.selected) return false; }
   else if (num(b.open_balance) <= 0 && !st.selected) return false;   // "Open bills" (default): still owed
   if (!refHit($("#pfSearch") ? $("#pfSearch").value : "", [b.bill_ref])) return false;   // ref # only; project is its own filter
-  if (payRunDate && !payRunDate.passes(b.bill_date)) return false;                              // Month | Date (from / to) on the bill date
+  if (!skipDate && payRunDate && !payRunDate.passes(b.bill_date)) return false;                 // Month | Date (from / to) on the bill date
   if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
   if (!mselPasses(b, PAY_MSEL, payMSel)) return false;              // Client / Vendor / Division / Approved / Lien
   return true;
@@ -3571,7 +3574,8 @@ function renderPayBills() {
   if (paySig !== _payMSelSig || !($("#pfClientMenu") && $("#pfClientMenu").querySelector(".msel-opt"))) {
     _payMSelSig = paySig; buildPayFilters();
   }
-  let rows = _payMarkable().filter(_payFilterPass);
+  else if (payRunDate) payRunDate.build();   // the month list follows the other filters (only the months on the screen)
+  let rows = _payMarkable().filter(b => _payFilterPass(b));
   rows.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
   // the amounts sit right after the bill (owner 2026-09-29: short pay "doesn't allow" - Pay $ was past the right edge)
   const cols = ["Pay", "Vendor", "Bill #", "Date", "Open bal", "Pay $", "Project #", "Client", "GC draw", "Invoice #", "Lien"];
