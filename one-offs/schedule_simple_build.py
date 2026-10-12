@@ -13,6 +13,10 @@ flow, it needs to be simple"). This keeps only what needs no upkeep, on a COPY:
      them; calendar entries already in the clerk's four colours are switched to them.
      The DATE READY greens and CREW yellows (the old daily-schedule codes) are untouched.
   3. Both sheets freeze below the header with the job columns fixed (I4).
+  4. The days also run along the FOUNDATIONS banner row on Main, and Completed gets Main's
+     FLATWORK and FOUNDATIONS blocks (banner with days, header, 10 blank rows) above its
+     punch lists, so a finished job is cut from Main and pasted straight in. The Legend's
+     colour boxes carry their names inside them.
 
   --dropdowns  also puts a phase dropdown on the Main calendar cells: flatwork rows offer
                the Legend's flatwork phases, foundation rows the foundation phases. Any
@@ -206,12 +210,15 @@ def legend(wb) -> None:
     names = {up(name): name for name, *_ in STYLES}
     hit = 0
     for r in range(1, lg.max_row + 1):
-        name = names.get(up(lg.cell(r, 3).value))
-        if name:
+        name = names.get(up(lg.cell(r, 3).value)) or names.get(up(lg.cell(r, 2).value))
+        if name:  # the name sits inside its own colour box (owner 2026-10-12)
             lg.cell(r, 2).style = name
+            lg.cell(r, 2).value = name
+            lg.cell(r, 3).value = None
             hit += 1
     if hit != len(STYLES):
         die(f"found {hit} of {len(STYLES)} colour rows on the Legend")
+    lg.column_dimensions["B"].width = max(lg.column_dimensions["B"].width or 0, 30)
 
 
 def phase_ranges(wb) -> tuple:
@@ -228,8 +235,8 @@ def phase_ranges(wb) -> tuple:
     return (f"{LEGEND}!$B${min(fnd)}:$B${max(fnd)}", f"{LEGEND}!$B${min(flat)}:$B${max(flat)}")
 
 
-def dropdowns(wb, last: int) -> None:
-    ws = wb[MAIN]
+def section_rows(ws) -> dict:
+    """Banner rows of FLATWORK / FOUNDATIONS and the first PUNCH LIST title."""
     rows = {}
     for r in range(1, ws.max_row + 1):
         a = up(ws.cell(r, 1).value)
@@ -240,7 +247,75 @@ def dropdowns(wb, last: int) -> None:
         elif "PUNCH LIST" in a and "punch" not in rows:
             rows["punch"] = r
     if set(rows) != {"flat", "fnd", "punch"}:
-        die(f"Main sections not found: {rows}")
+        die(f"{ws.title} sections not found: {rows}")
+    return rows
+
+
+BLANK_ROWS = 10  # empty rows per section on Completed, to paste finished jobs into
+
+
+def foundation_band(ws, last: int) -> None:
+    """The days on the FOUNDATIONS banner row too, styled like the top band (row 2)."""
+    r = section_rows(ws)["fnd"]
+    for c in range(CAL0, last + 1):
+        ws.cell(r, c)._style = copy.copy(ws.cell(2, c)._style)
+        ws.cell(r, c).value = ws.cell(2, c).value
+
+
+def completed_sections(wb, last: int) -> None:
+    """Completed gets Main's FLATWORK and FOUNDATIONS blocks (banner with days, header,
+    BLANK_ROWS empty rows, a gap) above its punch lists - the same columns and dates as
+    Main, so a cut row pastes straight in."""
+    m, d = wb[MAIN], wb[DONE]
+    sec = section_rows(m)
+    job_row = sec["flat"] + 2      # a real job row: borders on every job column
+    cal_row = sec["fnd"] - 1       # Main's spare row: plain bordered calendar cells
+    plan = []
+    for key in ("flat", "fnd"):
+        plan += [("banner", sec[key]), ("header", sec[key] + 1)]
+        plan += [("blank", job_row)] * BLANK_ROWS + [("gap", None)]
+    n = len(plan)
+    merges = [str(x) for x in d.merged_cells.ranges]
+    for x in merges:
+        d.unmerge_cells(x)
+    heights = {r: d.row_dimensions[r].height for r in range(2, d.max_row + 1)}
+    d.insert_rows(2, n)
+    for r, h in heights.items():
+        d.row_dimensions[r + n].height = h
+    for r in range(2, 2 + n):
+        d.row_dimensions[r].height = None
+    for x in merges:
+        a, b = x.split(":")
+        ra, rb = int(re.sub(r"\D", "", a)), int(re.sub(r"\D", "", b))
+        ca, cb = re.sub(r"\d", "", a), re.sub(r"\d", "", b)
+        if ra >= 2:
+            ra, rb = ra + n, rb + n
+        d.merge_cells(f"{ca}{ra}:{cb}{rb}")
+    for i, (kind, src) in enumerate(plan):
+        r = 2 + i
+        if kind == "gap":
+            continue
+        d.row_dimensions[r].height = m.row_dimensions[src].height
+        for c in range(1, last + 1):
+            s_cell = m.cell(cal_row if kind == "blank" and c >= CAL0 else src, c)
+            t = d.cell(r, c)
+            t._style = copy.copy(s_cell._style)
+            if kind == "blank":
+                t.value = None
+                t.fill = PatternFill(fill_type=None)
+            elif kind == "banner":
+                t.value = s_cell.value if c == 1 else (m.cell(2, c).value if c >= CAL0 else None)
+                if c >= CAL0:
+                    t._style = copy.copy(m.cell(2, c)._style)
+            else:
+                t.value = s_cell.value
+        if kind == "banner":
+            d.merge_cells(f"A{r}:H{r}")
+
+
+def dropdowns(wb, last: int) -> None:
+    ws = wb[MAIN]
+    rows = section_rows(ws)
     fnd_list, flat_list = phase_ranges(wb)
     for top, bottom, src in ((rows["flat"] + 2, rows["fnd"] - 1, flat_list),
                              (rows["fnd"] + 2, rows["punch"] - 1, fnd_list)):
@@ -266,6 +341,9 @@ def build(src: Path, out: Path, with_dropdowns: bool) -> None:
     for ws in (wb[MAIN], wb[DONE]):
         last = extend(ws, days, month_style)
         report[ws.title] = restyle(ws, last)
+    foundation_band(wb[MAIN], last)
+    completed_sections(wb, last)
+    for ws in (wb[MAIN], wb[DONE]):
         freeze(ws)
     legend(wb)
     if with_dropdowns:
