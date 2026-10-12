@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/12/2026 · **Pay bills gets the Bill Tracker's Date filter** (owner: "i need the date filter with the month feature
+  like the bill tracker to filter by months when paying bills"). The same `dateFilter` component (Month = every month
+  ticked, Select all / Deselect all, a pick; Date = from / to with the calendar; Reset) sits after Ref # on the Pay bills
+  bar (`#pfDate`, state `payRunDate`) and filters on the bill date, so a check run can be one month's bills and
+  **Select all shown** ticks only that month. Built with the other pay filters (once per bill-set change, state kept).
+  Verified on 8792: 805 open bills -> Sep 2026 = 270 rows all 09/2026; from 09/01 to 09/15 = 142; Reset = 805 again.
 - 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
   stand" - "in the same statement Excel, not a mix"). `/api/revisions` reads every vendor's statement record
   (`revised` rows the reconciler writes from each workbook's Revised Bills sheet, 60 s cache) and judges each row

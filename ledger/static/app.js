@@ -3509,7 +3509,15 @@ const PAY_MSEL = [
   { id: "pfAppr",   all: "Any approval",  get: b => b.approved || "",     lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "pfLien",   all: "Any lien",      get: b => b.lien_status || "",  lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
-function buildPayFilters() { for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills); }
+// The Date filter is the Bill Tracker's (Month | Date from-to, every month ticked by default) on the bill date,
+// so a check run can be one month's bills (owner 2026-10-12: "filter by months when paying bills"); "Select all shown"
+// then ticks only that month. Built once (its state survives re-renders), rebuilt when the bill set changes.
+let payRunDate = null;
+function buildPayFilters() {
+  for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills);
+  if (!payRunDate) payRunDate = dateFilter("pfDate", () => _payMarkable().map(b => b.bill_date), renderPayBills);
+  payRunDate.build();
+}
 
 const payFunded = b => (b.inv_ar_status === "Paid") || (b.invoice_status === "Invoice paid");
 function _payFilterPass(b) {
@@ -3518,6 +3526,7 @@ function _payFilterPass(b) {
   if (show === "run") { if (!st.selected) return false; }
   else if (num(b.open_balance) <= 0 && !st.selected) return false;   // "Open bills" (default): still owed
   if (!refHit($("#pfSearch") ? $("#pfSearch").value : "", [b.bill_ref])) return false;   // ref # only; project is its own filter
+  if (payRunDate && !payRunDate.passes(b.bill_date)) return false;                              // Month | Date (from / to) on the bill date
   if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
   if (!mselPasses(b, PAY_MSEL, payMSel)) return false;              // Client / Vendor / Division / Approved / Lien
   return true;
