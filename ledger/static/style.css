@@ -2148,6 +2148,18 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 
 /* Pay in QuickBooks (the saved pay run -> bill payments): the controls, the per-vendor reference, the credits */
 .pq-head-btns { display: inline-flex; gap: 8px; }
+/* the review's text lines sit inside the widget's gutter like every other widget (owner 2026-10-12: the lettering
+   hugged the left edge); the grid itself stays flush with the widget like every other grid */
+#payQboBody { padding: 0 var(--pad-x) 12px; }
+#payQboBody .bill-filters { padding-left: 0; padding-right: 0; }
+#payQboBody .table-scroll { margin: 0 calc(-1 * var(--pad-x)); }
+#payQboBody .cd-ra-line { line-height: 1.5; }
+/* NOT APPROVED on the run: one loud box + yellow rows (colour = state, nowhere else) */
+.pq-na-box { margin: 8px 0 10px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--text); line-height: 1.5; }
+.pq-na-box b { color: var(--warn-text, var(--warn)); }
+.pq-grid tr.pq-na > td { background: color-mix(in srgb, #ffd600 32%, transparent); }
+.pq-grid tr.pq-na:hover > td { background: color-mix(in srgb, #ffd600 42%, transparent); }
+.pq-grid tr.pq-na td:nth-child(5) { font-weight: 700; }
 .pq-ctl { margin: 10px 0 6px; }
 .pq-ctl select, .pq-ctl input[type="date"] { min-width: 150px; }
 .pq-grid tr.bill-group .bg-cell { flex-wrap: wrap; }

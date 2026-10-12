@@ -358,9 +358,9 @@ def _plan_live(access: str, cid: str) -> dict:
                "memo": (b.get("PrivateNote") or "").split("\n")[0][:80],
                "check_approval": str((b.get("MetaData") or {}).get("CreateTime") or "")[:10] >= APPROVAL_SINCE}
         vid, vname = _ref(b.get("VendorRef")), (b.get("VendorRef") or {}).get("name") or ""
-        if "NOT APPROVED" in (b.get("PrivateNote") or "").upper():
-            skipped.append({**row, "vendor": vname, "why": "its memo says NOT APPROVED - approve it in QuickBooks first"})
-            continue
+        # a NOT APPROVED memo no longer takes the bill off the run (owner 2026-10-12: "i want it to warn me but not
+        # remove it") - the row is flagged, the review says so loudly and paints the row, the owner decides
+        row["not_approved"] = "NOT APPROVED" in (b.get("PrivateNote") or "").upper()
         if bal <= EPS:
             skipped.append({**row, "vendor": vname, "why": "already paid in QuickBooks"})
             continue
@@ -1026,7 +1026,7 @@ def main() -> int:
             print(f"{v['vendor']}  {len(v['bills'])} bills  {v['total']:,.2f}  ({len(v['credits'])} open credits)")
             for b in v["bills"]:
                 print(f"    {b['doc']:<16} {b['date']}  {b['amount']:>12,.2f}{'  partial' if b['partial'] else ''}"
-                      f"{'  check approval in QBO' if b['check_approval'] else ''}")
+                      f"{'  check approval in QBO' if b['check_approval'] else ''}{'  NOT APPROVED' if b.get('not_approved') else ''}")
         for s in p["skipped"]:
             print(f"  SKIP {s.get('vendor', '')} {s.get('doc', s['bill_id'])}: {s['why']}")
         print(f"total {p['total']:,.2f} on {p['bills']} bills - dry run, nothing written")

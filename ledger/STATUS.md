@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/12/2026 · **Pay in QuickBooks: a NOT APPROVED bill stays on the run, warned loudly** (owner: "need to bypass, i
+  want it to warn me but not remove it. make it easy to see, Paying Not Approved bill, x, y, z, then highlight the row
+  yellow"). `pay_bills._plan_live` no longer skips a bill whose memo says NOT APPROVED; the row carries
+  `not_approved` (the `--plan` print says NOT APPROVED too). The review shows one amber box - "Paying N Not Approved
+  bills: vendor · bill #, ..." - and paints those rows yellow (`tr.pq-na`, "NOT APPROVED" bold in the notes column);
+  the Are you sure? dialog repeats the list in capitals. The write path never blocked on it, so nothing else changed
+  there. **Lettering**: the review's text lines hugged the widget's left edge (`#payQboBody` had no gutter while the
+  controls and grid had theirs) - the body now carries the widget gutter, the grid stays flush like every other grid.
+  **Pay bills filter order** (owner): Ref # · Vendor · Date · Division · Approved · Project # · Client · Lien · Show.
+  Verified on 8792 with a mocked plan (a live read needs Touch ID): box names both bills, two yellow rows, text
+  inset like the controls; the bar reads in the new order.
 - 10/12/2026 · **One row per bill on the ledger's bill feed** (owner: "find out why cowtown shows 277,760.40 of open
   bills from july and back on the ledger but on the bill tracker excel it shows a smaller figure" -> "fix it, one row per
   bill"). Cause: the Bill Tracker lists a multi-job bill on the Bills sheet once as "(multiple)" AND on the Inventory

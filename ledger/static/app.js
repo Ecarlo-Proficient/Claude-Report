@@ -3780,6 +3780,7 @@ async function openPayQbo() {
   renderPayQbo();
 }
 function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
+function _pqNotApproved() { return PQ ? PQ.d.vendors.flatMap(v => v.bills.filter(b => b.not_approved).map(b => ({ ...b, vendor: v.vendor }))) : []; }
 function _pqNet(v) {
   const ids = PQ.credits.get(v.vendor_id) || new Set();
   return Math.round((v.total - (v.credits || []).filter(c => ids.has(c.id)).reduce((t, c) => t + c.balance, 0)) * 100) / 100;
@@ -3832,6 +3833,13 @@ function renderPayQbo() {
   const flagged = d.vendors.reduce((t, v) => t + v.bills.filter(b => b.check_approval).length, 0);
   if (flagged) line(`${flagged} bill${flagged !== 1 ? "s were" : " was"} entered since 09/16 - QuickBooks does not tell us whether ${flagged !== 1 ? "they are" : "it is"} approved. Check the approval in QuickBooks first.`, "warn");
   for (const s of d.skipped || []) line(`Left out: ${s.vendor ? s.vendor + " · " : ""}bill ${s.doc || s.bill_id} - ${s.why}`, "warn");
+  // NOT APPROVED bills stay on the run (owner 2026-10-12: "warn me but not remove it ... make it easy to see"): one
+  // loud box naming them, and their rows painted yellow below
+  const na = _pqNotApproved();
+  if (na.length) { const box = document.createElement("div"); box.className = "pq-na-box";
+    const h = document.createElement("b"); h.textContent = `Paying ${na.length} Not Approved bill${na.length !== 1 ? "s" : ""}: `; box.appendChild(h);
+    box.appendChild(document.createTextNode(na.map(x => `${x.vendor} · ${x.doc || x.bill_id}`).join(", ") + " - the memo in QuickBooks says NOT APPROVED. The yellow rows below are these."));
+    body.appendChild(box); }
   if (!d.vendors.length) { line("Nothing left to pay in the saved run.", "neg"); return; }
   // one band per vendor: the reference, the bills, the credits (unticked)
   const t = document.createElement("table"); t.className = "grid pay-list-grid pq-grid";
@@ -3855,11 +3863,12 @@ function renderPayQbo() {
     }
     cell.appendChild(rf); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
     for (const b of v.bills) {
-      const tr = document.createElement("tr"); tr.className = "pay-row";
+      const tr = document.createElement("tr"); tr.className = "pay-row" + (b.not_approved ? " pq-na" : "");   // yellow = NOT APPROVED in QuickBooks
+      if (b.not_approved) tr.title = "This bill's memo says NOT APPROVED in QuickBooks - you are paying it anyway";
       tr.appendChild(leftText(""));
       tr.appendChild(qboLinkCell(b.doc || b.bill_id, qboUrl("bill", b.bill_id), "Open this bill in QuickBooks"));
       tr.appendChild(leftText(fmtDateShort(b.date))); tr.appendChild(leftText(b.memo || ""));
-      tr.appendChild(leftText([b.partial ? `part of ${qaCents(b.balance)}` : "", b.check_approval ? "check approval in QuickBooks" : ""].filter(Boolean).join(" · ")));
+      tr.appendChild(leftText([b.not_approved ? "NOT APPROVED" : "", b.partial ? `part of ${qaCents(b.balance)}` : "", b.check_approval ? "check approval in QuickBooks" : ""].filter(Boolean).join(" · ")));
       const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(b.amount); tr.appendChild(c); tb.appendChild(tr);
     }
     for (const cr of v.credits || []) {
@@ -3892,8 +3901,10 @@ async function payQboWrite(btn) {
   const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqNet(v))}`
     + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
   const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
+  const na = _pqNotApproved();
+  const naLine = na.length ? `\n\nPAYING ${na.length} NOT APPROVED BILL${na.length !== 1 ? "S" : ""}: ${na.map(x => `${x.vendor} · ${x.doc || x.bill_id}`).join(", ")}` : "";
   if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
-    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
+    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}${naLine}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
   btn.disabled = true; btn.textContent = "Confirm with Touch ID on this Mac…";
   const payload = { confirm: true, run_token: d.run_token, account_id: PQ.acct, date: PQ.date, method: PQ.method,
     vendors: d.vendors.map(v => ({ vendor_id: v.vendor_id, ref: (PQ.refs.get(v.vendor_id) || "").trim(),
