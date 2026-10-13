@@ -2541,11 +2541,12 @@ function _vpSelBar(rows) {
   bar.querySelector(".sb-meta").textContent = `${picked.length} bill${picked.length === 1 ? "" : "s"} · ${moneyC(picked.reduce((t, b) => t + num(b.line_amount), 0))} billed`;
   bar.querySelector(".sb-x").onclick = () => { _vpSel.clear(); renderVendorPage(); };
   bar.querySelector(".sb-copy").onclick = () => _vpCopyTable(picked);
-  // Pay in QuickBooks on the ticked bills still open (owner 2026-10-13) - a paid bill ticked for the copy is left out
-  const payable = picked.filter(b => b.bill_id && bOpen(b) > 0);
-  const pay = bar.querySelector(".sb-pay"); pay.hidden = !payable.length;
-  pay.textContent = `Pay in QuickBooks · ${payable.length} bill${payable.length === 1 ? "" : "s"}…`;
-  pay.onclick = () => openPayQbo({ bills: payable.map(b => String(b.bill_id)), vendor: _vendorData.vendor });
+  // Pay in QuickBooks on the ticked bills (owner 2026-10-13). A paid bill ticked goes too (later the same day: a joint
+  // check paying a bill we had already paid) - the review keeps it as "already paid" and the amount typed becomes a credit
+  const ticked = picked.filter(b => b.bill_id), payable = ticked.filter(b => bOpen(b) > 0);
+  const pay = bar.querySelector(".sb-pay"); pay.hidden = !ticked.length;
+  pay.textContent = payable.length ? `Pay in QuickBooks · ${payable.length} bill${payable.length === 1 ? "" : "s"}…` : "Pay in QuickBooks · a credit on paid bills…";
+  pay.onclick = () => openPayQbo({ bills: ticked.map(b => String(b.bill_id)), vendor: _vendorData.vendor });
 }
 async function _vpCopyTable(picked) {
   const heads = [...document.querySelectorAll(".vp-grid thead th")].filter(th => !th.classList.contains("vp-ck")).map(th => th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.textContent : th.textContent.trim());
@@ -3770,7 +3771,12 @@ function exportPayList() {
 }
 // ── Pay in QuickBooks (owner 2026-09-28): the SAVED pay run -> one QBO bill payment per vendor (ledger/pay_bills.py).
 // Step 1 reads the run live from QuickBooks (/api/pay-bills/plan, no write): per vendor the bills, the amounts, the
-// vendor's open credits (applied only when ticked) and what was skipped. The owner picks the account, the date and
+// vendor's open credits (applied only when ticked) and what was skipped. A vendor's band carries the CHECK AMOUNT
+// (owner 2026-10-13: "create a bill payment to a certain amount and ... show the credit it made"): it defaults to the
+// bills less the ticked credits; typed higher, the excess is QuickBooks' "Amount to Credit" - a credit held with the
+// vendor, named on the band, in Are you sure?, in the result and under the bills on the stub. From the vendor page a
+// ticked bill already paid (a joint check on a bill we paid) keeps its vendor on the review with no bills: the amount
+// typed is the whole payment and all of it becomes the credit. The owner picks the account, the date and
 // how it goes out: check to print later ("To print"), check already written (its #), ACH / wire (the reference as
 // typed, 21 characters at most - QuickBooks' own limit), or card when a card account is picked. Step 2 writes only
 // after "Are you sure?", and the server re-checks every bill live before each payment. Each payment files its stub in
@@ -3803,7 +3809,7 @@ async function openPayQbo(opts) {
   if (!PQ || PQ.widget !== w) return;   // closed or replaced while QuickBooks answered
   if (!d.ok) { wait.className = "cd-ra-line neg"; wait.textContent = "Could not read QuickBooks: " + (d.error || "failed"); return; }
   const acct = (d.accounts || []).find(a => a.type === "bank") || (d.accounts || [])[0];
-  Object.assign(PQ, { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map() });
+  Object.assign(PQ, { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map(), amounts: new Map() });
   renderPayQbo();
 }
 function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
@@ -3811,17 +3817,25 @@ function _pqNotApproved() { return PQ ? PQ.d.vendors.flatMap(v => v.bills.filter
 // "VENDOR · 1, 2; OTHER VENDOR · 3" - the vendor once, its bill #s after it (owner 2026-10-12: "if same vendor why are you keeping the name?")
 function _pqByVendor(rows) { const by = new Map(); for (const x of rows) (by.get(x.vendor) || by.set(x.vendor, []).get(x.vendor)).push(x.doc || x.bill_id);
   return [...by].map(([v, docs]) => `${v} · ${docs.join(", ")}`).join("; "); }
-function _pqNet(v) {
+function _pqNet(v) {   // the bills less the ticked credits = the least the check can be
   const ids = PQ.credits.get(v.vendor_id) || new Set();
   return Math.round((v.total - (v.credits || []).filter(c => ids.has(c.id)).reduce((t, c) => t + c.balance, 0)) * 100) / 100;
 }
+function _pqTyped(v) { const t = (PQ.amounts.get(v.vendor_id) || "").trim(); if (t === "") return null; const n = Number(t.replace(/[$,\s]/g, "")); return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN; }
+function _pqAmount(v) { const t = _pqTyped(v); return t == null || Number.isNaN(t) ? _pqNet(v) : t; }   // the check amount: typed, else the bills
+function _pqCredit(v) { return Math.max(0, Math.round((_pqAmount(v) - _pqNet(v)) * 100) / 100); }      // QuickBooks' "Amount to Credit"
+function _pqCreditOnly(v) { return !v.bills.length && (v.paid_bills || []).length > 0; }
 function _pqProblems() {
   const out = [];
   for (const v of PQ.d.vendors) {
     const ref = (PQ.refs.get(v.vendor_id) || "").trim();
     if ((PQ.method === "check" || PQ.method === "ach") && !ref) out.push(`${v.vendor}: needs its ${PQ.method === "ach" ? "ACH reference" : "check #"}`);
     if (ref.length > PQ.d.ref_max) out.push(`${v.vendor}: reference is ${ref.length} characters (${PQ.d.ref_max} max)`);
-    if (_pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
+    if (v.bills.length && _pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
+    const typed = _pqTyped(v);
+    if (Number.isNaN(typed)) out.push(`${v.vendor}: the amount is not a number`);
+    else if (typed != null && typed < _pqNet(v) - 0.005) out.push(`${v.vendor}: the amount typed is less than the bills on it (${qaCents(_pqNet(v))}) - take a bill off or pay it in part on the run`);
+    else if (_pqCreditOnly(v) && _pqAmount(v) <= 0.005) out.push(`${v.vendor}: type the check amount - the bills ticked are already paid, so all of it becomes a credit`);
   }
   if (!PQ.d.can_pay) out.push(PQ.d.why_not || "payments are locked on this Mac");
   if (!PQ.acct) out.push("Pick the account to pay from");
@@ -3879,7 +3893,8 @@ function renderPayQbo() {
     const gtr = document.createElement("tr"); gtr.className = "bill-group pq-band"; const gtd = document.createElement("td"); gtd.colSpan = 6;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; key.appendChild(stmtBubble(v.vendor, true)); cell.appendChild(key);   // the statement standing beside the vendor being paid (owner 2026-10-09)
-    bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqNet(v)), "payment"]]);
+    const credit = _pqCredit(v);
+    bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqAmount(v)), "payment"], ...(credit > 0.005 ? [[qaCents(credit), "credit it creates"]] : [])]);
     const rf = document.createElement("span"); rf.className = "pq-ref";
     if (PQ.method === "print") { rf.textContent = "check # when printed"; rf.classList.add("dim"); }
     else {
@@ -3891,7 +3906,25 @@ function renderPayQbo() {
       inp.oninput = () => { PQ.refs.set(v.vendor_id, inp.value); upd(); _pqFoot(); }; upd();
       rf.appendChild(inp); rf.appendChild(cnt);
     }
-    cell.appendChild(rf); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    cell.appendChild(rf);
+    // the check amount: the bills less the ticked credits unless typed higher - the excess is a credit with the vendor
+    const am = document.createElement("span"); am.className = "pq-ref pq-amt";
+    const al = document.createElement("span"); al.className = "pq-amt-l"; al.textContent = "Amount"; am.appendChild(al);
+    const ai = document.createElement("input"); ai.type = "text"; ai.inputMode = "decimal"; ai.spellcheck = false;
+    ai.placeholder = qaCents(_pqNet(v)); ai.value = PQ.amounts.get(v.vendor_id) || ""; ai.title = "The check amount. More than the bills = a credit QuickBooks holds with this vendor";
+    ai.oninput = () => { PQ.amounts.set(v.vendor_id, ai.value); _pqBandCredit(v, cn); _pqFoot(); };
+    ai.onchange = () => renderPayQbo();   // the band's payment / credit figures catch up
+    am.appendChild(ai);
+    const cn = document.createElement("span"); cn.className = "pq-credit-note"; am.appendChild(cn); _pqBandCredit(v, cn);
+    cell.appendChild(am); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    for (const b of v.paid_bills || []) {   // ticked on the vendor page but already paid: the payment on them is all credit
+      const tr = document.createElement("tr"); tr.className = "pay-row pq-paid"; tr.title = "Already paid in QuickBooks - nothing applies to it; the amount typed becomes a credit with the vendor";
+      tr.appendChild(leftText(""));
+      tr.appendChild(qboLinkCell(b.doc || b.bill_id, qboUrl("bill", b.bill_id), "Open this bill in QuickBooks"));
+      tr.appendChild(leftText(fmtDateShort(b.date))); tr.appendChild(leftText(b.memo || ""));
+      tr.appendChild(leftText(`already paid in QuickBooks (${qaCents(b.total)}) - this payment becomes a credit`));
+      const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(0); tr.appendChild(c); tb.appendChild(tr);
+    }
     for (const b of v.bills) {
       const tr = document.createElement("tr"); tr.className = "pay-row" + (b.not_approved ? " pq-na" : "");   // yellow = NOT APPROVED in QuickBooks
       if (b.not_approved) tr.title = "This bill's memo says NOT APPROVED in QuickBooks - you are paying it anyway";
@@ -3917,9 +3950,15 @@ function renderPayQbo() {
   const act = document.createElement("div"); act.className = "qa-repair-act pq-act"; act.id = "pqAct"; body.appendChild(act);
   _pqFoot();
 }
+function _pqBandCredit(v, el) {   // beside the amount box: what the typed amount does
+  const typed = _pqTyped(v), credit = _pqCredit(v);
+  el.classList.toggle("neg", Number.isNaN(typed) || (typed != null && typed < _pqNet(v) - 0.005));
+  el.textContent = Number.isNaN(typed) ? "not a number" : typed != null && typed < _pqNet(v) - 0.005 ? `less than the bills (${qaCents(_pqNet(v))})`
+    : credit > 0.005 ? `creates a credit of ${qaCents(credit)} with ${v.vendor}` : _pqCreditOnly(v) ? "type the check amount - all of it becomes a credit" : "";
+}
 function _pqFoot() {
   const act = PQ && PQ.body.querySelector("#pqAct"); if (!act) return; act.innerHTML = "";
-  const total = PQ.d.vendors.reduce((t, v) => t + _pqNet(v), 0), probs = _pqProblems();
+  const total = PQ.d.vendors.reduce((t, v) => t + _pqAmount(v), 0), probs = _pqProblems();
   const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small primary";
   btn.textContent = `Pay ${PQ.d.vendors.length} vendor${PQ.d.vendors.length !== 1 ? "s" : ""} · ${qaCents(total)} in QuickBooks…`;
   btn.disabled = probs.length > 0; btn.onclick = () => payQboWrite(btn);
@@ -3928,17 +3967,21 @@ function _pqFoot() {
 }
 async function payQboWrite(btn) {
   const d = PQ.d, a = _pqAcct() || {}, how = { print: "Check · print later in QuickBooks", check: "Check · already written", ach: "ACH / wire", card: "Credit card" }[PQ.method];
-  const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqNet(v))}`
+  const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqAmount(v))}`
+    + (_pqCredit(v) > 0.005 ? ` · credit ${qaCents(_pqCredit(v))}` : "")
     + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
-  const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
+  const total = d.vendors.reduce((t, v) => t + _pqAmount(v), 0);
   const na = _pqNotApproved();
   const naLine = na.length ? `\n\nPAYING ${na.length} NOT APPROVED BILL${na.length !== 1 ? "S" : ""}: ${_pqByVendor(na)}` : "";
+  const cr = d.vendors.filter(v => _pqCredit(v) > 0.005);
+  const crLine = cr.length ? `\n\nCREATES A CREDIT WITH ${cr.length !== 1 ? "THESE VENDORS" : "THE VENDOR"} (paid beyond the bills): ${cr.map(v => `${v.vendor} · ${qaCents(_pqCredit(v))}`).join("; ")}` : "";
   if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
-    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}${naLine}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
+    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}${naLine}${crLine}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
   btn.disabled = true; btn.textContent = "Confirm with Touch ID on this Mac…";
   const payload = { confirm: true, run_token: d.run_token, account_id: PQ.acct, date: PQ.date, method: PQ.method,
     vendors: d.vendors.map(v => ({ vendor_id: v.vendor_id, ref: (PQ.refs.get(v.vendor_id) || "").trim(),
-      bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])] })) };
+      bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])],
+      amount: _pqAmount(v) })) };
   let res; try { res = await (await fetch("/api/pay-bills/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).json(); }
   catch (e) { res = { ok: false, error: String(e) + " - check QuickBooks before trying again" }; }
   const act = PQ.body.querySelector("#pqAct"); act.innerHTML = "";
@@ -3949,7 +3992,8 @@ async function payQboWrite(btn) {
     if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
     const st = r.stub || {};
     if (r.after_error) say(`${r.vendor}: ${r.after_error} - it is in QuickBooks; refresh before paying again`, "warn");
-    say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
+    if (r.warn) say(`${r.vendor}: ${r.warn}`, "warn");
+    say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)}${(r.credit || 0) > 0.005 ? ` · ${qaCents(r.credit)} held as a credit with the vendor` : ""} · `
       + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
   }
   // the paid bills leave the run now. Only the ledger's own QuickBooks read runs here (mirror + bill payments + open

@@ -19,6 +19,14 @@ balance (owner 2026-10-07: "shown on amount paid - open balance = new total"; th
 less every earlier payment on it, from the bill's own LinkedTxn), what it applied and what is left. On the internal
 stub a check drawn on the Joint Checks account shows its type as "Joint check" (both stubs, owner 2026-10-09).
 
+A payment bigger than the bills it pays (owner 2026-10-13, a joint check paying a bill we had already paid) is what
+QuickBooks calls "Amount to Credit": the BillPayment's TotalAmt is more than its lines, no extra line - QuickBooks
+holds the difference as a credit with the vendor (HDS White Cap check 20119: 9,552.63 paid, 9,251.63 applied, 301.00
+credit). Both stubs print it as a block under the bills - Paid on bills / Credit on account / Total - instead of the
+old "check this payment" warning, which now fires only on a shortfall. A vendor credit QuickBooks applied on the
+payment is a negative Paid row (QuickBooks subtracts it from the check), so the Paid column always adds up to what was
+applied.
+
 Reads the raw QBO mirror only (shared/qbo_mirror: BillPayment -> Line[].LinkedTxn -> Bill; Vendor
 for the print name and address). Read-only everywhere; writes just the HTML/PDF it was asked for.
 PDF = the HTML printed by Chrome headless (Letter portrait), the same recipe as the process guides.
@@ -353,19 +361,17 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
         addr_lines.append(city)
     rows: List[Row] = []
     agg: Dict[Tuple[str, str], float] = {}
-    unapplied = 0.0
     for ln in bp.get("Line", []) or []:
-        paid = _num(ln.get("Amount"))
         linked = [t for t in (ln.get("LinkedTxn") or []) if t.get("TxnId")]
-        if not linked:
-            unapplied = round(unapplied + paid, 2)
+        if not linked:                                     # QuickBooks writes no line for the unapplied part: it is TotalAmt - lines
             continue
         key = (str(linked[0].get("TxnType") or "Bill"), str(linked[0]["TxnId"]))
-        agg[key] = round(agg.get(key, 0.0) + paid, 2)
-    for (ttype, tid), paid in agg.items():
+        agg[key] = round(agg.get(key, 0.0) + _num(ln.get("Amount")), 2)
+    for (ttype, tid), applied in agg.items():
         rec = txn_of(ttype, tid) or {}
         total = _num(rec.get("TotalAmt"))
         is_bill = ttype == "Bill"
+        paid = -applied if ttype == "VendorCredit" else applied   # a credit QuickBooks applied comes OFF the check
         before = _balance_before(rec, bp, tid, txn_of) if is_bill and rec else None
         rows.append({
             "bill_id": tid,
@@ -384,11 +390,11 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
             "partial": is_bill and bool(rec) and abs(total - paid) > 0.005,
         })
     rows.sort(key=lambda r: (str(r["bill_date"] or ""), _natural(r["number"])))
-    if abs(unapplied) > 0.005:
-        rows.append({"bill_id": "", "txn_type": "", "type": "Unapplied", "bill_date": bp.get("TxnDate"), "due_date": None,
-                     "number": "", "memo": "amount not applied to a bill", "project": "", "bill_total": unapplied,
-                     "paid": unapplied, "open_balance": 0.0, "balance_before": None, "balance_after": None, "partial": False})
-    total_paid = round(sum(r["paid"] for r in rows), 2)   # type: ignore[misc]
+    total_paid = round(sum(r["paid"] for r in rows), 2)   # type: ignore[misc]   what the check applied, credits off
+    total_amt = _num(bp.get("TotalAmt"))
+    credit = round(total_amt - total_paid, 2)               # QuickBooks' "Amount to Credit": the check beyond its bills
+    if credit < 0.005:
+        credit = 0.0
     return {
         "payment_id": str(bp.get("Id")),
         "txn_date": bp.get("TxnDate"),
@@ -399,10 +405,11 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
         "ref": ref,
         "account": acct,
         "joint": method == "Check" and is_joint_account(acct),   # paid out of the Joint Checks account, both stubs
-        "total": _num(bp.get("TotalAmt")),
+        "total": total_amt,
         "rows": rows,
         "rows_total": total_paid,
-        "ties": abs(total_paid - _num(bp.get("TotalAmt"))) < 0.005,
+        "credit": credit,                                       # a credit with the vendor made by this payment (0 = none)
+        "ties": abs(total_paid + credit - total_amt) < 0.005,   # false only when the check is SHORT of its bills
     }
 
 
@@ -715,7 +722,33 @@ tr.total td { border-top: 1px solid #333; border-bottom: 2px solid #333; font-we
 .rule { margin: 0 0 22px; }
 .pay .kv .kvrule { grid-column: 1 / -1; border-top: 1px solid #333; margin: 4px 0 3px; }
 .pay .kv .lbl.amtl { font-size: 14px; align-self: baseline; }
+table.credit { width: auto; min-width: 46%; margin: 14px 0 0 auto; }
+table.credit td { padding: 4px 4px; }
+table.credit td:first-child { padding-right: 24px; }
+table.credit tr.total td { border-top: 1px solid #333; border-bottom: 2px solid #333; }
+.credit-note { margin-top: 8px; text-align: right; font-weight: 600; }
 """
+
+
+def _credit_block(s: dict) -> str:
+    """Under the bills, when the payment is more than the bills it pays (QuickBooks' "Amount to Credit", owner
+    2026-10-13): Paid on bills / Credit on account / Total, and one line saying what the credit is. The vendor's copy
+    asks them to hold it; the internal copy says QuickBooks holds it with that vendor."""
+    credit = _num(s.get("credit"))
+    if credit < 0.005:
+        return ""
+    word = "check" if s["method"] in CHECK_METHODS or s.get("joint") else "payment"
+    if s.get("kind") == "internal":
+        note = (f"This {word} is ${money(credit)} more than the bills it pays. QuickBooks holds that as a credit with "
+                f"{_esc(s['vendor'])} (Amount to Credit), to apply to a future bill.")
+    else:
+        note = (f"This {word} is ${money(credit)} more than the bills it pays. Please hold the ${money(credit)} as a "
+                f"credit on our account.")
+    return ("<table class='credit'><tbody>"
+            f"<tr class='row'><td>Paid on bills</td><td class='r'>${money(s['rows_total'])}</td></tr>"
+            f"<tr class='row'><td>Credit on account</td><td class='r'>${money(credit)}</td></tr>"
+            f"<tr class='total'><td>Total of this {word}</td><td class='r'>${money(s['total'])}</td></tr>"
+            f"</tbody></table><div class='credit-note'>{note}</div>")
 
 
 def _internal_table(s: dict, cols: Sequence[str]) -> str:
@@ -750,6 +783,7 @@ def _internal_table(s: dict, cols: Sequence[str]) -> str:
     paid_at = cols.index("amount") if "amount" in cols else len(cols) - 1
     out.append(f"<tr class='total'><td colspan='{paid_at}'>Total paid on this {word}</td><td class='r'>${money(s['rows_total'])}</td>"
                + "<td></td>" * (len(cols) - paid_at - 1) + "</tr></tbody></table>")
+    out.append(_credit_block(s))
     if not s["ties"]:
         out.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
                    f"${money(s['total'])} - check this payment in QuickBooks.</div>")
@@ -836,6 +870,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             else:
                 parts.append("<td></td>")
         parts.append("</tr></tbody></table>")
+        parts.append(_credit_block(s))
         if not s["ties"]:
             parts.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
                          f"${money(s['total'])} - check this payment in QuickBooks.</div>")
@@ -985,21 +1020,37 @@ def _selftest() -> int:
     assert _file_name(s) == "TEST VENDOR - Bill Payment Stub 25760 09-21-2026.pdf"
     assert _file_name(dict(s, method="Credit card", ref="AMEX-0000")) == "TEST VENDOR - Bill Payment Stub AMEX-0000 09-21-2026.pdf"
     assert _file_name(dict(s, ref="")) == "TEST VENDOR - Bill Payment Stub Check p1 09-21-2026.pdf"   # no check #: the id keeps same-day payments apart
-    # a bill on two lines is ONE row; a vendor credit and an unapplied amount are rows of their own; everything still ties
-    bp2 = dict(bp, TotalAmt=1350.0, Line=[{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
-                                        {"Amount": 400.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
-                                        {"Amount": 300.0, "LinkedTxn": [{"TxnType": "VendorCredit", "TxnId": "vc1"}]},
-                                        {"Amount": 50.0}])
-    s2 = build_stub(bp2, lambda t, i: bills.get(i) if t == "Bill" else ({"DocNumber": "VC-9", "TxnDate": "2026-06-01", "TotalAmt": 300.0} if i == "vc1" else None), vendor)
-    assert s2["ties"] and [r["type"] for r in s2["rows"]] == ["Vendor credit", "Bill", "Unapplied"], s2["rows"]
-    assert s2["rows"][1]["paid"] == 1000.0 and not s2["rows"][1]["partial"]
-    assert "Vendor credit" in stub_html([s2]) and "Unapplied" in stub_html([s2])
+    # a bill on two lines is ONE row; a vendor credit QuickBooks applied comes OFF the check (Ubaldo 48395: 3,499.56 bill
+    # - 150.00 credit = a 3,349.56 check), so the Paid column adds up to the check
+    vc = lambda t, i: bills.get(i) if t == "Bill" else ({"DocNumber": "VC-9", "TxnDate": "2026-06-01", "TotalAmt": 300.0} if i == "vc1" else None)   # noqa: E731
+    bp2 = dict(bp, TotalAmt=700.0, Line=[{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                       {"Amount": 400.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                       {"Amount": 300.0, "LinkedTxn": [{"TxnType": "VendorCredit", "TxnId": "vc1"}]}])
+    s2 = build_stub(bp2, vc, vendor)
+    assert s2["ties"] and s2["credit"] == 0 and [r["type"] for r in s2["rows"]] == ["Vendor credit", "Bill"], s2["rows"]
+    assert s2["rows"][0]["paid"] == -300.0 and s2["rows"][1]["paid"] == 1000.0 and not s2["rows"][1]["partial"]
+    assert s2["rows_total"] == 700.0 and "Vendor credit" in stub_html([s2]) and "(300.00)" in stub_html([s2])
+    assert "Credit on account" not in stub_html([s2]) and "check this payment" not in stub_html([s2])
+    # the check is MORE than its bills (HDS White Cap 20119: 9,552.63 paid, 9,251.63 on bills): QuickBooks keeps the
+    # 301.00 as a credit with the vendor - the stub says so under the bills, on both copies, and never warns
+    bp3 = dict(bp, TotalAmt=1601.0)
+    s3 = build_stub(bp3, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)
+    assert s3["ties"] and s3["credit"] == 301.0 and s3["rows_total"] == 1300.0 and len(s3["rows"]) == 2
+    p3 = stub_html([s3])
+    for needle in ("Paid on bills", "$" + money(1300), "Credit on account", "$" + money(301), "Total of this check", "$" + money(1601),
+                   "hold the $301.00 as a credit on our account"):
+        assert needle in p3, needle
+    assert "check this payment" not in p3 and "Unapplied" not in p3
+    i3 = stub_html([dict(s3, kind="internal", groups=[], client="")], columns_for("internal"))
+    assert "Credit on account" in i3 and "QuickBooks holds that as a credit with TEST VENDOR" in i3 and "hold the" not in i3
+    assert "Credit on account" not in page                                        # a check that equals its bills: no block
     assert not (_natural("1001") < _natural("999")) and _natural("999") < _natural("1001")
     assert _safe_name("A/B: C") == "A-B- C"
     assert "Bill total" in page and "Bill total" not in stub_html([s], columns=["number", "amount"])   # in the default set; off when unticked
     assert "check this payment" not in stub_html([s])
-    bp_bad = dict(bp, TotalAmt=1400.0)
-    assert "check this payment" in stub_html([build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)])
+    bp_bad = dict(bp, TotalAmt=1200.0)                                            # SHORT of its bills: still the warning
+    s_bad = build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)
+    assert not s_bad["ties"] and s_bad["credit"] == 0 and "check this payment" in stub_html([s_bad])
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "stub.html"
         p.write_text(page, encoding="utf-8")

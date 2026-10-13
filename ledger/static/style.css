@@ -2170,6 +2170,13 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .pq-cnt { color: var(--text-dim); font-size: .8em; font-variant-numeric: tabular-nums; min-width: 3.2em; }
 .pq-cnt.full { color: var(--warn-text, var(--warn)); font-weight: 600; }
 .pq-credit td { color: var(--text-dim); }
+/* the check amount on a vendor's band: typed higher than the bills = a credit QuickBooks holds with the vendor */
+.pq-amt input { width: 120px; text-align: right; }
+.pq-amt-l { color: var(--text-dim); font-size: .9em; }
+.pq-credit-note { color: var(--warn-text, var(--warn)); font-weight: 600; }
+.pq-credit-note.neg { color: var(--neg-text, var(--neg)); }
+.pq-credit-note:empty { display: none; }
+.pq-grid tr.pq-paid td { color: var(--text-dim); font-style: italic; }
 .pq-act .btn { margin-bottom: 6px; }
 .pq-vendor { margin-bottom: 14px; }   /* the vendor page's Pay in QuickBooks review, above its bill list */
 .sumbar .sb-pay { border-color: var(--accent); color: var(--accent); font-weight: 600; }

@@ -4,6 +4,34 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/13/2026 · **A bill payment to a set amount; the credit it makes on the stub** (owner: "need ability to create a
+  bill payment to a certain amount and for it to show the credit it made after receiving it since qbo will make a
+  credit available to use, i need that in the bill payment stub to show in the bottom. context, joint check pays a
+  bill we paid"). QuickBooks' shape, from the mirror (HDS White Cap check 20119, a joint check): the BillPayment's
+  `TotalAmt` (9,552.63) is more than its lines (9,251.63), no extra line - the 301.00 is QuickBooks' "Amount to
+  Credit", held with the vendor. (1) `bill_payment_stub.build_stub` reads it: `credit` = TotalAmt - what the lines
+  applied (a VendorCredit line now comes OFF - a negative Paid row - as QuickBooks subtracts it; Ubaldo 48395 =
+  3,499.56 bill - 150.00 credit = 3,349.56 check), `ties` is false only on a shortfall; the old "Unapplied" row is
+  gone (QuickBooks never writes one). Both stubs print a block under the bills - **Paid on bills / Credit on account /
+  Total of this check** - with one line: the vendor's copy asks them to hold it as a credit on our account, the
+  internal copy says QuickBooks holds it with that vendor (Amount to Credit). The red "check this payment" warning
+  (which every such payment used to get) now fires only when the check is SHORT of its bills. (2) Pay in QuickBooks:
+  every vendor band carries an **Amount** box (placeholder = the bills less the ticked credits = the least it can be);
+  typed higher, the band says "creates a credit of $X with VENDOR" and shows the credit as a metric, Are you sure?
+  lists CREATES A CREDIT WITH THE VENDOR, the result line says "$X held as a credit with the vendor"; typed lower =
+  a problem, the button stays off. The write (`_pay_vendor`) takes `amount` per vendor: never below the bills less
+  credits, `TotalAmt` = the amount, the bills as lines, nothing for the excess (QuickBooks keeps it); the result
+  carries `credit` (from what QuickBooks actually wrote) and a `warn` if QuickBooks trimmed the amount; `commit()`
+  refuses a non-number. (3) From the vendor page a ticked bill ALREADY PAID now goes on the review too (a joint check
+  paying a bill we paid): `_plan_live` keeps its vendor with `paid_bills` (only when the bills were handed in - the
+  saved run still skips it as before), the review shows it as an italic "already paid - this payment becomes a
+  credit" row, the amount typed is the whole payment and the BillPayment is written with **no Line at all**; the
+  tick bar reads "Pay in QuickBooks · a credit on paid bills…" when nothing ticked is open. Tests:
+  `test_a_typed_amount_above_the_bills_becomes_the_credit`, `test_an_amount_below_the_bills_is_refused`,
+  `test_paid_bills_only_pay_as_a_credit_with_no_lines`; the stub selftest covers the credit block on both copies,
+  the negative credit row and the shortfall warning. NOT yet proven against QuickBooks itself: a BillPayment POSTed
+  with TotalAmt above its lines, or with no lines - the first real one is the proof (QuickBooks' own screen does it:
+  "This transaction will create an additional credit in the amount of 301.00").
 - 10/13/2026 · **Pay bills reads QuickBooks' open balance** (owner: "still showing the broken amount and total bills" -
   three HDS bills he had just paid in QuickBooks stayed open and on the pay run: the ledger's Bill Tracker load was
   four days old, the mirror already had them at 0). `_bill_memos` now also carries each bill's mirror `Balance`
