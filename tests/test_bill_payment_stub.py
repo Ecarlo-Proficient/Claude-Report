@@ -22,6 +22,9 @@ def test_money_and_dates():
 
 
 def test_columns_registry_toggles():
-    assert bps.resolve_columns(drop=["type", "open_balance"]) == ["date", "number", "memo", "balance_before", "amount"]
-    assert bps.resolve_columns(add=["project"])[-1] == "project"
+    assert bps.resolve_columns(drop=["type", "open_balance"]) == ["date", "number", "project", "bill_total", "balance_before", "amount"]
+    assert bps.resolve_columns(add=["memo"])[-1] == "memo"
+    # the default stub (owner 2026-10-13): no memo, the project # instead; Bill total first, then Open balance - Paid = New balance
+    assert "memo" not in bps.DEFAULT_COLUMNS and "project" in bps.DEFAULT_COLUMNS
+    assert [k for k in bps.columns_for("vendor") if k in bps.MONEY_COLUMNS] == ["bill_total", "balance_before", "amount", "open_balance"]
     assert set(bps.DEFAULT_COLUMNS) <= set(bps.COLUMNS)

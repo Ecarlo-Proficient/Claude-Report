@@ -487,7 +487,9 @@ payment per Letter page. `--vendor COWTOWN --date 2026-09-21` (or `--from/--to`,
 reads the mirror (BillPayment -> the bills it linked, the vendor's print name and address) and writes
 `Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<Vendor> - Bill Payment Stub <check # or card reference> <mm-dd-yyyy>.pdf`
 (`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless. Columns are a
-registry: the default six are QBO's (date · type · number · memo · amount · open balance);
+registry: the default (owner 2026-10-13) is date · type · number · **project** · **bill total** · open balance · paid ·
+new balance - no memo, the project # instead, the money read left to right as Bill total, then Open balance - Paid =
+New balance; QBO's own set (memo, no bill total) is a pick away;
 `--add project,bill_total,due_date` / `--drop type` / `--columns ...` change the set; `--list-columns`
 shows it. `amount` is what that payment applied to the bill, so the column ties to the payment; a bill
 covered only in part says so under its memo. The company name on the stub is `ACB_COMPANY_NAME` in

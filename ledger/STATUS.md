@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/13/2026 · **Bill payment stub: project # instead of memo, Bill total first** (owner: "the auto bill payment stub
+  after, default it to not show memo but the project # instead. I also need the total first, open, paid and balance
+  after"). `bill_payment_stub.DEFAULT_COLUMNS` = date · type · number · project · bill_total · balance_before · amount
+  · open_balance (Project replaces Memo/Description; `bill_total` relabelled **Bill total** and in the default set, so
+  the money reads Bill total · Open balance · Paid · New balance); the stub filed after Pay in QuickBooks
+  (`pay_bills._stub` -> `print_stub` with no columns) and the vendor page's picker default follow it. With no memo the
+  Project column takes the page's leftover width (`stretch`). The picker's saved pick moved to a new storage key
+  (`ledger.stubColumns.v2`) so the new default applies once; a re-pick is remembered as before. Internal stub
+  unchanged in shape (project after number, the three balances last). Selftest + `test_bill_payment_stub` updated.
 - 10/13/2026 · **Pay in QuickBooks from the vendor page** (owner: "let me pay bills in the vendor center when opening
   up their unpaid bills. it's the same thing as pay bills"). The vendor page's tick bar gains **Pay in QuickBooks · N
   bills…** (the ticked bills still open; a paid bill ticked for the copy is left out): it opens the SAME review

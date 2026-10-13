@@ -3089,7 +3089,7 @@ function renderServerBox() {
 // Accounting share, one file per payment; a column picker (QBO's six on by default); and the print HISTORY -
 // every stub as printed, judged against QBO now (current / changed / voided / deleted), so a payment
 // QuickBooks no longer shows keeps its stubs. History + registry come from /api/bill-payment/stubs.
-const STUB_COLS_LS = "ledger.stubColumns";
+const STUB_COLS_LS = "ledger.stubColumns.v2";   // v2 (2026-10-13): the default changed to project + bill total, no memo - an older saved pick no longer applies
 // a pick saved before the stub read Open balance - Paid = New balance (owner 2026-10-07) gets Open balance added once
 let _stubCols = (() => { try { const c = JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null;
   if (c && !localStorage.getItem(STUB_COLS_LS + ".v2")) { if (c.includes("amount") && !c.includes("balance_before")) c.splice(c.indexOf("amount"), 0, "balance_before");

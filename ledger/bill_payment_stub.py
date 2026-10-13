@@ -4,9 +4,13 @@ top and the bills it paid below (owner 2026-09-22: "it needs to look like qbo fo
 the payment on top and the bills it's paying below").
 
 One stub per payment, one payment per page. Columns are a registry the caller adds to or drops
-from; the default set is QBO's own "Bills and Applied Payments" columns:
+from; the default set (owner 2026-10-13: "default it to not show memo but the project # instead. I also need
+the total first, open, paid and balance after") is:
 
-    date · type · number · memo · amount · open_balance
+    date · type · number · project · bill_total · balance_before · amount · open_balance
+    (Date · Transaction type · Transaction number · Project · Bill total · Open balance · Paid · New balance)
+
+QBO's own "Bills and Applied Payments" set (memo instead of project, no bill total) is one pick away.
 
 `amount` is what THIS payment applied to the bill (the column ties to the payment total); the
 bill's own total is the optional `bill_total` column. Both stubs read each bill as Open balance - Paid = New
@@ -134,7 +138,7 @@ COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
     "memo":         ("Memo/Description",   "left",  lambda r: str(r["memo"] or "")),
     "project":      ("Project",            "left",  lambda r: str(r["project"] or "")),
     "due_date":     ("Due date",           "left",  lambda r: mdy(r["due_date"])),
-    "bill_total":   ("Bill amount",        "right", lambda r: money(r["bill_total"])),
+    "bill_total":   ("Bill total",         "right", lambda r: money(r["bill_total"])),
     # the money as of THIS payment: Open balance - Paid = New balance (owner 2026-10-07; the picker shows these
     # same labels, so what is ticked is what prints - the keys stay for saved picks and the print history)
     "balance_before": ("Open balance",     "right", lambda r: "" if r.get("balance_before") is None else money(r["balance_before"])),
@@ -143,9 +147,9 @@ COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
 }
 KINDS = ("vendor", "internal")
 MONEY_ORDER = ("bill_total", "balance_before", "amount", "open_balance")   # always on the right, in this order
-DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "type", "number", "memo", "balance_before", "amount", "open_balance")
+DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "type", "number", "project", "bill_total", "balance_before", "amount", "open_balance")
 WIDTHS = {"date": 64, "type": 88, "number": 100, "project": 90, "due_date": 64, "bill_total": 74, "amount": 74,
-          "open_balance": 80, "balance_before": 80}   # px on a 7.3in Letter page; memo takes what is left
+          "open_balance": 80, "balance_before": 80}   # px on a 7.3in Letter page; memo takes what is left (project when there is no memo)
 MONEY_COLUMNS = {"bill_total", "balance_before", "amount", "open_balance"}   # get a total on the last row
 
 
@@ -800,18 +804,19 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             continue
         # the bills table
         spec = COLUMNS
+        stretch = "memo" if "memo" in cols else ("project" if "project" in cols else None)   # the column that takes the page's leftover width
         parts.append("<table><thead><tr>")
         for k in cols:
             label, align, _ = spec[k]
-            w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS else ""
-            parts.append(f"<th class='{align[0]}{' memo' if k == 'memo' else ''}'{w}>{_esc(label)}</th>")
+            w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS and k != stretch else ""
+            parts.append(f"<th class='{align[0]}{' memo' if k == stretch else ''}'{w}>{_esc(label)}</th>")
         parts.append("</tr></thead><tbody>")
         parts.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
         for r in s["rows"]:
             parts.append("<tr class='row'>")
             for k in cols:
                 _, align, get = spec[k]
-                parts.append(f"<td class='{align[0]}{' memo' if k == 'memo' else ''}'>{_esc(get(r))}</td>")
+                parts.append(f"<td class='{align[0]}{' memo' if k == stretch else ''}'>{_esc(get(r))}</td>")
             parts.append("</tr>")
         parts.append("<tr class='total'>")
         first_money = next((i for i, k in enumerate(cols) if k in MONEY_COLUMNS), len(cols))
@@ -953,7 +958,7 @@ def _selftest() -> int:
     assert s["pay_to"] == "TEST VENDOR INC" and s["address"][-1] == "FORT WORTH TX 76100"
     assert s["method"] == "Check" and s["ref"] == "25760" and s["account"] == "Test Bank ****0000"
     assert resolve_columns() == list(DEFAULT_COLUMNS)
-    assert resolve_columns(add=["bill_total"], drop=["type"]) == ["date", "number", "memo", "balance_before", "amount", "open_balance", "bill_total"]
+    assert resolve_columns(add=["memo"], drop=["type"]) == ["date", "number", "project", "bill_total", "balance_before", "amount", "open_balance", "memo"]
     assert resolve_columns(["memo", "amount"]) == ["memo", "amount"]
     for bad in ({"add": ["nope"]}, {"columns": ["memo", "typo"]}):
         try:
@@ -963,11 +968,15 @@ def _selftest() -> int:
             pass
     page = stub_html([s], company="Test Co, LLC")
     for needle in ("Test Co, LLC", "Bill Payment Stub", "09/21/2026", "TEST VENDOR INC", "Check number", "25760",
-                   "Memo/Description", "Open balance", "New balance", money(1000), "$" + money(1300), "06/17/2026"):
+                   "Project", "RP1234-FTW", "Bill total", "Open balance", "New balance", money(1000), "$" + money(1300), "06/17/2026"):
         assert needle in page, needle
+    assert "Memo/Description" not in page                                 # the default stub carries the project #, not the memo (owner 2026-10-13)
+    head = page[page.index("<thead>"):page.index("</thead>")]
+    assert head.index("Bill total") < head.index("Open balance") < head.index(">Paid<") < head.index("New balance")   # the money, left to right
+    assert "<th class='l memo'>Project</th>" in page                       # without a memo the Project column takes the leftover width
     assert "2026-09-21" not in page.replace("Bill Payment Stub", "")   # never year-first on the page
-    nomemo = stub_html([s], columns=["date", "number", "amount"])       # memo unticked at print time
-    assert "Memo/Description" not in nomemo and "Paid" in nomemo and "New balance" not in nomemo   # exactly the pick
+    withmemo = stub_html([s], columns=["date", "number", "memo", "amount"])   # memo ticked at print time
+    assert "Memo/Description" in withmemo and "Paid" in withmemo and "New balance" not in withmemo   # exactly the pick
     assert "partial payment" not in page and "Transaction type" in page       # columns, never a sentence
     assert ">500.00</td><td class='r'>300.00</td><td class='r'>200.00<" in page, "partial bill = 500 - 300 = 200"
     tot = "".join(f"<td class='r'>${money(x)}</td>" for x in (1500, 1300, 200))
@@ -987,7 +996,7 @@ def _selftest() -> int:
     assert "Vendor credit" in stub_html([s2]) and "Unapplied" in stub_html([s2])
     assert not (_natural("1001") < _natural("999")) and _natural("999") < _natural("1001")
     assert _safe_name("A/B: C") == "A-B- C"
-    assert "Bill amount" not in page and "Bill amount" in stub_html([s], columns=["number", "bill_total", "amount"])
+    assert "Bill total" in page and "Bill total" not in stub_html([s], columns=["number", "amount"])   # in the default set; off when unticked
     assert "check this payment" not in stub_html([s])
     bp_bad = dict(bp, TotalAmt=1400.0)
     assert "check this payment" in stub_html([build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)])
@@ -1020,9 +1029,10 @@ def _selftest() -> int:
     # the internal stub: invoice on top, bills below, Open balance - Paid = New balance; joint check from the client's Payment
     assert columns_for("vendor") == list(DEFAULT_COLUMNS)
     assert columns_for("vendor", ["open_balance", "date", "amount", "number"]) == ["date", "number", "amount", "open_balance"]
-    assert [c["label"] for c in columns_registry()][-3:] == ["Open balance", "Paid", "New balance"]   # picker = stub
+    assert [c["label"] for c in columns_registry()][-4:] == ["Bill total", "Open balance", "Paid", "New balance"]   # picker = stub
     assert columns_for("vendor", columns_for("vendor")) == columns_for("vendor")
-    assert columns_for("internal") == ["date", "number", "memo", "project", "balance_before", "amount", "open_balance"]
+    assert columns_for("internal") == ["date", "number", "project", "bill_total", "balance_before", "amount", "open_balance"]
+    assert columns_for("internal", ["date", "number", "memo", "amount"]) == ["date", "number", "memo", "project", "balance_before", "amount", "open_balance"]
     bills["b2"]["LinkedTxn"] = [{"TxnId": "p0", "TxnType": "BillPaymentCheck"}, {"TxnId": "pj", "TxnType": "BillPaymentCheck"}]
     pays = {"p0": {"Id": "p0", "TxnDate": "2026-06-30", "Line": [{"Amount": 100.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b2"}]}]}}
     invs = {"i1": {"Id": "i1", "DocNumber": "34457", "TxnDate": "2026-05-20", "TotalAmt": 600.0, "PrivateNote": "MFD1 - Job - May Draw 2026\n(Period)"},
