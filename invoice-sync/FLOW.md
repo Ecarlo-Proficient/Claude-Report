@@ -1,6 +1,6 @@
 # invoice-sync/ - how the AR invoice sync and its Excel mirror work
 
-Last changed: 10/08/2026 - Notion: an open invoice is written only when a QBO field differs from the page or it was not stamped Last Synced today (was: every run rewrote every open invoice); the run counts `unchanged`, a dry run names the changed fields. Earlier: 10/07/2026 - `qbo_payment_notify.py` runs standalone too (`--test` = "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST with their own posted record - the office server's test step; a dry run with no record lists the last 72h). Earlier the same day: QuickBooks payment received card: every payment a client makes through the
+Last changed: 10/13/2026 - docstring only: the invoice clerk (not the payroll manager) prints each QuickBooks payment card (flow unchanged). Earlier: 10/08/2026 - Notion: an open invoice is written only when a QBO field differs from the page or it was not stamped Last Synced today (was: every run rewrote every open invoice); the run counts `unchanged`, a dry run names the changed fields. Earlier: 10/07/2026 - `qbo_payment_notify.py` runs standalone too (`--test` = "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST with their own posted record - the office server's test step; a dry run with no record lists the last 72h). Earlier the same day: QuickBooks payment received card: every payment a client makes through the
 e-invoice link (bank / card), once, to the payments channel - read from the mirror, first run seeds.
 
 Update this chart - and the line above - in the same commit as any change to `invoice-sync/`

@@ -4,7 +4,7 @@ qbo_payment_notify.py - one Teams card per payment a client made through QuickBo
 
 A client who pays from the e-invoice link (bank or card) never hands anyone a check, so nothing in
 the office says it came in. This posts a card to the payments channel the first time the mirror
-shows one; the payroll manager prints it for the invoice file and the deposit sheet.
+shows one; the invoice clerk prints it for the invoice file and the Deposit Ticket.
 
 What counts: a QBO `Payment` whose `TxnSource` is EInvoice / INTUITMASPAYMENT or whose payment
 method is "QuickBooks Payments-..." (checked 10/07/2026: every online payment carries both; checks,
