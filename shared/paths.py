@@ -165,6 +165,15 @@ def bill_tracker_xlsx() -> Path:
                     accounting_base() / "Accounts Payable" / "Bill Tracker.xlsx")
 
 
+def bill_approval_xlsx() -> Path:
+    """QuickBooks' "Bill Approval Status ALL" report - the approval queue, synced out of
+    QBO into the Accounts Payable channel's files (SharePoint, mirrored on OneDrive;
+    the user 2026-10-13). Read-only by shared/bill_approval; the office server points
+    ACB_BILL_APPROVAL_XLSX at its Cloud Sync copy. Missing = the rule says 'check QBO'."""
+    return get_path("ACB_BILL_APPROVAL_XLSX",
+                    onedrive_base() / "Company Files-Accounts Payable - Documents" / "Bill Approval Status ALL.xlsx")
+
+
 def bill_payment_stubs_dir() -> Path:
     """Where printed bill payment stubs live (owner 2026-09-22): the Accounting share's
     Accounts Payable/Bill Payment Stubs/<vendor>/. Override: ACB_BILL_PAYMENT_STUBS_DIR.

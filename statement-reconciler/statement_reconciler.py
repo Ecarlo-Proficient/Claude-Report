@@ -134,10 +134,18 @@ def _is_approved(memo: str) -> bool:
 
 
 def _approval(r: "ReconRow", by_id: Dict[str, "QboBill"]) -> str:
-    """bill_approval state of a statement row's QBO bill: not approved / check QBO /
-    approved."""
+    """bill_approval state of a statement row's QBO bill: not approved / pending approval /
+    requires approval / check QBO / approved (QuickBooks' approval report answers for bills
+    entered under the workflow, 10/13/2026)."""
     b = by_id.get(r.qbo_bill_id)
-    return bill_approval.approval_state(r.qbo_memo, b.created if b else "", b.open_balance if b else 0)
+    return _bill_state(b, r.qbo_memo)
+
+
+def _bill_state(b: "Optional[QboBill]", memo: Optional[str] = None) -> str:
+    return bill_approval.approval_state(
+        memo if memo is not None else (b.memo if b else ""), b.created if b else "", b.open_balance if b else 0,
+        report=bill_approval.current(), vendor=b.vendor if b else "", docnum=b.doc_number if b else "",
+        txn_date=b.txn_date if b else "", amount=b.total_amount if b else None)
 
 OUTDIR_DEFAULT = paths.get_path(
     "ACB_RECON_OUT_DIR",
@@ -496,6 +504,7 @@ class QboBill:
     created: str = ""     # MetaData.CreateTime date (YYYY-MM-DD): a bill entered on/after
                           # APPROVAL_WORKFLOW_START and still open may be pending approval
                           # in QBO's workflow, which the API cannot see.
+    vendor: str = ""      # VendorRef.name - the key into QuickBooks' approval report
 
     @property
     def is_approved(self) -> bool:
@@ -2449,6 +2458,7 @@ def _bills_to_objs(raw: List[dict]) -> List[QboBill]:
             total_amount=float(b.get("TotalAmt", 0)),
             memo=memo_value,
             created=str((b.get("MetaData") or {}).get("CreateTime") or "")[:10],
+            vendor=str((b.get("VendorRef") or {}).get("name") or ""),
         ))
     return out
 
@@ -2785,7 +2795,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     cats = {
         "MATCHED_APPROVED":      [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_YES],
         "MATCHED_CHECK_QBO":     [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_CHECK],
-        "MATCHED_NOT_APPROVED":  [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_NO],
+        "MATCHED_NOT_APPROVED":  [r for r in rows if state.get(id(r)) in bill_approval.UNAPPROVED_STATES],
         "VENDOR_TAX_VIOLATION":  [r for r in rows if r.category == "VENDOR_TAX_VIOLATION"],
         "CLERK_AMOUNT_MISMATCH": [r for r in rows if r.category == "CLERK_AMOUNT_MISMATCH"],
         "LIKELY_VENDOR_LAG":     [r for r in rows if r.category == "LIKELY_VENDOR_LAG"],
@@ -2903,17 +2913,24 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         r += 1
 
     # Bills pending approval in QBO - counted from in-scope (as-of) bills only
-    unapproved = [b for b in qbo_bills_asof if not b.is_approved]
-    pending = [b for b in qbo_bills_asof if b.is_approved and bill_approval.approval_state(
-        b.memo, b.created, b.open_balance) == bill_approval.APPROVAL_CHECK]
-    if unapproved or pending:
+    _bstate = {b.bill_id: _bill_state(b) for b in qbo_bills_asof}
+    unapproved = [b for b in qbo_bills_asof if _bstate[b.bill_id] == bill_approval.APPROVAL_NO]
+    in_queue = [b for b in qbo_bills_asof if _bstate[b.bill_id] in (bill_approval.APPROVAL_PENDING,
+                                                                    bill_approval.APPROVAL_REQUIRES)]
+    pending = [b for b in qbo_bills_asof if _bstate[b.bill_id] == bill_approval.APPROVAL_CHECK]
+    if unapproved or in_queue or pending:
         parts = []
         if unapproved:
             parts.append(f"{len(unapproved)} NOT APPROVED by memo "
                          f"(${round(sum(b.open_balance for b in unapproved), 2):,.2f}) - chase the PM")
+        if in_queue:
+            n_req = sum(1 for b in in_queue if _bstate[b.bill_id] == bill_approval.APPROVAL_REQUIRES)
+            parts.append(f"{len(in_queue)} in QuickBooks' approval queue "
+                         f"(${round(sum(b.open_balance for b in in_queue), 2):,.2f}; {n_req} not routed yet) - chase the PM")
         if pending:
             parts.append(f"{len(pending)} entered since 09/16 and unpaid "
                          f"(${round(sum(b.open_balance for b in pending), 2):,.2f}) - their approval is in QBO, check there")
+        parts.append(bill_approval.report_line(bill_approval.current()))
         msg = "⚠ Approval: " + " · ".join(parts) + "  (see the 'Approved?' column)"
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=11, color="C62828")
@@ -3019,11 +3036,14 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             st = _approval(rr, by_id)
             is_app = st == bill_approval.APPROVAL_YES
             approved_text = {bill_approval.APPROVAL_YES: "Yes", bill_approval.APPROVAL_NO: "Not Approved",
+                             bill_approval.APPROVAL_PENDING: "Pending Approval",
+                             bill_approval.APPROVAL_REQUIRES: "Requires Approval",
                              bill_approval.APPROVAL_CHECK: "Check QBO"}[st]
+            unappr = st in bill_approval.UNAPPROVED_STATES
             approved_font = APPROVED_FONT if is_app else (
-                UNAPPROVED_FONT if st == bill_approval.APPROVAL_NO else Font(bold=True, name="Arial", size=10, color="00838F"))
+                UNAPPROVED_FONT if unappr else Font(bold=True, name="Arial", size=10, color="00838F"))
             approved_fill = None if is_app else (
-                UNAPPROVED_FILL if st == bill_approval.APPROVAL_NO else PatternFill("solid", start_color="D9F2F7"))
+                UNAPPROVED_FILL if unappr else PatternFill("solid", start_color="D9F2F7"))
 
         # Column 1: ↗ deep-link that opens this Bill in QBO. Blank when there is
         # no QBO bill for the row (MISSING_IN_QBO). Ref# text stays non-clickable.
@@ -3766,7 +3786,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     _states = [_approval(r, _by_id) for r in rows if r.category == "MATCHED"]
     open_items = {
         "To enter (missing in QBO)": counts.get("MISSING_IN_QBO", 0),
-        "Not approved (chase PM)": _states.count(bill_approval.APPROVAL_NO),
+        "Not approved (chase PM)": sum(1 for s in _states if s in bill_approval.UNAPPROVED_STATES),
         "Approval in QBO (check)": _states.count(bill_approval.APPROVAL_CHECK),
         "Amount mismatch": counts.get("CLERK_AMOUNT_MISMATCH", 0),
         "Tax violation (8.25%)": counts.get("VENDOR_TAX_VIOLATION", 0),
@@ -3951,7 +3971,8 @@ def _board_items(rows: List["ReconRow"], bills: List["QboBill"], unprinted: list
     for r in rows:
         kind = kind_of.get(r.category)
         if r.category == "MATCHED":
-            kind = {bill_approval.APPROVAL_NO: "approve",
+            kind = {bill_approval.APPROVAL_NO: "approve", bill_approval.APPROVAL_PENDING: "approve",
+                    bill_approval.APPROVAL_REQUIRES: "approve",
                     bill_approval.APPROVAL_CHECK: "checkqbo"}.get(_approval(r, by_id))
         if not kind:
             continue

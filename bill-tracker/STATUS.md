@@ -4,6 +4,16 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 10/13/2026 · **Approved column reads QuickBooks' approval report** (owner: "add new process to check bills, check this
+  excel while also keeping in mind the last time it synced from qbo"). QuickBooks' custom report "Bill Approval Status ALL"
+  (the approval queue) is synced into the Accounts Payable channel files; `shared/bill_approval.current()` reads it once per
+  run (`paths.bill_approval_xlsx()` / `ACB_BILL_APPROVAL_XLSX`). `bill_rows.approval_state` now returns five states:
+  not approved (memo) · **pending approval** (on the report, with the approver) · **requires approval** (on the report, not
+  routed yet) · check QBO (the report cannot vouch: missing, older than 36 h, or older than the bill) · approved (incl. a
+  workflow bill a fresh report does not list). Bill List: the three unapproved states are red, check QBO amber; the run
+  prints the report's sync time; `approved` (the stale-approval audit) is false for the queued bills too. On the office
+  server the report needs a Cloud Sync copy (docker/README 2c) - until then the server's Bill Tracker keeps saying check QBO.
+  Tests: `tests/test_bill_approval.py` (the report's shape, the five states, stale, missing).
 - 10/12/2026 · **REVISED-bill follow-up (AP-13): built here first, then moved to the statement reconciler the same
   day** (owner: "the revised bill sheet needs to be in the same statement Excel, not a mix"). What stays in this tool:
   `bill_rows.revised_reason` is now `shared/bill_approval.revised_reason` (re-exported; the reconciler reads the

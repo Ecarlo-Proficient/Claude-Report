@@ -87,10 +87,11 @@ from qbo_bill_tracker import (
     STATUS_PARTIALLY_PAID_REMAINDER,
     MATCH_BASIS_DRAW, MATCH_BASIS_FINAL, MATCH_BASIS_PUSHED,
 )
+from shared import bill_approval  # the report line printed with the Bill List
 from bill_rows import (
     build_account_maps, build_po_index, build_payment_map, build_rows,
     approved_text, revised_reason,
-    APPROVAL_NO, APPROVAL_CHECK, APPROVAL_WORKFLOW_START,
+    APPROVAL_NO, APPROVAL_PENDING, APPROVAL_REQUIRES, APPROVAL_CHECK, APPROVAL_WORKFLOW_START,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
 from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc, _norm_po
@@ -2254,11 +2255,15 @@ def build_bill_list_sheet(wb, line_rows: List[dict]) -> int:
     like date, ref, amount, memo, project, and if it is approved"). One row per
     bill, newest first, one Excel Table, nothing derived except Approved:
 
-      approved      no NOT APPROVED tag, and either an old-process bill or paid
-      not approved  the memo starts NOT APPROVED
-      check QBO     entered since the QBO approval workflow went on and still
-                    unpaid - QBO's API does not return approval status, so the
-                    answer is in QBO Tasks, not here
+      approved           no NOT APPROVED tag, and either an old-process bill, paid, or
+                         entered under the workflow and not on QuickBooks' approval report
+      not approved       the memo starts NOT APPROVED
+      pending approval   on QuickBooks' "Bill Approval Status ALL" report, with the approver
+      requires approval  on that report, flagged by QBO and not routed yet
+      check QBO          entered since the QBO approval workflow went on and still
+                         unpaid, and the report cannot vouch for it (missing, older
+                         than ACB_BILL_APPROVAL_MAX_AGE_HOURS, or older than the bill) -
+                         QBO's API does not return approval status
 
     Colour encodes state only (red / amber). Columns are fitted last."""
     by_bill: Dict[str, dict] = {}
@@ -2288,8 +2293,9 @@ def build_bill_list_sheet(wb, line_rows: List[dict]) -> int:
     if data:
         last = len(data) + 1
         rng = f"A2:G{last}"
-        ws.conditional_formatting.add(
-            rng, _cf_fill_rule(f'$G2="{APPROVAL_NO}"', "F8CBAD", bold=True, stop_if_true=True))
+        for st in (APPROVAL_NO, APPROVAL_PENDING, APPROVAL_REQUIRES):   # all three = not yet approved: red
+            ws.conditional_formatting.add(
+                rng, _cf_fill_rule(f'$G2="{st}"', "F8CBAD", bold=True, stop_if_true=True))
         ws.conditional_formatting.add(
             rng, _cf_fill_rule(f'$G2="{APPROVAL_CHECK}"', "FFE699"))
         for r_i in range(2, last + 1):                 # a numeric Ref reads left like the text ones
@@ -2304,7 +2310,11 @@ def build_bill_list_sheet(wb, line_rows: List[dict]) -> int:
         ws.column_dimensions[_col_letter(c_i)].width = min(max(longest + 2, 9), caps.get(c_i, 40))
     n_check = sum(1 for row in data if row[6] == APPROVAL_CHECK)
     n_no = sum(1 for row in data if row[6] == APPROVAL_NO)
-    print(f"  bill list: {len(data)} bills · {n_no} not approved · {n_check} check QBO")
+    n_pend = sum(1 for row in data if row[6] == APPROVAL_PENDING)
+    n_req = sum(1 for row in data if row[6] == APPROVAL_REQUIRES)
+    print(f"  bill list: {len(data)} bills · {n_no} not approved · {n_pend} pending approval · "
+          f"{n_req} requires approval · {n_check} check QBO")
+    print(f"  {bill_approval.report_line(bill_approval.current())}")
     return len(data)
 
 

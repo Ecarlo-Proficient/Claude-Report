@@ -46,6 +46,12 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
+- 2026-10-13 · **Cloud Sync copy of the approval report (the developer).** The AP step reads QuickBooks' "Bill Approval
+  Status ALL" report (`shared/bill_approval`) from `ACB_BILL_APPROVAL_XLSX` = `/mnt/bill-approval/Bill Approval Status
+  ALL.xlsx`: Cloud Sync > the Accounts Payable channel's document library (SharePoint, "Company Files - Accounts Payable")
+  > `/volume1/docker/automation/bill-approval`, download only; compose mounts it read only (README 2c). Until it is there
+  the server's Bill Tracker says check QBO for every bill entered since 09/16 and unpaid (the Mac's reconciler already
+  reads the OneDrive copy).
 - 2026-10-07 · **ON HOLD (owner): prove the base AP/AR run on the server first, then turn this on with `PAYMENTS_TEST=1`.**
   **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
   `payments-test` after AR (`qbo_payment_notify.py --test`): TEST cards to `TEAMS_WEBHOOK_PAYMENTS_TEST`, own posted record,

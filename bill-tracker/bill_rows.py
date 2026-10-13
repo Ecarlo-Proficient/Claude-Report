@@ -83,8 +83,11 @@ def is_approved(bill: dict) -> bool:
 # live in shared/bill_approval.py (shared with the statement reconciler, 10/08/2026).
 APPROVAL_WORKFLOW_START = bill_approval.APPROVAL_WORKFLOW_START
 APPROVAL_NO = bill_approval.APPROVAL_NO
+APPROVAL_PENDING = bill_approval.APPROVAL_PENDING
+APPROVAL_REQUIRES = bill_approval.APPROVAL_REQUIRES
 APPROVAL_CHECK = bill_approval.APPROVAL_CHECK
 APPROVAL_YES = bill_approval.APPROVAL_YES
+UNAPPROVED_STATES = bill_approval.UNAPPROVED_STATES
 
 
 def bill_created(bill: dict) -> Optional[dt.date]:
@@ -93,8 +96,16 @@ def bill_created(bill: dict) -> Optional[dt.date]:
 
 
 def approval_state(bill: dict) -> str:
-    """Three states for the Bill List's Approved column - see shared/bill_approval."""
-    return bill_approval.approval_state(bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"))
+    """The Bill List's Approved column - see shared/bill_approval. Since 10/13/2026 the
+    QuickBooks approval-queue report (read once per run, `bill_approval.current()`)
+    answers for bills entered under the workflow: pending / requires approval when the
+    bill is on it, approved when a fresh report does not list it, check QBO when the
+    report is missing, stale, or older than the bill."""
+    v_ref = bill.get("VendorRef") or {}
+    return bill_approval.approval_state(
+        bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"),
+        report=bill_approval.current(), vendor=v_ref.get("name"), docnum=bill.get("DocNumber"),
+        txn_date=bill.get("TxnDate"), amount=bill.get("TotalAmt"))
 
 
 revised_reason = bill_approval.revised_reason   # moved to shared/bill_approval 10/12/2026 (the statement reconciler reads it too)
@@ -290,7 +301,7 @@ def build_rows(
         po_num = get_po_number(bill, po_map)
         v_ref = bill.get("VendorRef") or {}
         vendor_name = vendor_map.get(v_ref.get("value", ""), v_ref.get("name", "?"))
-        approved = is_approved(bill)
+        approved = approval_state(bill) not in UNAPPROVED_STATES   # pending / requires approval chase like NOT APPROVED
 
         for line in (bill.get("Line") or []):
             dt_type = line.get("DetailType", "")

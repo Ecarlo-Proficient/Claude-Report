@@ -433,7 +433,8 @@ def _table_start(pg: Page, page_bands: list) -> float:
 
 def bucket_for(category: str, approval: str = "approved") -> str:
     """ReconRow.category (+ shared/bill_approval state for a matched bill) -> bucket."""
-    matched = {"not approved": "approve", "check QBO": "checkqbo"}.get(approval, "matched")
+    matched = {"not approved": "approve", "pending approval": "approve", "requires approval": "approve",
+               "check QBO": "checkqbo"}.get(approval, "matched")
     return {"MATCHED": matched, "CLERK_AMOUNT_MISMATCH": "mismatch",
             "VENDOR_TAX_VIOLATION": "tax", "LIKELY_VENDOR_LAG": "lag",
             "MISSING_IN_QBO": "enter"}.get(category, "other")

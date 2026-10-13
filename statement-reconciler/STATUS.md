@@ -12,6 +12,13 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-13 · **Approved? reads QuickBooks' approval report** (owner: "check this excel while also keeping in mind the
+  last time it synced from qbo"). `QboBill.vendor` (VendorRef.name) keys into `shared/bill_approval`'s report: a matched bill
+  on it shows **Pending Approval** / **Requires Approval** (red, like Not Approved; bucket `approve` on the board, the record
+  and the marked statement); a workflow bill a fresh report does not list is Yes; Check QBO is left for bills the report
+  cannot vouch for (entered after it ran, report stale or missing). The Summary's approval banner counts the queue
+  (how many not routed yet) and names when the report synced. RCI live 10/13: 46 Check QBO -> 12 in the queue + 34 Yes.
+  Test: `tests/test_bill_approval.py::test_reconciler_workbook_shows_the_states`.
 - 2026-10-12 (later) · **Revised Bills, second section + plain words** (owner: "replace the word parse with something
   simpler"; "make a second section for the ones that show we haven't paid but in QBO we did, with the bill info and
   the check payment #, date and amount"). Under the re-issue table the sheet now has **Paid in QuickBooks - the

@@ -23,6 +23,7 @@ services:
       - /volume1/Accounting:/mnt/accounting                            # Bill Tracker + Invoice Tracker (read + write)
       - "/volume1/Common/OPERATIONS/GENERAL LIST:/mnt/general-list:ro" # read only
       - /volume1/docker/automation/po-tracker:/mnt/po-tracker:ro       # Cloud Sync copy of the OneDrive PO folder, read only
+      - /volume1/docker/automation/bill-approval:/mnt/bill-approval:ro  # Cloud Sync copy of the Accounts Payable channel files (the approval report), read only
       - /volume1/Accounting/_automation/registers:/data/companyhealth/Registers  # the owner's rule files, pushed from the Mac (push_registers.sh)
     # no ports: nothing can reach into this container
     deploy:

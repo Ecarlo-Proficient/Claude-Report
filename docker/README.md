@@ -47,6 +47,15 @@ The owner keeps using the PO tracker on OneDrive (`Proficient Office - Purchase 
 Microsoft 365 / OneDrive for Business connection > that ONE folder > local path `/volume1/docker/automation/po-tracker`
 > **Sync direction: download remote changes only**. The server reads the copy; it never writes back.
 
+### 2c. The approval report - Synology Cloud Sync, one way (10/13/2026)
+
+QuickBooks syncs its "Bill Approval Status ALL" report (the approval queue) into the Accounts Payable channel's files
+(SharePoint library "Company Files - Accounts Payable", `Bill Approval Status ALL.xlsx`). Cloud Sync > the same Microsoft
+365 connection > that ONE library > local path `/volume1/docker/automation/bill-approval` > **download remote changes
+only**. compose mounts it read only at `/mnt/bill-approval`; `server.env` names the file (`ACB_BILL_APPROVAL_XLSX`).
+`shared/bill_approval` reads it on every AP run and trusts it for 36 hours past the time QuickBooks printed on its last
+row; without it the Bill Tracker says "check QBO" for every unpaid bill entered since 09/16.
+
 ### 3. QuickBooks auth - the server's OWN app
 
 1. In the Intuit developer workspace (the same team workspace as the developer's own app), create a **new app**, e.g.
