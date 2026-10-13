@@ -32,8 +32,8 @@ LATE_MIN = 20          # heartbeat older than this = late (amber)
 DOWN_MIN = 60          # ... than this = down (red)
 JOB_WORDS = {"mirror": "QuickBooks copy", "reconcile": "Nightly QuickBooks count check", "ap": "Bill Tracker run",
              "ar": "Invoice sync run", "ar-export": "Invoice Tracker (test copy)", "payments-test": "Payment cards (test)",
-             "apar": "AP / AR round"}
-JOB_ORDER = ["mirror", "ap", "ar", "reconcile", "ar-export", "payments-test", "apar"]
+             "apar": "AP / AR round", "pnl-cp": "CP P&Ls (daily 06:00)"}
+JOB_ORDER = ["mirror", "ap", "ar", "reconcile", "pnl-cp", "ar-export", "payments-test", "apar"]
 
 
 def _parse(ts: Optional[str]) -> Optional[dt.datetime]:

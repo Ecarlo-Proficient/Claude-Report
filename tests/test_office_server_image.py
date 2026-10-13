@@ -18,7 +18,7 @@ DOCKERFILE = ROOT / "docker" / "Dockerfile"
 IGNORE = ROOT / "docker" / ".dockerignore"
 
 ALLOWED = {"python-env/requirements.lock", "shared/", "bill-tracker/", "invoice-sync/", "ledger/refresh_mirror.py",
-           "docker/scheduler.py"}
+           "docker/scheduler.py", "project-pnl/"}
 WRITE_CALL = re.compile(r"requests\.(post|put|patch|delete)\(|\.request\(\s*[\"'](POST|PUT|DELETE)|method\s*=\s*[\"'](POST|PUT|DELETE)")
 
 

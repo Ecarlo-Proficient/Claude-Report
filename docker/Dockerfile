@@ -2,7 +2,8 @@
 # Dockerfile - the office server (Synology), 2026-09-30.
 #
 # ONE container, ONE process (docker/scheduler.py): the QBO mirror every 3 min,
-# the AP/AR job every 15 min, a nightly count check. It carries READ code only -
+# the AP/AR job every 15 min, a nightly count check, the CP P&Ls once a day at
+# 06:00 (project-pnl/, 2026-10-13). It carries READ code only -
 # the allow-list below; tests/test_office_server_image.py fails the build if a
 # QuickBooks writer (pay bills, re-apply, recode, bulk close, reclass) is ever
 # copied in. Build context = the repo root; .dockerignore lets in only the list.
@@ -13,7 +14,7 @@
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
 LABEL org.opencontainers.image.title="office-server" \
-      org.opencontainers.image.description="QBO mirror + AP/AR sync for the office server (read code only)"
+      org.opencontainers.image.description="QBO mirror + AP/AR sync + daily CP P&Ls for the office server (read code only)"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -41,6 +42,7 @@ COPY shared/                  /app/shared/
 COPY bill-tracker/            /app/bill-tracker/
 COPY invoice-sync/            /app/invoice-sync/
 COPY ledger/refresh_mirror.py /app/ledger/refresh_mirror.py
+COPY project-pnl/             /app/project-pnl/
 COPY docker/scheduler.py      /app/docker/scheduler.py
 # ────────────────────────────────────────────────────────────────────────────
 

@@ -191,10 +191,10 @@ DRAW_REPORTS_SUBDIR = "rd-reports"
 # the Common drive — <CP project folder>/Profit and Loss/ — mirroring where the WIP
 # report lives. If the drive isn't mounted (or no matching folder is found), fall
 # back to the OneDrive PROJECT P&Ls tree. MFD/RP are unaffected.
-CP_AWARDED_BASE = Path(
-    "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"
-)
-CP_PNL_SUBDIR = "Profit and Loss"
+# ONE base, shared with the ledger's finder: `ACB_CP_AWARDED_BASE` moves it (the office server mounts the
+# awarded-projects folder at /mnt/cp-awarded, 2026-10-13), the Mac keeps the /Volumes/Common default.
+CP_AWARDED_BASE = pnl_paths.CP_AWARDED_BASE
+CP_PNL_SUBDIR = pnl_paths.CP_PNL_SUBDIR
 
 
 def _find_awarded_cp_folder(base: Path, proj: str) -> Optional[Path]:
@@ -5944,9 +5944,7 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 # the Awarded-Projects root (active, then Completed Projects/), takeoff = the
 # 'takeoff'-named xlsx in the folder ROOT; several takeoffs → the 'WIP'-tagged
 # ones, summed. Budget = the 'Cost Code(s)' sheet: col A = code, col C = $.
-_CP_ACTIVE_DIR = Path(os.getenv(
-    "CP_ACTIVE_DIR",
-    "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"))
+_CP_ACTIVE_DIR = Path(os.getenv("CP_ACTIVE_DIR") or pnl_paths.CP_AWARDED_BASE)
 _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 _WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
 
@@ -10081,6 +10079,55 @@ def index_pm_reports(reports_dir, proj: str):
     return index, parsed
 
 
+_CP_FOLDER_RE = re.compile(r"^CP\s*-?\s*(\d+)", re.I)
+
+
+def active_cp_from_folders(base: Optional[Path] = None) -> List[str]:
+    """`active cp --from-folders`: the Active list is the job folders at the TOP of
+    the awarded-projects folder on the Common share (the owner 2026-10-13: "scan the
+    active folders in the synology, query qbo for the transactions and update their
+    p&l - the wip report has nothing to do with this"). A folder filed under
+    Completed Projects (any archive name) is finished and is not in the list. The
+    WIP master is not read: contract and ETC come from the job's own documents (the
+    G702 pay app, the takeoff) and the values typed on the workbook."""
+    base = base or CP_AWARDED_BASE
+    found: set = set()
+    try:
+        kids = sorted(base.iterdir())
+    except OSError:
+        return []
+    for d in kids:
+        if not d.is_dir() or d.name.startswith((".", "~$")):
+            continue
+        if d.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):
+            continue
+        m = _CP_FOLDER_RE.match(d.name)
+        if m:
+            found.add(f"CP{m.group(1)}")
+    return sorted(found)
+
+
+def expand_from_folders(tokens: List[str]) -> Tuple[List[str], bool, str]:
+    """(projects, expanded?, error) for `--from-folders`: `active cp` only - RP and
+    MFD jobs have no folder list to scan (RP folders carry no job #, MFD moves)."""
+    toks = [part for t in tokens for part in re.split(r"[-,/]", t.strip().upper()) if part]
+    if "ACTIVE" not in toks:
+        return [t.strip().upper() for t in tokens], False, ""
+    divs = {t for t in toks if t in ("CP", "RP", "MFD")}
+    if divs - {"CP"}:
+        return [], True, ("--from-folders is CP only (the job folders on the Common "
+                          "share); run RP / MFD from the WIP master")
+    try:
+        mounted = CP_AWARDED_BASE.is_dir()
+    except OSError:
+        mounted = False
+    if not mounted:
+        return [], True, f"the awarded-projects folder is not mounted: {CP_AWARDED_BASE}"
+    extras = [t for t in toks if t not in ("ACTIVE", "CP", "RP", "MFD")]
+    jobs = active_cp_from_folders()
+    return jobs + [e for e in extras if e not in jobs], True, ""
+
+
 def expand_active_projects(tokens: List[str],
                            wip_master: Dict[str, dict]) -> Tuple[List[str], bool]:
     """`ACTIVE [CP|RP|MFD ...]` → every Active project of those divisions from
@@ -10179,6 +10226,12 @@ def main() -> int:
                     help="the division's real home is not mounted and the owner said "
                          "to file this run in the retired OneDrive Automations- folder "
                          "anyway. Without it a missing home STOPS the job.")
+    ap.add_argument("--from-folders", action="store_true",
+                    help="`active cp` takes its list from the job folders at the top "
+                         "of the awarded-projects folder on the Common share, and "
+                         "the WIP master is NOT read (contract / ETC from the job's "
+                         "own documents and the typed values). The office server's "
+                         "daily run. CP only.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
@@ -10207,8 +10260,18 @@ def main() -> int:
 
     # WIP master loads BEFORE auth: `active <division>` expands from it, and
     # it's a local file read — no Touch ID needed to know the batch.
-    wip_master = load_wip_master(Path(args.wip_master).expanduser())
-    projects, was_expanded = expand_active_projects(projects, wip_master)
+    if args.from_folders:
+        wip_master = {}                       # the WIP master is a separate, manual process
+        projects, was_expanded, _err = expand_from_folders(projects)
+        if _err:
+            print(f"  ✗ {_err}")
+            return 1
+        if was_expanded and not projects:
+            print(f"  ✗ no CP job folder at the top of {CP_AWARDED_BASE}")
+            return 1
+    else:
+        wip_master = load_wip_master(Path(args.wip_master).expanduser())
+        projects, was_expanded = expand_active_projects(projects, wip_master)
     if was_expanded and not projects:
         print(f"  ✗ `active` found no Active projects in the WIP master "
               f"({args.wip_master}) — is the Test-Master tab current?")
@@ -10228,7 +10291,10 @@ def main() -> int:
         return 1
 
     ui_banner("Project P&L Export")
-    if was_expanded:
+    if was_expanded and args.from_folders:
+        ui_cfg("Active batch", f"{len(projects)} job folder(s) on the Common share")
+        ui_cfg("WIP master", "not read (contract / ETC from the job's documents)")
+    elif was_expanded:
         ui_cfg("Active batch", f"{len(projects)} project(s) from the WIP master")
     ui_cfg("Projects", ", ".join(projects) or "(none)")
     if report_files:
@@ -10240,12 +10306,13 @@ def main() -> int:
         ui_cfg("Mode", f"{_YEL}DRY RUN — no files written{_RESET}")
     ui_close()
 
-    print(f"\n  {_DIM}Authenticating to QBO (Touch ID)…{_RESET}")
+    print(f"\n  {_DIM}Authenticating to QuickBooks…{_RESET}")
     access, company_id = load_credentials()
     ui_step("Connected to QBO")
     cust_map = build_project_customer_map(access, company_id)
     ui_step("Project → customer map", f"{len(cust_map)} projects")
-    ui_step("WIP master loaded", f"{len(wip_master)} rows")
+    if not args.from_folders:
+        ui_step("WIP master loaded", f"{len(wip_master)} rows")
 
     _ALL_CLASSES = [None]        # lazy: pulled once per run, only if +class
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM

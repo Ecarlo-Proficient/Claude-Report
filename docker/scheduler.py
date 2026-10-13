@@ -11,6 +11,15 @@ What it runs (the owner's plan, Office server move 09/30/2026):
                AR  invoice-sync/run_invoice_sync.py  -> Notion + Teams + Invoice Tracker.xlsx
                (test mode adds payments-test: invoice-sync/qbo_payment_notify.py --test - TEST QuickBooks payment cards)
              AR still runs when AP fails, so Notion stays current.
+  CP P&Ls    once a day at PNL_CP_AT (06:00)   project-pnl/project_pnl_export.py active cp --from-folders --no-prompt
+               the Active list = the job folders at the top of the awarded-projects folder on the Common share
+               (the owner 2026-10-13: "scan the active folders in the synology, query qbo for the transactions and
+               update their p&l"); each job's Project_PnL workbook goes into <job>/Profit and Loss/, then - last,
+               built FROM those workbooks - the CP Overview at the top of the folder. The WIP master is NOT read
+               (it stays a manual, ledger-side process). Runs in the BACKGROUND so the mirror keeps its 3-minute
+               beat (a batch of ~20 jobs takes 15-30 min); once a day survives a restart (the day is read back from
+               status.json). Needs ONE mount: ACB_CP_AWARDED_BASE (read + write). Missing = skipped + alert.
+               test mode: practice copies under TEST_DIR/pnl, no Overview; live: only while the writer file says server.
 
 Two modes (ACB_SERVER_MODE):
   test (default) - the side-by-side week. The trackers are written to TEST_DIR (never the live files), AR runs
@@ -49,6 +58,7 @@ MODE = (os.getenv("ACB_SERVER_MODE") or "test").strip().lower()
 MIRROR_EVERY = int(os.getenv("MIRROR_EVERY_SECONDS", "180"))
 APAR_EVERY = int(os.getenv("APAR_EVERY_SECONDS", "900"))
 RECONCILE_AT = os.getenv("RECONCILE_AT", "02:30")
+PNL_CP_AT = os.getenv("PNL_CP_AT", "06:00")
 MIRROR_STALE_MIN = int(os.getenv("MIRROR_STALE_MINUTES", "30"))
 QUIET_ALERT_MIN = int(os.getenv("ALERT_QUIET_MINUTES", "60"))
 STATUS_DIR = Path(os.getenv("STATUS_DIR", "/data/status"))
@@ -57,11 +67,13 @@ SHARE_STATUS = os.getenv("SHARE_STATUS_FILE", "").strip()
 WRITER_FILE = os.getenv("WRITER_FILE", "").strip()
 TEST_DIR = Path(os.getenv("TEST_DIR", "/mnt/accounting/_server-test"))
 HOST = os.getenv("ACB_HOST_NAME", "office-server")
-TIMEOUTS = {"mirror": 2700, "reconcile": 3600, "ap": 1800, "ar": 1200, "ar-export": 900, "payments-test": 300}
+TIMEOUTS = {"mirror": 2700, "reconcile": 3600, "ap": 1800, "ar": 1200, "ar-export": 900, "payments-test": 300,
+            "pnl-cp": 7200}
 
 _stop = False
 _state: dict = {"mode": MODE, "host": HOST, "jobs": {}}
 _alerted: dict = {}
+_bg: dict = {}        # the one background job in flight: {name, proc, started, log}
 
 
 def _now() -> dt.datetime:
@@ -202,6 +214,116 @@ def _apar() -> None:
             _run("payments-test", [PY, "invoice-sync/qbo_payment_notify.py", "--test"])
 
 
+def _start_bg(name: str, argv: list, env_extra: dict | None = None) -> bool:
+    """Start one step in the background (the clock keeps ticking); _poll_bg records it when it ends.
+    One at a time: a second start while one runs is refused."""
+    if _bg:
+        _say(f"{name}: not started - {_bg['name']} still running")
+        return False
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = LOG_DIR / f"{name}.log"
+    if log.exists() and log.stat().st_size > 5_000_000:
+        log.replace(LOG_DIR / f"{name}.log.1")
+    env = dict(os.environ)
+    env.update(env_extra or {})
+    started = _now()
+    job = _state["jobs"].setdefault(name, {})
+    job["last_run"] = _stamp(started)
+    job.pop("skipped", None)
+    _say(f"{name}: start (background)")
+    f = log.open("a")
+    f.write(f"\n===== {name} {_stamp(started)} =====\n")
+    f.flush()
+    try:
+        proc = subprocess.Popen(argv, cwd=str(APP), env=env, stdout=f, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        f.write(f"could not start: {e}\n")
+        f.close()
+        job.update({"exit": 127, "seconds": 0, "tail": [f"could not start: {e}"]})
+        _alert(name, f"{name} could not start: {e}")
+        _write_status()
+        return False
+    _bg.update({"name": name, "proc": proc, "started": started, "log": log, "file": f, "offset": f.tell()})
+    _write_status()
+    return True
+
+
+def _poll_bg(final: bool = False) -> None:
+    """Record the background job once it ends (or kill it past its timeout / on a final stop)."""
+    if not _bg:
+        return
+    name, proc, started = _bg["name"], _bg["proc"], _bg["started"]
+    code = proc.poll()
+    ran = (_now() - started).total_seconds()
+    if code is None and (final or ran > TIMEOUTS.get(name, 1800)):
+        proc.terminate()
+        try:
+            proc.wait(20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        code = 124 if not final else 143
+    if code is None:
+        return
+    _bg["file"].close()
+    try:                                              # this run's output only - the log holds every run
+        with _bg["log"].open("r", errors="replace") as f:
+            f.seek(_bg["offset"])
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    tail = [ln for ln in lines if ln.strip()][-6:]
+    job = _state["jobs"].setdefault(name, {})
+    job.update({"exit": code, "seconds": round(ran), "tail": tail})
+    with _bg["log"].open("a") as f:
+        f.write(f"===== {name} exit {code} after {round(ran)}s =====\n")
+    if code == 0:
+        job["last_ok"] = _stamp()
+        _say(f"{name}: ok ({job['seconds']}s)")
+    elif code == 143:
+        _say(f"{name}: stopped with the server (exit 143) - runs again tomorrow")
+    else:
+        _say(f"{name}: FAILED exit {code}")
+        _alert(name, f"{name} failed (exit {code}): " + " | ".join(tail[-3:]))
+    _bg.clear()
+    _write_status()
+
+
+def _pnl_cp() -> None:
+    """The daily CP P&L batch: every job folder at the top of the awarded-projects folder gets its workbook, then
+    the CP Overview (the owner 2026-10-13: 'update daily once at 6am'). `active cp` already rebuilds the Overview
+    LAST, from the workbooks it just wrote; --from-folders keeps the WIP master out of it."""
+    job = _state["jobs"].setdefault("pnl-cp", {})
+    base = os.getenv("ACB_CP_AWARDED_BASE", "").strip()
+    if not (base and Path(base).is_dir()):
+        job["skipped"] = f"{_stamp()} not mounted: the awarded-projects folder (ACB_CP_AWARDED_BASE)"
+        _alert("pnl-cp-mount", "CP P&Ls skipped - the awarded-projects folder (ACB_CP_AWARDED_BASE) is not on the server")
+        return _write_status()
+    argv = [PY, "project-pnl/project_pnl_export.py", "active", "cp", "--from-folders", "--no-prompt"]
+    if MODE == "live":
+        w = _writer()
+        if w != "server":
+            job["skipped"] = f"{_stamp()} writer file says {w or 'nothing'} - standing down"
+            if not w:
+                _alert("pnl-writer", "CP P&Ls skipped - the writer file is missing or unreadable (the server fails closed)")
+            return _write_status()
+        _start_bg("pnl-cp", argv)
+    else:
+        # practice copies only: --out keeps every workbook under TEST_DIR, --no-overview leaves the real
+        # CP Overview (which lives in the awarded-projects folder) alone
+        _start_bg("pnl-cp", argv + ["--out", str(TEST_DIR / "pnl"), "--no-overview"])
+
+
+def _last_ok_day(name: str):
+    """The date of a job's last good run, read back from the status file the previous process wrote - so a
+    once-a-day job stays once a day across a restart."""
+    try:
+        ok = json.loads((STATUS_DIR / "status.json").read_text()).get("jobs", {}).get(name, {}).get("last_ok")
+        return dt.datetime.fromisoformat(ok).date() if ok else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def _stop_handler(*_a) -> None:
     global _stop
     _stop = True
@@ -215,9 +337,10 @@ def main() -> int:
         _say(f"ACB_SERVER_MODE must be test or live, not {MODE!r}")
         return 2
     _say(f"office server scheduler - mode {MODE}, mirror every {MIRROR_EVERY}s, AP/AR every {APAR_EVERY}s, "
-         f"reconcile at {RECONCILE_AT}")
+         f"reconcile at {RECONCILE_AT}, CP P&Ls at {PNL_CP_AT}")
     next_mirror = next_apar = 0.0
     last_reconcile_day = None
+    last_pnl_day = _last_ok_day("pnl-cp")
     started = _now()
     while not _stop:
         t = time.time()
@@ -231,6 +354,10 @@ def main() -> int:
         if not _stop and time.time() >= next_apar:
             _apar()
             next_apar = time.time() + APAR_EVERY
+        _poll_bg()
+        if not _stop and not _bg and now.strftime("%H:%M") >= PNL_CP_AT and last_pnl_day != now.date():
+            _pnl_cp()
+            last_pnl_day = now.date()
         ok = _state["jobs"].get("mirror", {}).get("last_ok")
         quiet_since = dt.datetime.fromisoformat(ok) if ok else started
         if (_now() - quiet_since).total_seconds() > QUIET_ALERT_MIN * 60:
@@ -239,6 +366,8 @@ def main() -> int:
             if _stop:
                 break
             time.sleep(2)
+            _poll_bg()
+    _poll_bg(final=True)                              # a background batch ends with the server
     _say("stopped")
     return 0
 

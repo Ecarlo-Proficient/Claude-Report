@@ -25,6 +25,7 @@ services:
       - /volume1/docker/automation/po-tracker:/mnt/po-tracker:ro       # Cloud Sync copy of the OneDrive PO folder, read only
       - /volume1/docker/automation/bill-approval:/mnt/bill-approval:ro  # Cloud Sync copy of the Accounts Payable channel files (the approval report), read only
       - /volume1/Accounting/_automation/registers:/data/companyhealth/Registers  # the owner's rule files, pushed from the Mac (push_registers.sh)
+      - "/volume1/Common/CURRENT PROJECTS/Awarded Projects Commercial projects:/mnt/cp-awarded"  # the CP job folders = the Active list; P&Ls land in <job>/Profit and Loss/, the CP Overview at the top (read + write)
     # no ports: nothing can reach into this container
     deploy:
       resources:

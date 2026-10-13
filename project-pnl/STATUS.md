@@ -7,6 +7,19 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-13 · **The CP batch runs on the office server, daily at 06:00** (owner: "set up synology pnl for cp only, to
+  update daily once at 6am every day; include the overview as the last piece"). `docker/scheduler.py` job `pnl-cp`
+  runs `project_pnl_export.py active cp --from-folders --no-prompt`: NEW `--from-folders` makes the Active list the job
+  folders at the top of the awarded-projects folder (`active_cp_from_folders`; a folder under Completed Projects is
+  finished) and leaves the WIP master unread (owner: "the wip report has nothing to do with this - it must be updated
+  manually on the ledger, we confirm the contract/etc as they come in"); contract / ETC come from the G702 pay app, the
+  takeoff and the typed values, as they already do for a job off the master. CP only (RP folders carry no job #, MFD
+  moves). Every workbook into its job folder, then the CP Overview rebuilt from them - the order this tool already
+  follows. Also: `CP_AWARDED_BASE`
+  and the takeoff lookup's `_CP_ACTIVE_DIR` read `shared/pnl_paths.CP_AWARDED_BASE` (`ACB_CP_AWARDED_BASE` moves it; the
+  Mac default is unchanged), and the login line says QuickBooks, not Touch ID. The 09/03 "dying SMB share hangs a CP
+  run" issue does not apply on the server - the Common share is a local volume there. RP / MFD batches stay on the Mac.
+  Setup steps for the developer: `docker/STATUS.md` TO DO.
 - 2026-10-08 · **Joint check not paid out yet** (owner: "see how this will work when there is no # like Van Brunt
   how we are waiting to get copies of the joint check"). A payment deposited to the Joint Checks account with no
   payment out reads `Joint check · not paid out yet · <AR's memo>` in red, not "To us" (CP785 Draw #2: Van Brunt
