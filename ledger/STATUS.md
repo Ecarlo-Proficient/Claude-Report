@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/13/2026 · **Pay bills reads QuickBooks' open balance** (owner: "still showing the broken amount and total bills" -
+  three HDS bills he had just paid in QuickBooks stayed open and on the pay run: the ledger's Bill Tracker load was
+  four days old, the mirror already had them at 0). `_bill_memos` now also carries each bill's mirror `Balance`
+  (`qbo_balance`); when the mirror is newer than the workbook load (`_mirror_newer_than`, mirror stamp vs
+  `ap_bill_line.loaded_at`) `_apply_qbo_balance` makes it the bill's `open_balance`, takes a bill QuickBooks shows
+  paid off the pay run (`pay_selected` False) and the feed drops its saved mark (`set_pay_marks` selected False -
+  the same as a payment written from here); open AP (`summary`) is summed over the settled list. A bill the mirror
+  does not know keeps the workbook's figure; an older or absent mirror changes nothing. The run badge says
+  "N not shown by the filters" when run bills are hidden by the filters. Tests: `tests/test_pay_run_qbo_balance.py`.
 - 10/13/2026 · **Bill payment stub: project # instead of memo, Bill total first** (owner: "the auto bill payment stub
   after, default it to not show memo but the project # instead. I also need the total first, open, paid and balance
   after"). `bill_payment_stub.DEFAULT_COLUMNS` = date · type · number · project · bill_total · balance_before · amount

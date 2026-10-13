@@ -738,13 +738,14 @@ def _project_customer_map(con) -> dict:
     return out
 
 
-_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> (memo, due date), per mirror refresh stamp (re-read only when the mirror moved)
+_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> (memo, due date, QBO balance), per mirror refresh stamp (re-read only when the mirror moved)
 
 
 def _bill_memos(bills: list) -> None:
-    """Put each bill's QuickBooks memo (PrivateNote) and due date (DueDate) on its row, from the mirror (the Bill Tracker workbook
-    never carried it; cost_line has it for half the bills only). Cached per mirror stamp, so the 90 s
-    refresh costs nothing until the mirror actually changes; a failed read is said once on stderr."""
+    """Put each bill's QuickBooks memo (PrivateNote), due date (DueDate) and open balance (Balance, as `qbo_balance`) on its
+    row, from the mirror (the Bill Tracker workbook never carried the memo; cost_line has it for half the bills only).
+    Cached per mirror stamp, so the 90 s refresh costs nothing until the mirror actually changes; a failed read is said
+    once on stderr. `qbo_balance` is None when the mirror has no record of the bill (or no Balance on it)."""
     ids = {str(b["bill_id"]) for b in bills if b.get("bill_id")}
     memos: dict = _MEMO_CACHE["memos"]
     if ids:
@@ -758,7 +759,8 @@ def _bill_memos(bills: list) -> None:
                     try:
                         for bid in missing:
                             rec = qbo_mirror.get("Bill", bid, con=mcon)
-                            memos[bid] = (str((rec or {}).get("PrivateNote") or ""), str((rec or {}).get("DueDate") or "")[:10])
+                            memos[bid] = (str((rec or {}).get("PrivateNote") or ""), str((rec or {}).get("DueDate") or "")[:10],
+                                          qbo_mirror._num(rec.get("Balance")) if rec and "Balance" in rec else None)
                     finally:
                         mcon.close()
                     _MEMO_CACHE["stamp"] = stamp
@@ -767,9 +769,49 @@ def _bill_memos(bills: list) -> None:
                 print(f"[memo] bill memos unavailable from the mirror: {e}", file=sys.stderr)
                 _MEMO_CACHE["warned"] = True
     for b in bills:
-        memo, due = memos.get(str(b.get("bill_id") or ""), ("", ""))
+        memo, due, bal = memos.get(str(b.get("bill_id") or ""), ("", "", None))
         b["memo"] = memo
         b["due_date"] = due or None                     # QuickBooks' due date - the vendor page's Unpaid view (owner 2026-10-01)
+        b["qbo_balance"] = bal                          # QuickBooks' own open balance (the mirror); None = not in the mirror
+
+
+def _mirror_newer_than(loaded_at: str) -> bool:
+    """True when the QuickBooks mirror was refreshed after the Bill Tracker workbook was loaded into the ledger
+    (`ap_bill_line.loaded_at`, naive local time) - then QuickBooks' balance is the newer fact. Absent-safe."""
+    if not loaded_at:
+        return True
+    try:
+        from shared import qbo_mirror
+        st = qbo_mirror.stamp()
+        if not st:
+            return False
+        return st.astimezone().replace(tzinfo=None).isoformat(timespec="seconds") >= str(loaded_at)[:19]
+    except Exception:                                   # noqa: BLE001 - no mirror = the workbook stands
+        return False
+
+
+def _apply_qbo_balance(bills: list, use_mirror: bool) -> list:
+    """QuickBooks' open balance wins over the workbook's (owner 2026-10-13: three HDS bills he had just paid in
+    QuickBooks stayed open - and on the pay run - because the ledger's workbook load was four days old; the
+    mirror, refreshed every 3 minutes, already showed them at 0). When the mirror is newer than the workbook
+    load, every bill the mirror knows gets its `Balance` as `open_balance`; a bill QuickBooks shows paid is
+    taken off the pay run (`pay_selected` False - the same as a payment written from here). Returns the bill
+    ids whose saved pay mark should be dropped (the caller purges them). Nothing changes when the mirror is
+    older or absent."""
+    drop = []
+    if not use_mirror:
+        return drop
+    for b in bills:
+        bal = b.get("qbo_balance")
+        if bal is None:
+            continue
+        b["open_balance"] = round(float(bal), 2)
+        if b["open_balance"] <= 0 and b.get("pay_selected"):
+            b["pay_selected"] = False
+            b["pay_amount"] = None
+            if b.get("bill_id"):
+                drop.append(str(b["bill_id"]))
+    return drop
 
 
 def _bill_key(r) -> str:
@@ -785,28 +827,17 @@ def _fetch_ap(con) -> dict:
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
           "lien_watch": [], "by_project": {}, "bills": []}
     try:
-        rows = con.execute(
-            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
-            "matched_invoice, invoice_no, qbo_link FROM ap_bill_line").fetchall()
+        con.execute("SELECT 1 FROM ap_bill_line LIMIT 1").fetchall()   # the table is there (the loader has run)
     except sqlite3.OperationalError:
         return ap
     # Site lien marks (Notice Sent / Lien Filed / Released) the owner set on the dashboard.
     # They win over the computed/loaded lien_status INSTANTLY, before the next sync-ap mirrors
     # them into the workbook. Keyed by QBO bill id (= the workbook's _Key). Absent-safe.
     marks = bill_marks.read_lien_marks()
-    def _eff_lien(r):
-        bid = bill_marks.bill_id_from_link(r["qbo_link"])
-        tag = marks.get(bid) if bid else None
-        return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
-    # Open AP counted ONCE per bill (10/12/2026): a multi-job bill sits on the Bills sheet as one "(multiple)"
-    # row AND on the Inventory sheet once per job, every row carrying the bill's FULL open balance - summing
-    # rows counted Cowtown 396753 four times (277,760 shown vs 229,700 real; 1.15M across the ledger).
-    open_bal, open_lines = 0.0, 0
-    for key, r in {_bill_key(r): r for r in rows}.items():
-        ob = r["open_balance"] or 0
-        if ob > 0:
-            open_bal += ob
-            open_lines += 1
+    # Open AP is counted ONCE per bill (10/12/2026) - a multi-job bill sits on the Bills sheet as one "(multiple)"
+    # row AND on the Inventory sheet once per job, every row carrying the bill's FULL open balance; summing rows
+    # counted Cowtown 396753 four times (277,760 shown vs 229,700 real; 1.15M across the ledger). The sum is
+    # taken below, over the one-row-per-bill list, after QuickBooks' balance is settled on each bill.
     by_project = {}
     for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
                          "WHERE COALESCE(open_balance,0) > 0"):
@@ -868,7 +899,21 @@ def _fetch_ap(con) -> dict:
             b["inv_date"] = inv["txn_date"]
             b["inv_customer"] = inv["customer"]
         bills.append(b)
-    _bill_memos(bills)                           # the QBO bill memo (PrivateNote) - a column + searchable (owner 2026-09-22)
+    _bill_memos(bills)                           # the QBO bill memo (PrivateNote) + QuickBooks' balance (owner 2026-09-22 / 10-13)
+    try:
+        loaded_at = con.execute("SELECT MAX(loaded_at) FROM ap_bill_line").fetchone()[0]
+    except sqlite3.OperationalError:
+        loaded_at = None
+    paid_marks = _apply_qbo_balance(bills, _mirror_newer_than(loaded_at))
+    if paid_marks:                               # paid in QuickBooks outside the ledger: off the saved run, like our own writes
+        try:
+            bill_marks.set_pay_marks([{"bill_id": b, "selected": False} for b in paid_marks],
+                                     _dt.datetime.now().isoformat(timespec="seconds"))
+        except (sqlite3.OperationalError, ValueError, TypeError) as e:
+            print(f"[pay run] could not drop {len(paid_marks)} paid bill(s) from the run: {e}", file=sys.stderr)
+    # open AP counted once per bill, on the balance just settled (QuickBooks' when the mirror is the newer fact)
+    open_bal = round(sum(b["open_balance"] for b in bills if (b.get("open_balance") or 0) > 0), 2)
+    open_lines = sum(1 for b in bills if (b.get("open_balance") or 0) > 0)
     ap["bills"] = bills
     # The lien WATCHLIST = the enriched bills that are on the clock OR marked (any LIEN_RANK status),
     # so the Liens page carries the client, bill date, the AR invoice + its pay status - not just the

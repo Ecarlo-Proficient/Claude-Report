@@ -3662,9 +3662,12 @@ function renderPaySaveBar() {
   const n = payDirtyCount();
   const bar = $("#paySaveBar"); if (bar) bar.classList.toggle("dirty", n > 0);
   const txt = $("#paySaveText");
+  // bills on the run the filters hide are said so (owner 2026-10-13: the run read 10 bills over a 7-bill screen)
+  const hid = sel.filter(b => !_payFilterPass(b)).length;
+  const off = hid ? ` · ${hid} not shown by the filters` : "";
   if (txt) txt.textContent = n
-    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${moneyC(total)}`
-    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(total)}` : "No bills in the pay run");
+    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${moneyC(total)}${off}`
+    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(total)}${off}` : "No bills in the pay run");
   { const s = $("#btnSavePayRun"); if (s) s.disabled = n === 0; }
   { const d = $("#btnDiscardPayRun"); if (d) d.hidden = n === 0; }
   { const qs = $("#payQuickStat"); if (qs) qs.textContent = sel.length ? `${sel.length} selected · ${moneyC(total)} to pay` : ""; }
