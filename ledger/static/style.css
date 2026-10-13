@@ -2151,10 +2151,10 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .msel-opt.msel-next { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, transparent); }   /* what Tab / Enter will tick */
 /* the review's text lines sit inside the widget's gutter like every other widget (owner 2026-10-12: the lettering
    hugged the left edge); the grid itself stays flush with the widget like every other grid */
-#payQboBody { padding: 0 var(--pad-x) 12px; }
-#payQboBody .bill-filters { padding-left: 0; padding-right: 0; }
-#payQboBody .table-scroll { margin: 0 calc(-1 * var(--pad-x)); }
-#payQboBody .cd-ra-line { line-height: 1.5; }
+#payQboBody, .pq-body { padding: 0 var(--pad-x) 12px; }
+#payQboBody .bill-filters, .pq-body .bill-filters { padding-left: 0; padding-right: 0; }
+#payQboBody .table-scroll, .pq-body .table-scroll { margin: 0 calc(-1 * var(--pad-x)); }
+#payQboBody .cd-ra-line, .pq-body .cd-ra-line { line-height: 1.5; }
 /* NOT APPROVED on the run: one loud box + yellow rows (colour = state, nowhere else) */
 .pq-na-box { margin: 8px 0 10px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--text); line-height: 1.5; }
 .pq-na-box b { color: var(--warn-text, var(--warn)); }
@@ -2171,6 +2171,9 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .pq-cnt.full { color: var(--warn-text, var(--warn)); font-weight: 600; }
 .pq-credit td { color: var(--text-dim); }
 .pq-act .btn { margin-bottom: 6px; }
+.pq-vendor { margin-bottom: 14px; }   /* the vendor page's Pay in QuickBooks review, above its bill list */
+.sumbar .sb-pay { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sumbar .sb-pay[hidden] { display: none; }
 .pq-num { width: 110px; margin-right: 6px; }
 .pq-grid td:nth-child(4) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pq-grid td:nth-child(5) { color: var(--warn-text, var(--warn)); font-size: .85em; white-space: nowrap; }

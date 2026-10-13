@@ -339,9 +339,11 @@ def _credits(access: str, cid: str, vendor_id: str) -> list:
             for r in rows if _r2(r.get("Balance")) > EPS]
 
 
-def _plan_live(access: str, cid: str) -> dict:
-    """The saved pay run against QBO right now: {vendor_id: {...}} + skipped rows."""
-    marks = bill_marks.read_pay_marks()
+def _plan_live(access: str, cid: str, marks: Optional[dict] = None) -> dict:
+    """The saved pay run (or the bills handed in - the vendor page's ticks) against QBO right now:
+    {vendor_id: {...}} + skipped rows."""
+    if marks is None:
+        marks = bill_marks.read_pay_marks()
     bills = _live_ids(access, cid, "Bill", marks) if marks else {}
     held = _held(access, cid) if marks else {}
     vendors, skipped = {}, []
@@ -381,10 +383,18 @@ def _plan_live(access: str, cid: str) -> dict:
     return {"vendors": vendors, "skipped": skipped}
 
 
-def plan() -> dict:
-    """Dry run for the saved pay run. Writes nothing. The run_token keys the write's idempotency."""
+def marks_for(bill_ids) -> dict:
+    """The vendor page's ticks as pay marks: each bill in full (amount None = its open balance)."""
+    return {str(b).strip(): {"amount": None} for b in bill_ids or [] if str(b).strip()}
+
+
+def plan(bills: Optional[list] = None) -> dict:
+    """Dry run for the saved pay run - or, with `bills`, for just those bills (the vendor page: "pay bills in the
+    vendor center", owner 2026-10-13 - the same review and the same write, scoped to the ticked bills, the saved
+    run untouched). Writes nothing. The run_token keys the write's idempotency and remembers which bills it covers."""
     access, cid = _login()
-    p = _plan_live(access, cid)
+    marks = marks_for(bills) if bills is not None else None
+    p = _plan_live(access, cid, marks)
     for v in p["vendors"].values():
         v["credits"] = _credits(access, cid, v["vendor_id"])
     vs = sorted(p["vendors"].values(), key=lambda v: v["vendor"].lower())
@@ -395,9 +405,9 @@ def plan() -> dict:
         _TOKENS.pop(t, None)
     _TOKENS[token] = {"at": now, "vendors": {v["vendor_id"]: {b["bill_id"]: b["amount"] for b in v["bills"]} for v in vs},
                       "credits": {v["vendor_id"]: {c["id"]: c["balance"] for c in v["credits"]} for v in vs},
-                      "names": {v["vendor_id"]: v["vendor"] for v in vs}}
+                      "names": {v["vendor_id"]: v["vendor"] for v in vs}, "marks": marks}
     today = dt.date.today()
-    return {"ok": True, "run_token": token, "ref_max": REF_MAX, "accounts": accounts(), "can_pay": can, "why_not": why,
+    return {"ok": True, "run_token": token, "scope": "bills" if marks is not None else "run", "ref_max": REF_MAX, "accounts": accounts(), "can_pay": can, "why_not": why,
             "today": today.isoformat(), "min_date": _close_date(access, cid),
             "max_date": (today + dt.timedelta(days=FUTURE_DAYS)).isoformat(), "vendors": vs, "skipped": p["skipped"],
             "total": _r2(sum(v["total"] for v in vs)), "bills": sum(len(v["bills"]) for v in vs)}
@@ -591,7 +601,7 @@ def _commit(body: dict, t: Optional[dict] = None) -> dict:
     closed = _close_date(access, cid)
     if closed and date <= closed:
         return {"ok": False, "error": f"the books are closed through {closed} - pick a later payment date"}
-    live = _plan_live(access, cid)["vendors"]
+    live = _plan_live(access, cid, (t or {}).get("marks"))["vendors"]   # the same bills the review read
 
     # Touch ID, naming exactly what leaves: macOS' own dialog, which a web page cannot draw or click
     import presence                                 # noqa: PLC0415  (ledger-local)

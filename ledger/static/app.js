@@ -2532,7 +2532,7 @@ function _vpSelColumn(table, rows) {
 function _vpSelBar(rows) {
   let bar = $("#vpSelBar");
   if (!bar) { bar = document.createElement("div"); bar.id = "vpSelBar"; bar.className = "sumbar vp-selbar"; bar.hidden = true;
-    bar.innerHTML = '<span class="sb-label">✓</span><span class="sb-sum"></span><span class="sb-meta"></span><button class="sb-copy" title="Copy the ticked bills as a table - paste into Excel or an email">Copy table</button><button class="sb-x" title="Untick all">✕</button>';
+    bar.innerHTML = '<span class="sb-label">✓</span><span class="sb-sum"></span><span class="sb-meta"></span><button class="sb-copy" title="Copy the ticked bills as a table - paste into Excel or an email">Copy table</button><button class="sb-pay primary" title="Pay the ticked unpaid bills in QuickBooks - the same review and write as Pay bills, for this vendor only">Pay in QuickBooks…</button><button class="sb-x" title="Untick all">✕</button>';
     document.body.appendChild(bar); }
   const picked = rows.filter(b => _vpSel.has(_vpKey(b)));
   const showing = !!(_vendorData && _vendorView === "bills" && $("#recordView") && !$("#recordView").hidden);
@@ -2541,6 +2541,11 @@ function _vpSelBar(rows) {
   bar.querySelector(".sb-meta").textContent = `${picked.length} bill${picked.length === 1 ? "" : "s"} · ${moneyC(picked.reduce((t, b) => t + num(b.line_amount), 0))} billed`;
   bar.querySelector(".sb-x").onclick = () => { _vpSel.clear(); renderVendorPage(); };
   bar.querySelector(".sb-copy").onclick = () => _vpCopyTable(picked);
+  // Pay in QuickBooks on the ticked bills still open (owner 2026-10-13) - a paid bill ticked for the copy is left out
+  const payable = picked.filter(b => b.bill_id && bOpen(b) > 0);
+  const pay = bar.querySelector(".sb-pay"); pay.hidden = !payable.length;
+  pay.textContent = `Pay in QuickBooks · ${payable.length} bill${payable.length === 1 ? "" : "s"}…`;
+  pay.onclick = () => openPayQbo({ bills: payable.map(b => String(b.bill_id)), vendor: _vendorData.vendor });
 }
 async function _vpCopyTable(picked) {
   const heads = [...document.querySelectorAll(".vp-grid thead th")].filter(th => !th.classList.contains("vp-ck")).map(th => th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.textContent : th.textContent.trim());
@@ -2598,6 +2603,7 @@ async function openVendorPage(vendor) {
   const body = $("#recordBody");
   _vendorData = null; _vendorType = "open"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear(); _vpSel.clear();   // Unpaid by default (owner 2026-09-28)
   hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
+  if (PQ && PQ.vendor) closePayQbo();   // ... nor a Pay in QuickBooks review opened on another vendor's page
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
   catch (e) { body.innerHTML = ""; body.textContent = "could not load this vendor"; return; }
@@ -2615,6 +2621,7 @@ function renderVendorPage() {
   // remember which menus were open before the body is rebuilt and reopen them after
   const _dateMenuWasOpen = !!($("#vpDateMenu") && !$("#vpDateMenu").hidden);
   const body = $("#recordBody"); body.innerHTML = "";
+  if (PQ && PQ.vendor === d.vendor && PQ.widget) body.appendChild(PQ.widget);   // the Pay in QuickBooks review opened on this page stays on top
   // Bills | Payments view toggle
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
   for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`], ["statement", "Statement"]]) {
@@ -3767,16 +3774,33 @@ function exportPayList() {
 // the vendor's folder; a "To print" check files it when its number is saved under Checks to print.
 let PQ = null;
 const PQ_METHODS = [["check", "Check"], ["ach", "ACH / wire"]];   // a check asks "print later?" (on by default = "print")
-async function openPayQbo() {
-  if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
-  if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
-  const w = $("#payQboWidget"), body = $("#payQboBody"); w.hidden = false; body.innerHTML = "";
-  const wait = document.createElement("div"); wait.className = "cd-ra-line"; wait.textContent = "Reading the pay run live from QuickBooks…"; body.appendChild(wait);
+// Also from the vendor page (owner 2026-10-13: "let me pay bills in the vendor center when opening up their unpaid
+// bills. it's the same thing as pay bills"): opts = { bills: [bill ids ticked], vendor } - the SAME review and the
+// same write, scoped to those bills (?bills= on the plan; the server remembers them in the review token), the saved
+// pay run untouched; the widget is built on the vendor page itself and survives its re-renders.
+async function openPayQbo(opts) {
+  const o = opts && Array.isArray(opts.bills) ? opts : null;
+  if (!o) {
+    if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
+    if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
+  } else if (!o.bills.length) { toast("Tick the unpaid bills to pay first"); return; }
+  closePayQbo();
+  let w, body, note;
+  if (o) {
+    w = document.createElement("section"); w.className = "widget pq-vendor"; w.id = "payQboVendor";
+    w.innerHTML = '<div class="widget-head"><h2>Pay in QuickBooks <span class="count"></span></h2><button type="button" class="btn small">Close</button></div><div class="pq-body"></div>';
+    w.querySelector("button").onclick = closePayQbo; body = w.querySelector(".pq-body"); note = w.querySelector(".count");
+    const host = $("#recordBody"); host.insertBefore(w, host.firstChild);
+  } else { w = $("#payQboWidget"); body = $("#payQboBody"); note = $("#payQboNote"); }
+  w.hidden = false; body.innerHTML = "";
+  PQ = { d: null, body, note, widget: w, vendor: o ? o.vendor : null };
+  const wait = document.createElement("div"); wait.className = "cd-ra-line"; wait.textContent = o ? `Reading ${o.bills.length} bill${o.bills.length !== 1 ? "s" : ""} live from QuickBooks…` : "Reading the pay run live from QuickBooks…"; body.appendChild(wait);
   w.scrollIntoView({ behavior: "smooth", block: "start" });
-  let d; try { d = await (await fetch("/api/pay-bills/plan")).json(); } catch (e) { d = { ok: false, error: String(e) }; }
+  let d; try { d = await (await fetch("/api/pay-bills/plan" + (o ? "?bills=" + encodeURIComponent(o.bills.join(",")) : ""))).json(); } catch (e) { d = { ok: false, error: String(e) }; }
+  if (!PQ || PQ.widget !== w) return;   // closed or replaced while QuickBooks answered
   if (!d.ok) { wait.className = "cd-ra-line neg"; wait.textContent = "Could not read QuickBooks: " + (d.error || "failed"); return; }
   const acct = (d.accounts || []).find(a => a.type === "bank") || (d.accounts || [])[0];
-  PQ = { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map() };
+  Object.assign(PQ, { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map() });
   renderPayQbo();
 }
 function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
@@ -3804,8 +3828,8 @@ function _pqProblems() {
   return out;
 }
 function renderPayQbo() {
-  const body = $("#payQboBody"); body.innerHTML = ""; const d = PQ.d;
-  const note = $("#payQboNote"); if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
+  const body = PQ.body; body.innerHTML = ""; const d = PQ.d;
+  const note = PQ.note; if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
   const line = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; body.appendChild(x); return x; };
   line("Review, live from QuickBooks - nothing is written until you confirm here AND with Touch ID on this Mac. One bill payment per vendor, like QuickBooks' Pay Bills.");
   if (!d.can_pay) line(`Payments are locked: ${d.why_not}. The review still works; paying needs the authorized Mac.`, "neg");
@@ -3843,7 +3867,7 @@ function renderPayQbo() {
     const h = document.createElement("b"); h.textContent = `Paying ${na.length} Not Approved bill${na.length !== 1 ? "s" : ""}: `; box.appendChild(h);
     box.appendChild(document.createTextNode(_pqByVendor(na) + " - the memo in QuickBooks says NOT APPROVED. The yellow rows below are these."));
     body.appendChild(box); }
-  if (!d.vendors.length) { line("Nothing left to pay in the saved run.", "neg"); return; }
+  if (!d.vendors.length) { line(PQ.vendor ? "Nothing left to pay in the ticked bills - QuickBooks already shows them paid; refresh from QuickBooks to catch this page up." : "Nothing left to pay in the saved run.", "neg"); return; }
   // one band per vendor: the reference, the bills, the credits (unticked)
   const t = document.createElement("table"); t.className = "grid pay-list-grid pq-grid";
   t.innerHTML = `<thead><tr><th class="left"></th><th class="left">Bill #</th><th class="left">Date</th><th class="left">Memo</th><th class="left"></th><th class="right">Pays</th></tr></thead>`;
@@ -3891,7 +3915,7 @@ function renderPayQbo() {
   _pqFoot();
 }
 function _pqFoot() {
-  const act = $("#pqAct"); if (!act || !PQ) return; act.innerHTML = "";
+  const act = PQ && PQ.body.querySelector("#pqAct"); if (!act) return; act.innerHTML = "";
   const total = PQ.d.vendors.reduce((t, v) => t + _pqNet(v), 0), probs = _pqProblems();
   const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small primary";
   btn.textContent = `Pay ${PQ.d.vendors.length} vendor${PQ.d.vendors.length !== 1 ? "s" : ""} · ${qaCents(total)} in QuickBooks…`;
@@ -3914,7 +3938,7 @@ async function payQboWrite(btn) {
       bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])] })) };
   let res; try { res = await (await fetch("/api/pay-bills/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).json(); }
   catch (e) { res = { ok: false, error: String(e) + " - check QuickBooks before trying again" }; }
-  const act = $("#pqAct"); act.innerHTML = "";
+  const act = PQ.body.querySelector("#pqAct"); act.innerHTML = "";
   const say = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; act.appendChild(x); };
   if (!res.results) { say("Nothing written: " + (res.error || "failed"), "neg"); btn.disabled = false; act.appendChild(btn); btn.textContent = "Try again…"; return; }
   say(`${res.posted} payment${res.posted !== 1 ? "s" : ""} written to QuickBooks, ${qaCents(res.total)}${res.failed ? ` · ${res.failed} not written` : ""}.`, res.failed ? "warn" : "ok");
@@ -3931,12 +3955,20 @@ async function payQboWrite(btn) {
   const prog = document.createElement("div"); prog.className = "sync-progress"; const bar = document.createElement("div"); bar.className = "sync-bar";
   const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill); const step = document.createElement("div"); step.className = "sync-step";
   prog.appendChild(bar); prog.appendChild(step); act.appendChild(prog);
-  await load(true); renderPayBills(); loadPayQueued();
+  const vendor = PQ.vendor;   // paid from the vendor page: that page catches up too (its bills, Paid, the payment)
+  await load(true); renderPayBills(); loadPayQueued(); if (vendor) _vpAfterPay(vendor);
   runPipeline("billpay", null, { prog, fill, step, after: async (ok) => {
     if (!ok) step.textContent += " - the payments are in QuickBooks; refresh from QuickBooks to see them here.";
-    await load(true); renderPayBills(); loadPayQueued(); } });
+    await load(true); renderPayBills(); loadPayQueued(); if (vendor) _vpAfterPay(vendor); } });
 }
-function closePayQbo() { const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
+async function _vpAfterPay(vendor) {   // re-read the vendor page after a payment written from it; the review stays on top with its result
+  if (!_vendorData || _vendorData.vendor !== vendor) return;
+  const was = _vendorData; let data;
+  try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); } catch { return; }
+  if (!data || !data.ok || !_vendorPageShowing(was)) return;
+  _vpSel.clear(); _vendorData = data; renderVendorPage();
+}
+function closePayQbo() { if (PQ && PQ.vendor && PQ.widget) PQ.widget.remove(); const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
 // ── Pushed payments (owner 2026-09-28): every payment pushed from here waits in this queue until it MATCHES - QuickBooks
 // shows its check # (a "To print" check gets it when printed in QuickBooks; the next mirror refresh picks it up) and its
 // stub is filed under that number. The watcher (pay_bills.watch, after every mirror refresh and on every load here) flags

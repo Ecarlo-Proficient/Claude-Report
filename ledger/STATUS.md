@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/13/2026 · **Pay in QuickBooks from the vendor page** (owner: "let me pay bills in the vendor center when opening
+  up their unpaid bills. it's the same thing as pay bills"). The vendor page's tick bar gains **Pay in QuickBooks · N
+  bills…** (the ticked bills still open; a paid bill ticked for the copy is left out): it opens the SAME review
+  (`openPayQbo({bills, vendor})`), built as a widget on top of that page (kept across the page's re-renders, removed
+  when another vendor opens), scoped to those bills - `GET /api/pay-bills/plan?bills=id,id` -> `pay_bills.plan(bills)`
+  (`marks_for`: each bill in full) and the review token carries `marks`, so `_commit` re-reads exactly the bills the
+  review showed (`_plan_live(access, cid, marks)`); with no `bills` everything is as before (the saved run). The
+  write, Touch ID, stub and billpay follow-up are unchanged; afterwards the vendor page re-reads itself
+  (`_vpAfterPay`). The review renders into the open widget (`PQ.body` / `PQ.note`), no longer by the Pay run page's
+  ids. Tests: `test_plan_on_given_bills_is_scoped_and_remembered`, `test_plan_live_on_given_bills_never_reads_the_saved_run`.
 - 10/12/2026 · **Filter bars by keyboard; Pay from default; the warning by vendor** (owner: "if same vendor why are
   you keeping the name? just do vendor and the bill # separated by comma" / "default pay from Frost Bank Vendor,
   remove OLD account from showing" / "when i press cmd f, and then tab i expect the select to go from left to right

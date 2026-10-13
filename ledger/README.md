@@ -429,6 +429,12 @@ bills leave the pay run, the payment and bills go into the mirror, the stub is f
 and the Bill Tracker refresh runs. QBO has no payment-method field on a bill payment, only check vs card, so ACH is a
 check-type payment whose reference says how it went.
 
+**From the vendor page too (2026-10-13).** On a vendor's bills, tick the unpaid ones and the tick bar's **Pay in
+QuickBooks…** opens the SAME review on that page, scoped to those bills (`GET /api/pay-bills/plan?bills=id,id`;
+the review token remembers the bills, so the write re-reads exactly them - `pay_bills.plan(bills)` /
+`marks_for`). The saved pay run is not touched; a paid bill ticked for the copy is left out. The write, the
+Touch ID, the stub and the follow-up are the one path above; the vendor page re-reads itself afterwards.
+
 **Pushed payments** is the queue of every payment pushed from here (`pay_push` in the ledger DB, self-created). A
 payment waits there until it **matches**: QBO shows its number and its stub is filed under that number. Nobody types
 the number: `pay_bills.watch()` runs at the end of every mirror refresh (`refresh_mirror.py` - sync-all step 0, the

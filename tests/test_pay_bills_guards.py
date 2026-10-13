@@ -123,3 +123,37 @@ def test_same_payment_same_request_id(monkeypatch, tmp_path):
     assert rows[0]["state"] == "written" and rows[0]["payment_id"] == "777"
     import hashlib, json
     assert rows[0]["request_id"] == hashlib.sha1(json.dumps(posts[0], sort_keys=True).encode()).hexdigest()[:36]
+
+
+def test_plan_on_given_bills_is_scoped_and_remembered(monkeypatch):
+    # the vendor page (owner 2026-10-13): the review runs on the ticked bills, not the saved run, and the token
+    # remembers which, so the write re-reads the same bills
+    monkeypatch.setattr(pb, "_login", lambda: ("a", "c"))
+    seen = {}
+
+    def fake_plan_live(access, cid, marks=None):
+        seen["marks"] = marks
+        return {"vendors": {"9": {"vendor_id": "9", "vendor": "RCI", "bills": [{"bill_id": "100", "amount": 50.0}], "total": 50.0}}, "skipped": []}
+    monkeypatch.setattr(pb, "_plan_live", fake_plan_live)
+    monkeypatch.setattr(pb, "_credits", lambda *a: [])
+    monkeypatch.setattr(pb, "accounts", lambda: [])
+    monkeypatch.setattr(pb, "authorized", lambda: (True, ""))
+    monkeypatch.setattr(pb, "_close_date", lambda *a: "")
+    d = pb.plan(["100", " ", "101"])
+    assert seen["marks"] == {"100": {"amount": None}, "101": {"amount": None}}
+    assert d["scope"] == "bills" and pb._TOKENS[d["run_token"]]["marks"] == seen["marks"]
+    d2 = pb.plan()
+    assert seen["marks"] is None and d2["scope"] == "run" and pb._TOKENS[d2["run_token"]]["marks"] is None
+
+
+def test_plan_live_on_given_bills_never_reads_the_saved_run(monkeypatch):
+    def boom():
+        raise AssertionError("read the saved run")
+    monkeypatch.setattr(pb.bill_marks, "read_pay_marks", boom)
+    bill = {"Id": "100", "DocNumber": "7", "TxnDate": "2026-10-01", "Balance": 80.0, "SyncToken": "1",
+            "VendorRef": {"value": "9", "name": "RCI"}, "PrivateNote": "", "MetaData": {}}
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {"100": bill})
+    monkeypatch.setattr(pb, "_held", lambda a, c: {})
+    p = pb._plan_live("a", "c", pb.marks_for(["100"]))
+    assert p["vendors"]["9"]["bills"][0]["amount"] == 80.0 and p["skipped"] == []
+    assert p["vendors"]["9"]["bills"][0]["partial"] is False

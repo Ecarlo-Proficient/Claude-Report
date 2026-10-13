@@ -3853,9 +3853,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(dup_customers.audit())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "groups": [], "error": f"duplicate customer audit failed: {e}"})
-        elif path == "/api/pay-bills/plan":   # dry run of the saved pay run (live QBO read, no write)
+        elif path == "/api/pay-bills/plan":   # dry run of the saved pay run - or ?bills=id,id (the vendor page's ticks); live QBO read, no write
             try:
-                self._json(pay_bills.plan())
+                q = self._query().get("bills")
+                self._json(pay_bills.plan([b for b in q.split(",") if b.strip()] if q is not None else None))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
         elif path == "/api/pay-bills/queue":   # payments pushed from here until matched (+ flagged ones); watches first (mirror only)
