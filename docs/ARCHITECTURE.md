@@ -1195,10 +1195,12 @@ project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;
 revised rows are live formulas; a job only on `Test - CP` / `Test - RP` is read off that
 tab instead, row named on the card - 2026-09-08) and honor a **Closed** status (WIP close-out: % complete
-forced to 100%). **Overhead is a % of the CONTRACT** - 10% company, 9% MFD view (the user
-2026-09-03); a job with no contract on file lets total billed stand in (and costs to date
-for the ETC), so a finished job's projection block is live, not zero. Per draw, the same
-rule is sliced by the draw's income. Profit stays actuals (billed - cost - overhead). The
+forced to 100%). **Overhead: the PROJECTION takes 10% (MFD 9%) of the CONTRACT (the user
+2026-09-03); every TO-DATE figure - the actuals, each draw, the ledger's Actual column and
+Company P&L - takes the rate x GROSS BILLED so far, never the full contract** (the user
+2026-10-02 and 2026-10-14); a job with no contract on file lets total billed stand in (and
+costs to date for the ETC), so a finished job's projection block is live, not zero. Profit
+stays actuals (gross billed - cost - overhead). The
 `<DIV> Overview` (`completed_pnl.py`) reads the contract out of each workbook and applies
 the identical rule. The **Next Draw** sheet carries the accumulating-costs block (Job Type > cost code > vendor > bill, newest first) and sits right before the newest draw tab; the P&L's draw-coverage table shows overhead $ per view on completion (rate x contract x draw cost / ETC). Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
