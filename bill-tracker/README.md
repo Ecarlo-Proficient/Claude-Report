@@ -48,8 +48,8 @@ the audit only; they are **never** shown as a column on the display sheets.
 
 | Sheet | Grain | Notes |
 |---|---|---|
-| `Bills` | bill | one row per bill; multi-project bills show `(multiple)`, drill to Inventory |
-| `Inventory` | line | per-line drill-down for multi-project bills |
+| `Bills` | bill | one row per bill, the bill's memo in its own `Bill Memo` column; `Approved` is one icon - green check / red cross (not approved, pending, requires approval) / amber `?` (check QBO) - so the column stays narrow (10/14/2026); multi-project bills show `(multiple)`, drill to Inventory |
+| `Inventory` | line | per-line drill-down for multi-project bills (same columns as Bills, Bill Memo included) |
 | `Bill List` | bill | the SIMPLE sheet: Date · Vendor · Ref · Amount · Memo · Project · Approved, one Excel Table, newest first, subs included. `Approved` = `approved` / `not approved` (memo starts NOT APPROVED) / `check QBO` (entered since the QBO approval workflow, 09/16/2026, and unpaid - QBO's API does not return approval status, so the answer is in QBO Tasks) |
 | `Liens` | — | live Excel FILTER over the Bills table (Lien set) |
 | `Audit - Coding` / `Audit - PO` / `Audit - Bills` | mixed | THREE themed Excel Tables, each with an `Issue` filter — see below |
@@ -141,8 +141,12 @@ For each non-sub bill line:
 
 1. Read project # from the line's CustomerRef name (`MFD###`, `CP###`, `RP####`).
 2. Division-specific rule:
-   - **RP** → amount-aware: the largest same-project invoice on/after the bill date that
-     covers the bill amount.
+   - **RP, billed in stages** (`shared/rp_invoicing`: 2+ stage invoices, or one partial stage
+     so far) → the FIRST stage invoice dated on/after the bill that covers it (basis `stage`,
+     the owner 10/14/2026 - an August rebar bill used to skip the paid Piers invoice for the
+     bigger unpaid Foundation invoice).
+   - **RP, other jobs** → amount-aware: the largest same-project invoice within 60 days after
+     the bill date that covers the bill amount.
    - **MFD / CP** → invoice whose Draw Period (parsed from `PrivateNote`) contains the bill date.
 3. No match → `Awaiting Invoice`; matched + invoice paid → `OK TO PAY`; matched + invoice
    open → `Awaiting Payment`; no project # → `No project #`; bill paid → `Bill paid`.

@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/14/2026 · **Bill Tracker's Approved icon read back as the word.** The tracker's Bills + Inventory sheets now show
+  approval as one icon (green check / red cross / amber `?`); `load_bill_tracker.py` maps it to `approved` /
+  `not approved` / `check QBO` with `shared/bill_approval.icon_state`, so the Vendors filters, the project pages and
+  the pay run keep the words. A check-QBO bill the sheet used to print as `approved` now lands as `check QBO` (the
+  To-approve filter counts it). Test: `tests/test_bill_tracker_memo.py`.
 - 10/13/2026 · **A bill payment to a set amount; the credit it makes on the stub** (owner: "need ability to create a
   bill payment to a certain amount and for it to show the credit it made after receiving it since qbo will make a
   credit available to use, i need that in the bill payment stub to show in the bottom. context, joint check pays a

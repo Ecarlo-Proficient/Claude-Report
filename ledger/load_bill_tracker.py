@@ -38,6 +38,7 @@ from openpyxl import load_workbook
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths  # noqa: E402
+from shared import bill_approval  # noqa: E402  (the Approved icon -> the state word)
 
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "schema.sql"
@@ -129,6 +130,8 @@ def read_sheet(ws):
         for field, header in FIELD_HEADERS.items():
             raw = cell(header)
             rec[field] = _num(raw) if field in ("line_amount", "bill_total", "open_balance") else _text(raw)
+        # the Bills / Inventory sheets show approval as ONE icon (10/14/2026); the ledger keeps the words
+        rec["approved"] = bill_approval.icon_state(rec["approved"])
         # a real line needs a vendor and an amount (skip spacers / totals)
         if not rec["vendor"] and rec["line_amount"] is None:
             continue

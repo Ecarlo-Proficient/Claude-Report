@@ -8,7 +8,7 @@ to any destination here — just QBO fetch + line-level row assembly.
 Row dict shape (keys consumed by downstream sinks):
     key, bill_id, line_id, bill_date, vendor, bill_doc, po_num,
     bill_total, bill_balance, division, project_num, bill_type, account,
-    cost_code, line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
+    cost_code, line_amount, line_desc, bill_memo, inv_doc, inv_id, inv_date, inv_total,
     inv_balance, payment_date, auto_status, approved
     (cost_code = raw QBO Item name; audit-only, never shown on display sheets)
 
@@ -607,7 +607,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
     Aggregation rules:
         * line_amount → SUM across the collapsed group
         * bill-level fields (vendor, bill_doc, bill_date, bill_balance,
-          bill_total, auto_status, approved, gc_name, customer_name) →
+          bill_total, bill_memo, auto_status, approved, gc_name, customer_name) →
           take from the first line; these are identical across lines of a bill
         * invoice fields → first line in the group (a (bill, project) chunk
           maps to a single matched invoice)
@@ -723,6 +723,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "account": account,
             "line_amount": chunk_line_sum,
             "line_desc": _collapse_line_desc(lines),
+            "bill_memo": first.get("bill_memo", ""),   # bill-level: the same on every line
             "inv_doc": first.get("inv_doc", ""),
             "inv_id": first.get("inv_id", ""),
             "inv_memo": first.get("inv_memo", ""),
@@ -731,6 +732,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "inv_balance": first.get("inv_balance"),
             "payment_date": first.get("payment_date"),
             "approved": first.get("approved", False),
+            "approval": first.get("approval", ""),      # bill-level state word (the Approved icon)
             "gc_name": first.get("gc_name", ""),
             "customer_name": first.get("customer_name", ""),
             "class_name": class_name,

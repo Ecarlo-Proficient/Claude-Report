@@ -90,7 +90,7 @@ from qbo_bill_tracker import (
 from shared import bill_approval  # the report line printed with the Bill List
 from bill_rows import (
     build_account_maps, build_po_index, build_payment_map, build_rows,
-    approved_text, revised_reason,
+    revised_reason,
     APPROVAL_NO, APPROVAL_PENDING, APPROVAL_REQUIRES, APPROVAL_CHECK, APPROVAL_WORKFLOW_START,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
@@ -270,30 +270,31 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     ("Division",           "text"),      # 6
     ("Account",            "text"),      # 7
     ("Line Description",   "text"),      # 8
-    ("Line Amount",        "money"),     # 9  — hidden on Bills, shown on Inventory
-    ("Bill Total",         "money"),     # 10 — original bill amount
-    ("Bill Open Bal",      "money"),     # 11 — what's still owed the vendor
-    ("Pay Status",         "text"),      # 12 — AP: Unpaid / Partial paid / Bill paid
-    ("│",                  "div"),       # 13 — divider bill | handling
+    ("Bill Memo",          "text"),      # 9  - the bill's memo (PrivateNote); the same on every line of the bill
+    ("Line Amount",        "money"),     # 10 — hidden on Bills, shown on Inventory
+    ("Bill Total",         "money"),     # 11 — original bill amount
+    ("Bill Open Bal",      "money"),     # 12 — what's still owed the vendor
+    ("Pay Status",         "text"),      # 13 — AP: Unpaid / Partial paid / Bill paid
+    ("│",                  "div"),       # 14 — divider bill | handling
     # ── OUR HANDLING ──
-    ("Approved",           "text"),      # 14 — "approved" / "not approved"
-    ("Lien",               "text"),      # 15 — Notice Sent / Lien Filed; hidden on Inventory
-    ("Notes",              "text"),      # 16
-    ("┃",                  "div"),       # 17 — divider handling | client-payment
+    ("Approved",           "icon"),      # 15 — one icon: check / cross / ? (shared/bill_approval.state_icon)
+    ("Lien",               "text"),      # 16 — Notice Sent / Lien Filed; hidden on Inventory
+    ("Notes",              "text"),      # 17
+    ("┃",                  "div"),       # 18 — divider handling | client-payment
     # ── CLIENT PAYMENT · AR ──
-    ("Invoice Status",     "text"),      # 18 — AR: Awaiting Invoice / Awaiting Payment / Invoice paid / No project #
-    ("Client",             "text"),      # 19 — GC/parent customer (sits by the match to eyeball it)
-    ("Matched Invoice",    "text"),      # 20 — # + memo (scope), for eyeballing the match
-    ("Invoice #",          "text"),      # 21 — just the # → QBO link
-    ("Invoice Date",       "date"),      # 22
-    ("Invoice Open Bal",   "money"),     # 23 — what the GC still owes on the invoice
-    ("Invoice Total",      "money"),     # 24
-    ("GC Paid Date",       "date"),      # 25 — when the GC paid the invoice (money IN)
+    ("Invoice Status",     "text"),      # 19 — AR: Awaiting Invoice / Awaiting Payment / Invoice paid / No project #
+    ("Client",             "text"),      # 20 — GC/parent customer (sits by the match to eyeball it)
+    ("Matched Invoice",    "text"),      # 21 — # + memo (scope), for eyeballing the match
+    ("Invoice #",          "text"),      # 22 — just the # → QBO link
+    ("Invoice Date",       "date"),      # 23
+    ("Invoice Open Bal",   "money"),     # 24 — what the GC still owes on the invoice
+    ("Invoice Total",      "money"),     # 25
+    ("GC Paid Date",       "date"),      # 26 — when the GC paid the invoice (money IN)
     # ── HOW WE PAID (AP cash-OUT; band derived from Pay Ref #) ──
-    ("Pay Ref #",          "text"),      # 26 — check # we paid with (blank for CC)
-    ("Pay Date",           "date"),      # 27 — when we paid the vendor
-    ("Pay Method",         "text"),      # 28 — Check / CC / (multiple)
-    ("_Key",               "text"),      # 29 — hidden merge join key
+    ("Pay Ref #",          "text"),      # 27 — check # we paid with (blank for CC)
+    ("Pay Date",           "date"),      # 28 — when we paid the vendor
+    ("Pay Method",         "text"),      # 29 — Check / CC / (multiple)
+    ("_Key",               "text"),      # 30 — hidden merge join key
 ]
 LINE_AMT_COL_INDEX = next(i + 1 for i, (h, _) in enumerate(BILL_ROW_COLS) if h == "Line Amount")
 HEADERS = [h for h, _ in BILL_ROW_COLS]
@@ -313,30 +314,41 @@ ACCOUNT_COL_INDEX = HEADERS.index("Account") + 1
 LINE_DESC_COL_INDEX = HEADERS.index("Line Description") + 1
 
 # Per-sheet column widths — matches BILL → STATUS → INVOICE.
-COL_WIDTHS: Dict[int, float] = {
-    1: 5,                                            # Open
-    # THE BILL — what's open
-    2: 28,                                           # Vendor
-    3: 12, 4: 11,                                    # Bill # / Bill Date
-    5: 11, 6: 8,                                     # Project # / Division
-    7: 22,                                           # Account
-    8: 35,                                           # Line Description
-    9: 13,                                           # Line Amount (Inventory only)
-    10: 13, 11: 13,                                  # Bill Total / Bill Open Bal
-    12: 13,                                          # Pay Status
-    13: 1.5,                                         # divider │
-    # OUR HANDLING
-    14: 14, 15: 15, 16: 28,                          # Approved / Lien / Notes
-    17: 1.5,                                         # divider ┃
-    # CLIENT PAYMENT · AR
-    18: 16,                                          # Invoice Status
-    19: 26,                                          # Client (sits by the match)
-    20: 60, 21: 10, 22: 11,                          # Matched Inv / Invoice # / Inv Date
-    23: 13, 24: 12, 25: 12,                          # Invoice Open Bal / Inv Total / GC Paid Date
-    # HOW WE PAID (AP cash-out)
-    26: 14, 27: 11, 28: 12,                          # Pay Ref # / Pay Date / Pay Method
-    29: 14,                                          # _Key (hidden)
+# Column widths, keyed by header NAME - derived into column numbers below, so an
+# inserted column never shifts another column's width (10/14/2026).
+COL_WIDTHS_BY_NAME: Dict[str, float] = {
+    'Open': 5,
+    'Vendor': 28,
+    'Bill #': 12,
+    'Bill Date': 11,
+    'Project #': 11,
+    'Division': 8,
+    'Account': 22,
+    'Line Description': 35,
+    'Bill Memo': 32,
+    'Line Amount': 13,
+    'Bill Total': 13,
+    'Bill Open Bal': 13,
+    'Pay Status': 13,
+    '│': 1.5,
+    'Approved': 6,
+    'Lien': 15,
+    'Notes': 28,
+    '┃': 1.5,
+    'Invoice Status': 16,
+    'Client': 26,
+    'Matched Invoice': 60,
+    'Invoice #': 10,
+    'Invoice Date': 11,
+    'Invoice Open Bal': 13,
+    'Invoice Total': 12,
+    'GC Paid Date': 12,
+    'Pay Ref #': 14,
+    'Pay Date': 11,
+    'Pay Method': 12,
+    '_Key': 14,
 }
+COL_WIDTHS: Dict[int, float] = {HEADERS.index(h) + 1: w for h, w in COL_WIDTHS_BY_NAME.items()}
 
 
 # ─────────────────────── small helpers ───────────────────────
@@ -409,9 +421,15 @@ def _esc_col(name: str) -> str:
                 .replace("]", "']"))
 
 
+ICON_FONT = Font(name="Calibri", size=12, bold=True)   # the Approved icon, coloured by its CF rule
+
+
 def _format_data_cell(c, kind: str) -> None:
     c.font = BODY_FONT
-    if kind == "money":
+    if kind == "icon":
+        c.font = ICON_FONT
+        c.alignment = ALIGN_CENTER
+    elif kind == "money":
         c.number_format = MONEY_FMT
         c.alignment = ALIGN_RIGHT
     elif kind == "date":
@@ -974,31 +992,33 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         r.get("division", ""),                                   # 6
         r.get("account", ""),                                    # 7  Account
         r.get("line_desc", ""),                                  # 8  Line Description
-        r.get("line_amount"),                                    # 9  Line Amount
-        r.get("bill_total"),                                     # 10 Bill Total
-        r.get("bill_balance"),                                   # 11 Bill Open Bal
-        pay_status_val,                                          # 12 Pay Status (AP)
-        None,                                                    # 13 divider │
+        " / ".join((r.get("bill_memo") or "").splitlines()),     # 9  Bill Memo (one line; a NOT APPROVED / REVISED line reads in place)
+        r.get("line_amount"),                                    # 10 Line Amount
+        r.get("bill_total"),                                     # 11 Bill Total
+        r.get("bill_balance"),                                   # 12 Bill Open Bal
+        pay_status_val,                                          # 13 Pay Status (AP)
+        None,                                                    # 14 divider │
         # ── OUR HANDLING ──
-        approved_text(approved),                                 # 14 Approved
-        lien_display,                                            # 15 Lien (tag or countdown)
-        pres.get("Notes", "") or "",                             # 16 Notes
-        None,                                                    # 17 divider ┃
+        bill_approval.state_icon(r.get("approval") or (        # 15 Approved: one icon, coloured by CF
+            bill_approval.APPROVAL_YES if approved else bill_approval.APPROVAL_NO)),
+        lien_display,                                            # 16 Lien (tag or countdown)
+        pres.get("Notes", "") or "",                             # 17 Notes
+        None,                                                    # 18 divider ┃
         # ── CLIENT PAYMENT · AR ──
-        r.get("invoice_status", ""),                             # 18 Invoice Status (AR)
-        r.get("gc_name", ""),                                    # 19 Client (GC/parent, by the match)
+        r.get("invoice_status", ""),                             # 19 Invoice Status (AR)
+        r.get("gc_name", ""),                                    # 20 Client (GC/parent, by the match)
         _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", ""),
-                      r.get("match_note", "")),                  # 20 Matched Invoice
-        r.get("inv_doc", ""),                                    # 21 Invoice # (→ link)
-        r.get("inv_date"),                                       # 22
-        r.get("inv_balance"),                                    # 23 Invoice Open Bal (GC still owes)
-        r.get("inv_total"),                                      # 24 Invoice Total
-        r.get("payment_date"),                                   # 25 GC Paid Date (money IN)
+                      r.get("match_note", "")),                  # 21 Matched Invoice
+        r.get("inv_doc", ""),                                    # 22 Invoice # (→ link)
+        r.get("inv_date"),                                       # 23
+        r.get("inv_balance"),                                    # 24 Invoice Open Bal (GC still owes)
+        r.get("inv_total"),                                      # 25 Invoice Total
+        r.get("payment_date"),                                   # 26 GC Paid Date (money IN)
         # ── HOW WE PAID (AP cash-out) ──
-        _pm.get("ref", ""),                                      # 26 Pay Ref #
-        _pm.get("date"),                                         # 27 Pay Date
-        _pm.get("method", ""),                                   # 28 Pay Method
-        key,                                                     # 29 _Key
+        _pm.get("ref", ""),                                      # 27 Pay Ref #
+        _pm.get("date"),                                         # 28 Pay Date
+        _pm.get("method", ""),                                   # 29 Pay Method
+        key,                                                     # 30 _Key
     ]
     for c_i, (val, kind) in enumerate(zip(values, KINDS), start=1):
         # our own link formula stays a formula; every other value (vendor / memo / GC text) is text only
@@ -1191,14 +1211,15 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
                               stop_if_true=True))
 
     # ── Approved-cell tint (its own cell only, never the row) ──
-    # "approved" → green, "not approved" → red — both painted on the Approved
-    # cell alone (the user 2026-08-12). Exact-match so "approved" doesn't also
-    # fire on "not approved".
+    # The cell is ONE icon (owner 10/14/2026, "to make the column smaller"): a green
+    # check = approved, a red cross = not approved / pending / requires approval, an
+    # amber ? = check QBO. Painted on the Approved cell alone (the user 2026-08-12).
     approved_range = f"{approved_letter}{DATA_START}:{approved_letter}{last_row}"
-    ws.conditional_formatting.add(approved_range,
-        _cf_fill_rule(f'${approved_letter}{fr}="not approved"', CF_RED_HOLD, bold=True))
-    ws.conditional_formatting.add(approved_range,
-        _cf_fill_rule(f'${approved_letter}{fr}="approved"', CF_GREEN_READY))
+    for icon, fill, ink in ((bill_approval.ICON_NO, CF_RED_HOLD, "C00000"),
+                            (bill_approval.ICON_YES, CF_GREEN_READY, "00B050"),
+                            (bill_approval.ICON_CHECK, CF_YELLOW_AUDIT, "9C6500")):
+        ws.conditional_formatting.add(approved_range,
+            _cf_fill_rule(f'${approved_letter}{fr}="{icon}"', fill, bold=True, font_color=ink))
 
     # ── Invoice-Status cell: color by the AR state (Good / Neutral / Bad) ──
     # Paints ONLY the Invoice Status cell (never the row). "Invoice paid" is

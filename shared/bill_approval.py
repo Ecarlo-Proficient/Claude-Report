@@ -62,6 +62,29 @@ APPROVAL_YES = "approved"
 UNAPPROVED_STATES = frozenset({APPROVAL_NO, APPROVAL_PENDING, APPROVAL_REQUIRES})
 UNAPPROVED_TAG = "NOT APPROVED"
 
+# The Bills / Inventory sheets show the state as ONE icon so the column stays narrow (owner
+# 10/14/2026): a green check = approved, a red cross = not approved / pending / requires approval,
+# an amber ? = check QBO. The ledger's loader turns the icon back into the state word (icon_state),
+# so every reader downstream keeps the words; the Bill List sheet keeps the words too.
+ICON_YES = "\u2713"
+ICON_NO = "\u2717"
+ICON_CHECK = "?"
+STATE_ICON = {APPROVAL_YES: ICON_YES, APPROVAL_NO: ICON_NO, APPROVAL_PENDING: ICON_NO,
+              APPROVAL_REQUIRES: ICON_NO, APPROVAL_CHECK: ICON_CHECK}
+ICON_STATE = {ICON_YES: APPROVAL_YES, ICON_NO: APPROVAL_NO, ICON_CHECK: APPROVAL_CHECK}
+
+
+def state_icon(state: Optional[str]) -> str:
+    """The one-character cell for an approval state; an unknown state shows as check QBO."""
+    return STATE_ICON.get((state or "").strip(), ICON_CHECK)
+
+
+def icon_state(cell: Optional[str]) -> Optional[str]:
+    """The state word behind a sheet cell: an icon maps back, a word (older files, the Bill
+    List) passes through unchanged."""
+    text = (cell or "").strip()
+    return ICON_STATE.get(text, cell)
+
 # How old the report may be before it stops vouching for bills (the sync out of
 # QuickBooks is not continuous). Override: ACB_BILL_APPROVAL_MAX_AGE_HOURS.
 MAX_AGE_HOURS = float(os.environ.get("ACB_BILL_APPROVAL_MAX_AGE_HOURS", "36") or 36)

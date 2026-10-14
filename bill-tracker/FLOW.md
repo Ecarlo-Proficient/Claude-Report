@@ -1,6 +1,6 @@
 # bill-tracker/ - how the AP run works
 
-Last changed: 10/13/2026 - the Bill List's Approved column gains **pending approval / requires approval** from QuickBooks' approval report (`shared/bill_approval.current()`, read once per run; the run prints when the report synced); a bill the fresh report does not list is approved; the stale-approval audit counts the queued bills too. Earlier: 10/12/2026 - first chart for this tool. The REVISED-bill follow-up built here this morning moved the same day into the statement reconciler (owner: "in the same statement Excel, not a mix"); `bill_rows.revised_reason` now lives in `shared/bill_approval` (re-exported) so both tools read the REVISED memo line the same way.
+Last changed: 10/14/2026 - **RP stage-invoice match**: on a job billed in stages (`shared/rp_invoicing`) a bill goes to the FIRST stage invoice dated on/after it that covers it (basis `stage`), before the largest-cover rule (RP7597 K783197 case). Same day: **Approved is one icon** on Bills + Inventory (green check / red cross / amber `?` for check QBO; `shared/bill_approval.state_icon`, the ledger loader maps it back to the word). Same day: the Bills and Inventory sheets gain a **Bill Memo** column right after Line Description (the bill's PrivateNote, one line, the same on every line of the bill; the bill-grain collapse now carries it; the Bill List already had it); column widths are keyed by header name so an inserted column never shifts them. Earlier: 10/13/2026 - the Bill List's Approved column gains **pending approval / requires approval** from QuickBooks' approval report (`shared/bill_approval.current()`, read once per run; the run prints when the report synced); a bill the fresh report does not list is approved; the stale-approval audit counts the queued bills too. Earlier: 10/12/2026 - first chart for this tool. The REVISED-bill follow-up built here this morning moved the same day into the statement reconciler (owner: "in the same statement Excel, not a mix"); `bill_rows.revised_reason` now lives in `shared/bill_approval` (re-exported) so both tools read the REVISED memo line the same way.
 
 Update this chart - and the line above - in the same commit as any change to `bill-tracker/`
 (`.github/flow_guard.sh`). The full system map is `docs/ARCHITECTURE.md`.
@@ -26,7 +26,9 @@ flowchart LR
 
     QBO --> BT
     BT --> BR
-    GL -- "RP draw matching" --> BT
+    MATCH{"RP bill -> client invoice<br/>billed in stages? FIRST stage invoice on/after the bill that covers it<br/>else the largest covering invoice within 60 days, then the General List draw rule<br/>CP / MFD: the draw whose period holds the bill date"}:::gate
+    BR --> MATCH --> BT
+    GL -- "RP draw matching" --> MATCH
     POT -- "unused PO reconcile" --> BT
     BT --> LOCK -- "closed" --> BX
     LOCK -- "open: write nothing, next run" --> BT

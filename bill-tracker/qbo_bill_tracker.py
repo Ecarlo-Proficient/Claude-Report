@@ -23,7 +23,6 @@ OUTPUT
 from __future__ import annotations
 
 import argparse
-import base64
 import datetime as dt
 import re
 import sys
@@ -51,10 +50,10 @@ except ImportError:
     print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
-from shared import qbo_vault as kc
 from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 from shared import paths
 from shared import draws
+from shared import rp_invoicing  # stage invoices: is this job billed in pieces?
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -214,7 +213,6 @@ def _api_get(access: str, path: str, params: Optional[dict] = None) -> dict:
     1s/2s/4s/8s/16s backoff catches almost all of these. 4xx (real client
     errors) and anything still failing after retries propagate as before.
     """
-    import time
     p = dict(params or {})
     p["minorversion"] = MINOR_VERSION
     delays = [1, 2, 4, 8, 16]   # 5 retries, ~31s total worst case
@@ -419,6 +417,7 @@ _RP_FULL_TOLERANCE = 0.01        # billed within a penny of the contract == full
 # Bills sheet so AP can see WHY a status applies (2026-07-13, RP draw semantics).
 MATCH_BASIS_COVER = "cover"      # invoice covers the bill amount (today's behavior)
 MATCH_BASIS_DRAW = "draw"        # RP partial-billed: the NEXT draw authorizes the bill
+MATCH_BASIS_STAGE = "stage"      # RP billed in stages: the FIRST stage invoice after the bill that covers it (the owner 10/14/2026)
 MATCH_BASIS_FINAL = "final"      # RP fully-billed: attach a late bill to the LAST draw
 MATCH_BASIS_PERIOD = "period"    # MFD/CP: bill date falls inside the invoice's draw period
 MATCH_BASIS_PUSHED = "pushed"    # MFD/CP: carried into a later draw by agreement (shared/draw_moves)
@@ -466,6 +465,17 @@ def rp_gl_state(project_num: Optional[str], customer_id: str,
     if billed >= contract - _RP_FULL_TOLERANCE:
         return "full"
     return "partial"
+
+
+def rp_billed_in_stages(invoices: List[dict]) -> bool:
+    """True when a job's QBO invoices say it is billed in stages (2+ stage
+    invoices, or one partial stage so far) - shared/rp_invoicing's rule."""
+    kind = rp_invoicing.classify([
+        {"date": inv.get("TxnDate"), "memo": inv.get("PrivateNote") or "",
+         "doc_num": inv.get("DocNumber") or ""}
+        for inv in invoices
+    ])["kind"]
+    return kind in (rp_invoicing.KIND_SCOPE, rp_invoicing.KIND_SCOPE_1)
 
 
 def find_matching_invoice_ex(
@@ -521,6 +531,21 @@ def find_matching_invoice_ex(
             inv for inv in eligible
             if float(inv.get("TotalAmt") or 0) >= bill_amount - _RP_COVER_TOLERANCE
         ]
+        # 0) STAGE pass (the owner 10/14/2026). On a job billed in stages (piers,
+        #    then foundation ...) a bill goes to the FIRST stage invoice dated on/
+        #    after it that covers it - not the biggest invoice in the window. Before
+        #    this, an August rebar bill skipped the paid Piers invoice and landed on
+        #    the bigger unpaid Foundation invoice (RP7597 K783197), reading
+        #    "Awaiting Payment" when its real invoice was paid. shared/rp_invoicing
+        #    decides "billed in stages" from the invoices themselves.
+        if rp_billed_in_stages(candidates):
+            staged = sorted(
+                ((parse_date(inv.get("TxnDate")), inv) for inv in covering
+                 if rp_invoicing.is_stage(rp_invoicing.scope_of(inv.get("PrivateNote") or ""))),
+                key=lambda t: t[0],
+            )
+            if staged:
+                return staged[0][1], MATCH_BASIS_STAGE
         if covering:
             covering.sort(key=lambda inv: (
                 -float(inv.get("TotalAmt") or 0),
