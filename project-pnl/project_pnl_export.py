@@ -7781,13 +7781,19 @@ def build_sheet_pos(
 
 _FNAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._ -]+")
 _attachable_index_cache: Optional[Dict[Tuple[str, str], List[dict]]] = None
-# The Attachable sweep walks EVERY scan AP ever uploaded (~10 min of paging),
-# so the index persists to disk for a week (logs dir per the repo rule — never
-# inside the repo). TempDownloadUri expires in minutes and is NOT cached; a
-# download re-reads its attachable by id for a fresh link. Attachments
-# uploaded since the cache was built are invisible until it expires — delete
-# the file (or wait out the TTL) to pick them up sooner.
-_ATT_CACHE_TTL_S = 7 * 24 * 3600
+# QBO cannot filter Attachable by the transaction it belongs to, so finding a
+# bill's scans needs a company-wide index of every attachment AP ever uploaded
+# (~78,000, about 8 minutes of paging at 1,000 a page). The index persists to
+# disk (logs dir per the repo rule - never inside the repo) and is refreshed
+# INCREMENTALLY on every run: only attachables whose MetaData.LastUpdatedTime
+# is past the cache's `fetched` stamp (less a 10-minute overlap, the same idea
+# as shared/qbo_mirror.OVERLAP) are pulled and merged in - seconds, not
+# minutes (10/14/2026: the weekly full re-sweep sat silent for 8 minutes on
+# CP800 and the owner thought the run was stuck). The full sweep runs only
+# when there is no cache file or it cannot be read; deleting the file forces
+# one. TempDownloadUri expires in minutes and is NOT cached; a download
+# re-reads its attachable by id for a fresh link.
+_ATT_OVERLAP = dt.timedelta(minutes=10)
 
 
 def _att_cache_file(company_id: str) -> Path:
@@ -7796,50 +7802,89 @@ def _att_cache_file(company_id: str) -> Path:
     return d / f"attachable_index_{company_id}.json"
 
 
+def _att_item(a: dict) -> Optional[dict]:
+    """A cache item {id, file, refs} for one Attachable, or None when it is a
+    bare note (no FileName) or hangs on no transaction (no refs) - those are
+    dropped from the index."""
+    if not a.get("FileName"):
+        return None
+    refs = [((r.get("EntityRef") or {}).get("type"),
+             (r.get("EntityRef") or {}).get("value"))
+            for r in a.get("AttachableRef") or []]
+    refs = [list(x) for x in refs if x[0] and x[1]]
+    if not refs:
+        return None
+    return {"id": str(a["Id"]), "file": a["FileName"], "refs": refs}
+
+
+def _att_parse_stamp(s: str) -> dt.datetime:
+    """The cache's `fetched` stamp as an aware datetime. Stamps written before
+    10/14/2026 were naive local time; a naive stamp is read as local."""
+    t = dt.datetime.fromisoformat(str(s).strip())
+    return t.astimezone() if t.tzinfo is None else t
+
+
 def _load_attachable_index(access: str, company_id: str
                            ) -> Dict[Tuple[str, str], List[dict]]:
-    """(entity type, txn id) → [attachable {Id, FileName}] — from the disk
-    cache when fresh, else a full sweep (then cached)."""
+    """(entity type, txn id) -> [attachable {Id, FileName}]. Loads the disk
+    cache and pulls only what changed since its stamp; a full sweep only when
+    there is no readable cache. Once per process."""
     global _attachable_index_cache
     if _attachable_index_cache is not None:
         return _attachable_index_cache
     cache = _att_cache_file(company_id)
-    try:
-        if cache.exists() and time.time() - cache.stat().st_mtime < _ATT_CACHE_TTL_S:
+    # The new stamp is when THIS refresh started, so anything QBO changes
+    # while the query pages is inside the next run's window (plus overlap).
+    started = dt.datetime.now().astimezone().replace(microsecond=0)
+    items_by_id: Optional[Dict[str, dict]] = None
+    fetched: Optional[dt.datetime] = None
+    why = "cache missing"
+    if cache.exists():
+        try:
             raw = json.loads(cache.read_text())
-            by_key: Dict[Tuple[str, str], List[dict]] = {}
-            for item in raw["items"]:
-                for etype, evalue in item["refs"]:
-                    by_key.setdefault((etype, evalue), []).append(
-                        {"Id": item["id"], "FileName": item["file"]})
-            _attachable_index_cache = by_key
-            ui_event(f"attachment index: cached "
-                     f"({dt.datetime.fromtimestamp(cache.stat().st_mtime):%m/%d %H:%M}"
-                     f", {len(raw['items'])} files) — delete the cache file to re-sweep",
-                     icon="·")
-            return by_key
-    except Exception:
-        pass                                   # unreadable cache → re-sweep
-    by_key = {}
-    items = []
-    for a in query_all(access, company_id, "Attachable"):
-        if not a.get("FileName"):
-            continue                           # a bare note, not a file
-        refs = [((r.get("EntityRef") or {}).get("type"),
-                 (r.get("EntityRef") or {}).get("value"))
-                for r in a.get("AttachableRef") or []]
-        refs = [x for x in refs if x[0] and x[1]]
-        if not refs:
-            continue
-        items.append({"id": a["Id"], "file": a["FileName"], "refs": refs})
-        for key in refs:
-            by_key.setdefault(key, []).append(
-                {"Id": a["Id"], "FileName": a["FileName"]})
+            fetched = _att_parse_stamp(raw["fetched"])
+            items_by_id = {str(it["id"]): it for it in raw["items"]}
+        except Exception:
+            items_by_id, fetched = None, None   # unreadable cache -> full sweep
+            why = "cache unreadable"
+    if items_by_id is None or fetched is None:
+        ui_event(f"attachment index: {why} - full sweep of every QuickBooks "
+                 f"attachment (about 8 minutes)", icon="…", color=_YEL)
+        t0 = time.time()
+        items_by_id = {}
+        for a in query_all(access, company_id, "Attachable"):
+            it = _att_item(a)
+            if it:
+                items_by_id[it["id"]] = it
+        ui_event(f"attachment index: {len(items_by_id)} files swept in "
+                 f"{time.time() - t0:.0f}s")
+    else:
+        # Same filter shape as shared/qbo_mirror._refresh_by_updated (UTC, Z).
+        since = (fetched - _ATT_OVERLAP).astimezone(dt.timezone.utc)
+        changed = query_all(access, company_id, "Attachable",
+                            where=f"MetaData.LastUpdatedTime > "
+                                  f"'{since:%Y-%m-%dT%H:%M:%SZ}'")
+        for a in changed:
+            it = _att_item(a)
+            if it:
+                items_by_id[it["id"]] = it        # refs may have moved
+            else:
+                items_by_id.pop(str(a.get("Id")), None)
+        ui_event(f"attachment index: {len(items_by_id)} files, "
+                 f"+{len(changed)} changed since {fetched.astimezone():%m/%d %H:%M}")
+    # QBO's query cannot report a DELETED attachable, so a stale id can linger
+    # until the next full sweep; the download loop below re-reads each
+    # attachable by id and a failed read keeps that bill's QBO link.
     try:
-        cache.write_text(json.dumps({"fetched": dt.datetime.now().isoformat(),
-                                     "items": items}))
+        cache.write_text(json.dumps({"fetched": started.isoformat(),
+                                     "items": list(items_by_id.values())}))
     except OSError:
         pass
+    by_key: Dict[Tuple[str, str], List[dict]] = {}
+    for it in items_by_id.values():
+        for etype, evalue in it["refs"]:
+            by_key.setdefault((etype, evalue), []).append(
+                {"Id": it["id"], "FileName": it["file"]})
     _attachable_index_cache = by_key
     return by_key
 
@@ -7857,8 +7902,8 @@ def fetch_txn_attachments(access: str, company_id: str,
 
     txns: (txn_id, tx_type 'Bill'/'Expense', doc#). Idempotent — a file whose
     name is already in dest is not re-downloaded. The company-wide Attachable
-    sweep (every scan AP ever uploaded) is paged and slow, so it runs ONCE per
-    process and is reused across a batch run's projects."""
+    index (every scan AP ever uploaded) is loaded ONCE per process (disk cache
+    + incremental refresh) and reused across a batch run's projects."""
     try:
         by_key = _load_attachable_index(access, company_id)
     except Exception as e:
@@ -7905,7 +7950,10 @@ def fetch_txn_attachments(access: str, company_id: str,
                         path.write_bytes(resp.content)
                         n_dl += 1
                     except Exception:
-                        continue           # this one keeps its QBO bill link
+                        # A deleted attachable (stale index id - QBO's query
+                        # cannot report deletions) fails the re-read and lands
+                        # here too: this one keeps its QBO bill link.
+                        continue
             got.append(name)
         if got:
             out[txn_id] = {

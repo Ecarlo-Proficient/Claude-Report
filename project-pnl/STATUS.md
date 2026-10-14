@@ -7,6 +7,18 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-14 · **Attachment index refreshes incrementally** (owner: the CP800 run took 9 minutes and should be
+  faster - its terminal sat on the last draw line for 8 silent minutes). Finding a bill's scans needs a company-wide
+  index of every QuickBooks Attachable (~78,000) because QBO cannot filter Attachable by its transaction; the index
+  was cached 7 days then fully re-pulled in silence. Now `_load_attachable_index` loads the cache on every run and
+  pulls only attachables with `MetaData.LastUpdatedTime` past the cache's `fetched` stamp less a 10-minute overlap
+  (the mirror's OVERLAP idea, same UTC `Z` filter shape), merges them (a returned attachable replaces the cached one
+  by id - its refs may have moved; one with no FileName or no refs is dropped) and rewrites the cache stamped at the
+  time the refresh started. One line: `attachment index: N files, +K changed since mm/dd hh:mm`. The full sweep runs
+  only with no cache file or an unreadable one, and says so before (about 8 minutes) and after (count, elapsed);
+  deleting the file forces it. QBO's query cannot report deletions, so a stale id can linger until a sweep - the
+  download loop's re-read of that id fails and the bill keeps its QBO link (it already did). `_ATT_CACHE_TTL_S` is
+  gone. Logs dir cache as before (`~/Library/Logs/Proficient/project-pnl/attachable_index_<realm>.json`).
 - 2026-10-13 · **The CP batch runs on the office server, daily at 06:00** (owner: "set up synology pnl for cp only, to
   update daily once at 6am every day; include the overview as the last piece"). `docker/scheduler.py` job `pnl-cp`
   runs `project_pnl_export.py active cp --from-folders --no-prompt`: NEW `--from-folders` makes the Active list the job
