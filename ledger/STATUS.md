@@ -4,6 +4,24 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/14/2026 · **Overhead to date = rate x gross billed, never the contract** (owner: "the oh on the actual should be
+  the actual billed NOT the contract price for actuals ... that grossly showing us a bad loss for no reason"; the rule
+  settled 10/02 on the P&L workbook, the ledger had kept the contract). `dashboard.py` `_project_pnl` and
+  `_portfolio_pnl`: overhead = 10% (MFD 9%) x GROSS billed to date; `overhead_basis` reads "10% of gross billed";
+  net = gross billed - costs - that overhead. `app.js`: the project page's Overhead row is labelled by rate alone, its
+  hover says "projected: 10% of contract · actual: 10% of gross billed"; the Company P&L tile and the Net P&L card say
+  gross billed; a finished job on the review page takes 10% of billed. Only a PROJECTION (contract - ETC, the current
+  review card) still uses the contract. 22 P&L tests pass; checked on the project page.
+- 10/14/2026 · **The vendor stub is mailable: a two-window envelope layout** (owner: "a mailable view with a two
+  window design, our info on top and the vendor in the bottom", envelope 8 11/16 x 3 5/8). `bill_payment_stub.py`:
+  the vendor stub's page 1 opens with a 3.5 in envelope panel - our name (`ACB_COMPANY_NAME`) + mailing address
+  (NEW `ACB_COMPANY_ADDRESS` in machine.env, lines split on `|`) where the top window falls, the vendor's
+  print-on-check name + bill address where the bottom window falls (QuickBooks' repeated name line dropped), the
+  payment (date / type / check # / Amount) to the right of both; the bills follow below the first fold, flowing onto
+  page 2 as before. Faint ticks at both paper edges mark the folds (3.5 / 7 / 10.5 in). The page's side margins moved
+  from `@page` onto the body (Chrome clips anything printed inside a page margin). The internal stub keeps its
+  centered header - never mailed. Snapshots, history, columns, the credit block and the dashboard call are unchanged.
+  Selftest covers the panel; checked on paper by the owner with an ACME template first.
 - 10/14/2026 · **Bill Tracker's Approved icon read back as the word.** The tracker's Bills + Inventory sheets now show
   approval as one icon (green check / red cross / amber `?`); `load_bill_tracker.py` maps it to `approved` /
   `not approved` / `check QBO` with `shared/bill_approval.icon_state`, so the Vendors filters, the project pages and

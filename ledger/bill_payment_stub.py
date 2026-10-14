@@ -31,6 +31,15 @@ Reads the raw QBO mirror only (shared/qbo_mirror: BillPayment -> Line[].LinkedTx
 for the print name and address). Read-only everywhere; writes just the HTML/PDF it was asked for.
 PDF = the HTML printed by Chrome headless (Letter portrait), the same recipe as the process guides.
 
+The vendor stub is MAILABLE (owner 2026-10-14: "a mailable view with a two window design, our info on top and the
+vendor in the bottom"): the top 3.5 in of page 1 is the envelope panel for a 8 11/16 x 3 5/8 double-window check
+envelope - our name + address where the top window falls (3/8 in from the left, 2 3/8 in up from the bottom), the
+vendor's print-on-check name + bill address where the bottom window falls (7/8 in from the left, 3/4 in up from the
+bottom), the payment (date / type / check # / Amount) to the right of both windows, the bills below the first fold.
+Faint ticks at both page edges mark the folds (3.5 / 7 / 10.5 in: 3.5 in panels, the last half inch folds under).
+Our address is ACB_COMPANY_ADDRESS in machine.env (lines split on `|`), under ACB_COMPANY_NAME. The internal stub
+keeps the centered report header - it is never mailed.
+
     python3 ledger/bill_payment_stub.py --vendor COWTOWN --date 2026-09-21
     python3 ledger/bill_payment_stub.py --payment 1318748 --payment 1318747
     python3 ledger/bill_payment_stub.py --vendor COWTOWN --from 2026-09-01 --to 2026-09-30
@@ -688,9 +697,11 @@ def columns_registry() -> List[dict]:
 # ───────────────────────── the page ─────────────────────────
 
 CSS = """
-@page { size: Letter portrait; margin: 0.55in 0.6in; }
+@page { size: Letter portrait; margin: 0.5in 0; }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: Helvetica, Arial, -apple-system, sans-serif; font-size: 10.5px; color: #111; }
+/* the side margins live on the body, not the page: Chrome clips whatever is printed inside a page margin, and the
+   mailable stub's fold ticks sit on the paper's edge */
+body { margin: 0; padding: 0 0.6in; font-family: Helvetica, Arial, -apple-system, sans-serif; font-size: 10.5px; color: #111; }
 .stub { page-break-after: always; }
 .stub:last-child { page-break-after: auto; }
 .hdr { text-align: center; margin: 0 0 18px; }
@@ -727,7 +738,59 @@ table.credit td { padding: 4px 4px; }
 table.credit td:first-child { padding-right: 24px; }
 table.credit tr.total td { border-top: 1px solid #333; border-bottom: 2px solid #333; }
 .credit-note { margin-top: 8px; text-align: right; font-weight: 600; }
+/* the mailable vendor stub: positions are page inches less the 0.5in top page margin / 0.6in body padding */
+.stub.mail { position: relative; }
+.panel { position: relative; height: 3.22in; }
+.panel .abs { position: absolute; }
+.panel .ours { left: 0; top: 0.02in; width: 3.0in; font-size: 11px; line-height: 0.165in; }
+.panel .ours .co { font-weight: 700; font-size: 12px; }
+.panel .vend { left: 0.5in; top: 1.65in; width: 3.05in; font-size: 10.5px; line-height: 0.15in; }
+.panel .vend .name { font-weight: 700; font-size: 11.5px; }
+.panel .right { left: 4.45in; top: 0; width: 2.85in; }
+.panel .right .rpt { font-size: 14px; font-weight: 700; margin: 0 0 8px; }
+.panel .kv { display: grid; grid-template-columns: max-content 1fr; column-gap: 14px; row-gap: 3px; }
+.panel .kv .lbl { font-size: 9.5px; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+.panel .kv .v { font-weight: 600; text-align: right; }
+.panel .kv .kvrule { grid-column: 1 / -1; border-top: 1px solid #333; margin: 4px 0 3px; }
+.panel .kv .lbl.amtl { font-size: 14px; align-self: baseline; color: #111; text-transform: none; letter-spacing: 0; }
+.panel .kv .amt { font-size: 15px; font-weight: 700; }
+.tick { position: absolute; height: 0; border-top: 0.5px solid #c4c4c4; width: 0.18in; }
+.tick.l { left: -0.6in; } .tick.r { left: 7.72in; }
 """
+
+# page inches: the folds (3.5in panels; the last half inch folds under) less the 0.5in top page margin
+FOLD_TICKS = (3.0, 6.5, 9.98)
+
+
+def company_address() -> List[str]:
+    """Our mailing address for the top window: ACB_COMPANY_ADDRESS in machine.env, lines split on `|`."""
+    return [ln.strip() for ln in paths.get("ACB_COMPANY_ADDRESS", "").split("|") if ln.strip()]
+
+
+def _mail_panel(s: dict, company: str, address: Sequence[str]) -> str:
+    """The envelope panel on top of the vendor stub: our block in the top window, the vendor in the bottom one,
+    the payment to the right of both, fold ticks on the page edges."""
+    addr = list(s.get("address") or [])
+    if addr and str(addr[0]).strip().upper() == str(s.get("pay_to") or "").strip().upper():
+        addr = addr[1:]                                    # QuickBooks repeats the name as address line 1
+    out = ["<div class='panel'><div class='abs ours'>"]
+    if company:
+        out.append(f"<div class='co'>{_esc(company)}</div>")
+    out.append("<br>".join(_esc(a) for a in address) + "</div>")
+    out.append(f"<div class='abs vend'><div class='name'>{_esc(s['pay_to'])}</div>" + "<br>".join(_esc(a) for a in addr) + "</div>")
+    out.append("<div class='abs right'><p class='rpt'>Bill Payment Stub</p><div class='kv'>")
+    kv = [("Payment date", mdy(s["txn_date"])),
+          ("Payment type", "Joint check" if s.get("joint") else s["method"]),
+          ("Check number" if s["method"] == "Check" else "Reference", s["ref"])]
+    for lbl, val in kv:
+        if val:
+            out.append(f"<div class='lbl'>{_esc(lbl)}</div><div class='v'>{_esc(val)}</div>")
+    out.append(f"<div class='kvrule'></div><div class='lbl amtl'>Amount</div><div class='v amt'>${money(s['total'])}</div>")
+    out.append("</div></div>")
+    for y in FOLD_TICKS:
+        out.append(f"<div class='tick l' style='top:{y}in'></div><div class='tick r' style='top:{y}in'></div>")
+    out.append("</div>")
+    return "".join(out)
 
 
 def _credit_block(s: dict) -> str:
@@ -790,24 +853,78 @@ def _internal_table(s: dict, cols: Sequence[str]) -> str:
     return "".join(out)
 
 
+def _vendor_table(s: dict, cols: Sequence[str]) -> str:
+    """The vendor stub's bills: the picked columns, the vendor band, one row per bill, the totals row, the credit
+    block when the payment is more than its bills, the warning when it is short."""
+    parts: List[str] = []
+    # the bills table
+    spec = COLUMNS
+    stretch = "memo" if "memo" in cols else ("project" if "project" in cols else None)   # the column that takes the page's leftover width
+    parts.append("<table><thead><tr>")
+    for k in cols:
+        label, align, _ = spec[k]
+        w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS and k != stretch else ""
+        parts.append(f"<th class='{align[0]}{' memo' if k == stretch else ''}'{w}>{_esc(label)}</th>")
+    parts.append("</tr></thead><tbody>")
+    parts.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
+    for r in s["rows"]:
+        parts.append("<tr class='row'>")
+        for k in cols:
+            _, align, get = spec[k]
+            parts.append(f"<td class='{align[0]}{' memo' if k == stretch else ''}'>{_esc(get(r))}</td>")
+        parts.append("</tr>")
+    parts.append("<tr class='total'>")
+    first_money = next((i for i, k in enumerate(cols) if k in MONEY_COLUMNS), len(cols))
+    for i, k in enumerate(cols):
+        if i == 0 and first_money > 0:
+            parts.append(f"<td colspan='{first_money}'>Total for {_esc(s['vendor'])}</td>")
+        elif i < first_money:
+            continue
+        elif k == "amount":
+            parts.append(f"<td class='r'>${money(s['rows_total'])}</td>")
+        elif k == "bill_total":
+            parts.append(f"<td class='r'>${money(sum(r['bill_total'] for r in s['rows']))}</td>")
+        elif k == "balance_before":
+            parts.append(f"<td class='r'>${money(sum(r.get('balance_before') or 0 for r in s['rows']))}</td>")
+        elif k == "open_balance":
+            parts.append(f"<td class='r'>${money(sum(r.get('balance_after') or 0 for r in s['rows']))}</td>")
+        else:
+            parts.append("<td></td>")
+    parts.append("</tr></tbody></table>")
+    parts.append(_credit_block(s))
+    if not s["ties"]:
+        parts.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
+                     f"${money(s['total'])} - check this payment in QuickBooks.</div>")
+    return "".join(parts)
+
+
 def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
-              company: str = "", report_date: Optional[dt.date] = None) -> str:
-    """The printable page(s): one stub per payment, the payment on top, its bills below."""
+              company: str = "", report_date: Optional[dt.date] = None,
+              address: Optional[Sequence[str]] = None) -> str:
+    """The printable page(s): one stub per payment. Vendor: the mailable envelope panel on top (our block / the
+    vendor / the payment), its bills below the first fold. Internal: the centered header, the payment, the invoices
+    and bills. `address` = our mailing lines for the top window (default: ACB_COMPANY_ADDRESS)."""
     picked = resolve_columns(columns)
     report_date = report_date or dt.date.today()
+    address = company_address() if address is None else list(address)
     parts = ["<!doctype html><html><head><meta charset='utf-8'><title>Bill payment stubs</title>",
              f"<style>{CSS}</style></head><body>"]
     for s in stubs:
         cols = columns_for(s.get("kind") or "vendor", picked)
-        parts.append("<section class='stub internal-stub'>" if s.get("kind") == "internal" else "<section class='stub'>")
+        internal = s.get("kind") == "internal"
+        parts.append("<section class='stub internal-stub'>" if internal else "<section class='stub mail'>")
+        if not internal:
+            parts.append(_mail_panel(s, company, address))
+            parts.append(_vendor_table(s, cols))
+            parts.append("</section>")
+            continue
+        # the internal stub: the centered header (no date under the title, owner 2026-10-07 - Payment date sits on the
+        # right), then the payment block
         parts.append("<div class='hdr'>")
         if company:
             parts.append(f"<p class='co'>{_esc(company)}</p>")
-        internal = s.get("kind") == "internal"
-        parts.append(f"<p class='rpt'>Bill Payment Stub{' - Internal' if internal else ''}</p>")
-        # no date under the title (owner 2026-10-07): Payment date sits on the right; the page moves up a line
-        if internal:
-            parts.append("<div class='internal'>INTERNAL - NOT FOR THE VENDOR</div>")
+        parts.append("<p class='rpt'>Bill Payment Stub - Internal</p>")
+        parts.append("<div class='internal'>INTERNAL - NOT FOR THE VENDOR</div>")
         parts.append("</div>")
         # the payment block
         parts.append("<div class='pay'><div class='to'><div class='lbl'>Paid to</div>")
@@ -819,8 +936,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
         kv = [("Payment date", mdy(s["txn_date"])),
               ("Payment type", "Joint check" if s.get("joint") else s["method"]),
               ("Check number" if s["method"] == "Check" else "Reference", s["ref"])]
-        if internal:
-            kv.append(("Client", s.get("client") or ""))
+        kv.append(("Client", s.get("client") or ""))
         kv.append(("Amount", "$" + money(s["total"])))
         for lbl, val in kv:
             if not val:
@@ -832,48 +948,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
                 continue
             parts.append(f"<div class='lbl'>{_esc(lbl)}</div><div class='{cls}'>{_esc(val)}</div>")
         parts.append("</div></div>")
-        if internal:
-            parts.append(_internal_table(s, cols))
-            parts.append("</section>")
-            continue
-        # the bills table
-        spec = COLUMNS
-        stretch = "memo" if "memo" in cols else ("project" if "project" in cols else None)   # the column that takes the page's leftover width
-        parts.append("<table><thead><tr>")
-        for k in cols:
-            label, align, _ = spec[k]
-            w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS and k != stretch else ""
-            parts.append(f"<th class='{align[0]}{' memo' if k == stretch else ''}'{w}>{_esc(label)}</th>")
-        parts.append("</tr></thead><tbody>")
-        parts.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
-        for r in s["rows"]:
-            parts.append("<tr class='row'>")
-            for k in cols:
-                _, align, get = spec[k]
-                parts.append(f"<td class='{align[0]}{' memo' if k == stretch else ''}'>{_esc(get(r))}</td>")
-            parts.append("</tr>")
-        parts.append("<tr class='total'>")
-        first_money = next((i for i, k in enumerate(cols) if k in MONEY_COLUMNS), len(cols))
-        for i, k in enumerate(cols):
-            if i == 0 and first_money > 0:
-                parts.append(f"<td colspan='{first_money}'>Total for {_esc(s['vendor'])}</td>")
-            elif i < first_money:
-                continue
-            elif k == "amount":
-                parts.append(f"<td class='r'>${money(s['rows_total'])}</td>")
-            elif k == "bill_total":
-                parts.append(f"<td class='r'>${money(sum(r['bill_total'] for r in s['rows']))}</td>")
-            elif k == "balance_before":
-                parts.append(f"<td class='r'>${money(sum(r.get('balance_before') or 0 for r in s['rows']))}</td>")
-            elif k == "open_balance":
-                parts.append(f"<td class='r'>${money(sum(r.get('balance_after') or 0 for r in s['rows']))}</td>")
-            else:
-                parts.append("<td></td>")
-        parts.append("</tr></tbody></table>")
-        parts.append(_credit_block(s))
-        if not s["ties"]:
-            parts.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
-                         f"${money(s['total'])} - check this payment in QuickBooks.</div>")
+        parts.append(_internal_table(s, cols))
         parts.append("</section>")
     parts.append("</body></html>")
     return "".join(parts)
@@ -1001,7 +1076,18 @@ def _selftest() -> int:
             raise AssertionError("unknown column accepted")
         except ValueError:
             pass
-    page = stub_html([s], company="Test Co, LLC")
+    page = stub_html([s], company="Test Co, LLC", address=["PO Box 1", "Testville, TX 75000"])
+    # the mailable panel (owner 2026-10-14): our block in the top window, the vendor in the bottom one, the payment to
+    # the right, fold ticks, and the bills only after the panel
+    assert "<section class='stub mail'><div class='panel'>" in page
+    assert "<div class='abs ours'><div class='co'>Test Co, LLC</div>PO Box 1<br>Testville, TX 75000</div>" in page
+    assert "<div class='abs vend'><div class='name'>TEST VENDOR INC</div>PO BOX 1<br>FORT WORTH TX 76100</div>" in page
+    assert page.index("class='abs ours'") < page.index("class='abs vend'") < page.index("class='abs right'") < page.index("<table>")
+    assert page.count("class='tick l'") == 3 and page.count("class='tick r'") == 3
+    assert "class='hdr'" not in page and "Paid to" not in page           # the centered header is the internal stub's
+    dup = stub_html([dict(s, address=["TEST VENDOR INC", "PO BOX 1", "FORT WORTH TX 76100"])], address=[])
+    assert "<div class='name'>TEST VENDOR INC</div>PO BOX 1<br>" in dup   # QuickBooks' repeated name line dropped
+    assert "class='abs ours'></div>" in dup                              # no company, no address: an empty block, no crash
     for needle in ("Test Co, LLC", "Bill Payment Stub", "09/21/2026", "TEST VENDOR INC", "Check number", "25760",
                    "Project", "RP1234-FTW", "Bill total", "Open balance", "New balance", money(1000), "$" + money(1300), "06/17/2026"):
         assert needle in page, needle
@@ -1043,6 +1129,7 @@ def _selftest() -> int:
     assert "check this payment" not in p3 and "Unapplied" not in p3
     i3 = stub_html([dict(s3, kind="internal", groups=[], client="")], columns_for("internal"))
     assert "Credit on account" in i3 and "QuickBooks holds that as a credit with TEST VENDOR" in i3 and "hold the" not in i3
+    assert "class='hdr'" in i3 and "Paid to" in i3 and "class='panel'" not in i3   # the internal stub keeps its header
     assert "Credit on account" not in page                                        # a check that equals its bills: no block
     assert not (_natural("1001") < _natural("999")) and _natural("999") < _natural("1001")
     assert _safe_name("A/B: C") == "A-B- C"

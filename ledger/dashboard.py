@@ -266,12 +266,14 @@ def _ensure_lien_vendor_dir(vendor: str):
 # ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
 # Conventions match project-pnl/project_pnl_export.py so the two reconcile:
 # Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
-# Overhead = a % of the CONTRACT (10% company, 9% MFD view - the user
-# 2026-09-03: "it's contract 10%"; total billed stands in when no contract is
-# on file, as the P&L workbook does). net = revenue − costs − overhead. Billed
-# (AR) is shown alongside as the realized view.
-_OVERHEAD_REV = 0.10          # company: 10% of the contract
-_OVERHEAD_MFD_COST = 0.09     # MFD view: 9% of the contract
+# Overhead = 10% company / 9% MFD view. The PROJECTION takes the rate x the
+# CONTRACT (the user 2026-09-03: "it's contract 10%"); every TO-DATE figure -
+# the actuals here, the Company P&L, each draw - takes the rate x GROSS BILLED so
+# far, never the full contract (the user 2026-10-02: "why would we add a future
+# OH amount to a current?"; 2026-10-14: "the oh on the actual should be the
+# actual billed NOT the contract price"). net = gross billed - costs - overhead.
+_OVERHEAD_REV = 0.10          # company rate
+_OVERHEAD_MFD_COST = 0.09     # MFD view rate
 
 
 def _project_pnl(con, proj: str) -> dict:
@@ -341,9 +343,8 @@ def _project_pnl(con, proj: str) -> dict:
         net_billed = q_net                            # fresh from the mirror (the ledger's copy can lag an edit)
     gross = q_gross if q_gross is not None else round(net_billed + ret, 2)
     ret = round(gross - net_billed, 2)
-    _base = contract or gross
     rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
-    overhead = round(rate * _base, 2)
+    overhead = round(rate * gross, 2)            # to date: rate x GROSS billed (the projection's contract basis is the page's)
     gross_profit = round(gross - cost, 2)
     net = round(gross - cost - overhead, 2)
     return {
@@ -354,7 +355,7 @@ def _project_pnl(con, proj: str) -> dict:
         "since_wip": since,
         "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
-        "overhead_basis": f"{rate * 100:g}% of contract" + (" (MFD)" if is_mfd else ""),
+        "overhead_basis": f"{rate * 100:g}% of gross billed" + (" (MFD)" if is_mfd else ""),
         "net": net, "net_pct": (net / gross) if gross else None,
         "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
@@ -406,7 +407,7 @@ def _portfolio_pnl(con) -> dict:
             b = qn                                 # NET billed, fresh from the mirror
         gross = qg if qg is not None else round(b + ret, 2)   # GROSS billed: QuickBooks income, before retainage
         ret = round(gross - b, 2)
-        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or gross), 2)
+        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * gross, 2)   # to date: rate x GROSS billed, never the contract
         net = round(gross - cost - oh, 2)         # actuals: GROSS billed - costs - overhead (owner 2026-09-23, the Excel P&L)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
             mtime = pnl_paths.find_pnl(p).get("mtime")

@@ -4984,7 +4984,9 @@ function _ppProjectedVsActual(p, r0, pn) {
   const over = cost - etc;
   row("ETC · Costs to date", money(etc), money(cost), etc ? { v: over, base: etc, good: -1, word: (over > 0.5 ? "Over budget" : "Under budget") + ` - ${(cost / etc * 100).toFixed(0)}% of ETC spent` } : null);
   row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-sub", sub: "projected: contract - ETC · actual: gross billed - costs" });   // a rule above + bold: the subtotal (owner 2026-10-11)
-  row(`Overhead · ${+(rate * 100).toFixed(2)}% of contract`, "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: /^MFD/i.test(pn) ? "MFD rate" : "company rate" });
+  // projected overhead = rate x the contract; ACTUAL overhead = rate x gross billed so far, never the full contract
+  // (owner 2026-10-14: "the oh on the actual should be the actual billed NOT the contract price for actuals")
+  row(`Overhead · ${+(rate * 100).toFixed(2)}%`, "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: `projected: ${+(rate * 100).toFixed(2)}% of contract · actual: ${+(rate * 100).toFixed(2)}% of gross billed` + (/^MFD/i.test(pn) ? " (MFD rate)" : "") });
   row("Net profit", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && billedG ? { v: netA - netP, base: Math.abs(netP) || contract, good: 1, word: netA - netP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-total", sub: "gross billed - costs - overhead" });
   t.appendChild(tb); wrap.appendChild(t);
   return wrap;
@@ -7139,7 +7141,7 @@ function renderPnl() {
   const pnlSrcOf = l => /gross|retainage/i.test(l) ? [srcText("WIP master", meta.report_date, "report"), "the WIP master's billed-to-date / retainage columns"]
     : /net billed/i.test(l) ? [srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded"), "every QuickBooks invoice on the active jobs, after retainage"]
     : /cost/i.test(l) ? [srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), "QuickBooks cost lines summed by job (line amounts, never bill totals)"]
-    : /overhead/i.test(l) ? ["10% of contract (MFD 9%)", "the owner's overhead rule - a share of the contract, never of billed or cost"]
+    : /overhead/i.test(l) ? ["10% of gross billed (MFD 9%)", "the owner's overhead rule to date - a share of what is billed so far; only a projection uses the contract"]
     : ["net billed - costs - overhead", "actuals, no earned-revenue proration"];
   for (const [l, v, cls] of tiles) {
     const k = el2("div", "kpi" + (cls ? " pnl-kpi-" + cls : ""));
@@ -7480,7 +7482,7 @@ function renderCompanyHead() {
     ["Open AR", money(ar), `${clients} client${clients === 1 ? "" : "s"} · what they owe you`, srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded"), "open balance of the QuickBooks invoices loaded", () => setTab("invoices"), false],
     ["Open AP", money(ap.open_balance), `${ap.open_lines || 0} open bill${ap.open_lines === 1 ? "" : "s"} · what you owe vendors`, srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "open balance of the vendor bills in the Bill Tracker (subs excluded)", () => setTab("bills"), false],
     ["Lien notices", `${pastDue} past · ${dueSoon} soon`, "unpaid bills past the notice deadline, or within 7 days", srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "bills you owe whose vendor lien-notice deadline has passed, or is within 7 days", () => setTab("liens"), pastDue > 0],
-    ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · net billed − costs − 10% of contract` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
+    ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · gross billed − costs − 10% of gross billed (MFD 9%)` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
   ];
   for (const [label, value, sub, src, how, go, bad] of tiles) {
     const el = document.createElement("div"); el.className = "kpi kpi-click" + (bad ? " kpi-neg" : "");
@@ -11508,13 +11510,13 @@ function rrCard(x, kind) {   // the RP card: schedule first, then the contract a
   const qboPl = x.costs_link ? `<a class="btn tiny" href="${_ge(x.costs_link)}" target="_blank" rel="noopener" title="The project's P&L in QuickBooks (costs)">QBO P&amp;L</a>` : "";
   // one line of numbers, each with its source, then the profit line (owner 2026-09-15: "remove big
   // block just show the numbers and below it gross profit - oh 10% net"). GP = contract - ETC (the WIP's
-  // original profit), overhead = 10% of the contract, net = GP - overhead.
+  // original profit), overhead = 10% of the contract; finished: 10% of billed (to date = billed), net = GP - overhead.
   const cell = (l, v, pill) => `<span class="rr-n"><span class="l">${l}</span> <span class="v">${v}</span>${pill || ""}</span>`;
   const K = x.contract, E = x.etc;
   // current: GP = contract - ETC (the WIP's original profit); finished: GP = billed - costs (actuals)
   const fin = kind === "finished";
   const gp = fin ? ((x.billed != null && x.costs != null) ? x.billed - x.costs : null) : ((K != null && E != null) ? K - E : null);
-  const oh = K != null ? K * 0.10 : null, net = (gp != null && oh != null) ? gp - oh : null;
+  const oh = fin ? (x.billed != null ? x.billed * 0.10 : null) : (K != null ? K * 0.10 : null), net = (gp != null && oh != null) ? gp - oh : null;
   const base = fin ? x.billed : K;
   const pctTxt = (gp != null && base) ? ` (${(gp / base * 100).toFixed(1)}%)` : "";
   const profit = K != null ? `<div class="rr-profit">Gross profit${fin ? " (billed - costs)" : ""} <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
