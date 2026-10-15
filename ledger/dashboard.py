@@ -4253,7 +4253,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), "application/pdf")
 
     def _bp_stub_print(self):
-        """POST {payment_id, columns:[keys]} -> build from the mirror, PDF into the vendor folder, history row."""
+        """POST {payment_id, columns:[keys], kind, invoices} -> build from the mirror, PDF into the vendor folder, history
+        row. `invoices` (internal only, default off - owner 2026-10-15) puts the client invoices on top of the bills."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -4270,16 +4271,17 @@ class Handler(BaseHTTPRequestHandler):
         kind = str(body.get("kind") or "vendor")
         if kind not in bill_payment_stub.KINDS:
             return self._json({"ok": False, "error": "kind must be vendor or internal"}, 400)
+        invoices = kind == "internal" and body.get("invoices") is True
         # QuickBooks first (owner 2026-10-07, checks 2612/2613 entered minutes before the print): the stub reads the
         # mirror, so bring it current - a just-entered or just-edited payment prints as QuickBooks has it now. A
         # failed refresh still prints from the copy held. refresh=false skips it (a multi-print refreshes once).
         if body.get("refresh", True) is not False:
             self._refresh_for_stub(with_payments=False)
         try:
-            res = self._print_stub_once(pid, cols, kind)
+            res = self._print_stub_once(pid, cols, kind, invoices)
             if not res.get("ok") and res.get("missing"):
                 self._refresh_for_stub(with_payments=True)
-                res = self._print_stub_once(pid, cols, kind)
+                res = self._print_stub_once(pid, cols, kind, invoices)
         except (ValueError, FileNotFoundError) as e:
             return self._json({"ok": False, "error": str(e)}, 400)
         except Exception as e:                            # noqa: BLE001 - locked DB, missing mirror key, a hung Chrome: still an answer
@@ -4301,10 +4303,12 @@ class Handler(BaseHTTPRequestHandler):
                 ok = False
         return ok
 
-    def _print_stub_once(self, pid: str, cols, kind: str) -> dict:
+    def _print_stub_once(self, pid: str, cols, kind: str, invoices: bool = False) -> dict:
+        # the invoice map feeds the Client line of the internal header too, so it is read whether or not the
+        # invoices table is asked for
         invoice_of = self._stub_invoice_map(pid) if kind == "internal" else None
         return bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path,
-                                            kind=kind, invoice_of=invoice_of)
+                                            kind=kind, invoice_of=invoice_of, invoices=invoices)
 
     def _stub_invoice_map(self, pid: str) -> dict:
         """bill id -> the client invoice it is billed through, exactly as the vendor page shows it (the same

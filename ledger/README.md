@@ -486,18 +486,25 @@ The owner ruled: **only the owner, only this Mac, Touch ID on every write, no do
 payment per Letter page. `--vendor COWTOWN --date 2026-09-21` (or `--from/--to`, or `--payment <id>`)
 reads the mirror (BillPayment -> the bills it linked, the vendor's print name and address) and writes
 `Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<Vendor> - Bill Payment Stub <check # or card reference> <mm-dd-yyyy>.pdf`
-(`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless. Columns are a
-registry: the default (owner 2026-10-13) is date · type · number · **project** · **bill total** · open balance · paid ·
-new balance - no memo, the project # instead, the money read left to right as Bill total, then Open balance - Paid =
-New balance; QBO's own set (memo, no bill total) is a pick away;
-`--add project,bill_total,due_date` / `--drop type` / `--columns ...` change the set; `--list-columns`
-shows it. `amount` is what that payment applied to the bill, so the column ties to the payment; a bill
-covered only in part says so under its memo. The company name on the stub is `ACB_COMPANY_NAME` in
-`machine.env`. `--selftest` proves it offline.
+(`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless.
+**Two stubs (owner 2026-10-15: "we need a internal and external stub")**, each with a fixed set of columns:
+- **External** (kind `vendor`, mailed with the check on the envelope template): Date · Reference (the bill #) ·
+  Bill total · Open balance · Paid · New balance - "simply put the date, ref, total, open, paid, new and put it on
+  the mail template". The column registry still serves it: `--add project,memo,type,due_date` / `--drop date` /
+  `--columns ...` change the set, `--list-columns` shows it, the ledger's picker ticks it.
+- **Internal** (the office copy, the original centered header, filed under `<vendor>/Internal/`, never mailed):
+  Project · Memo · Bill total · Open balance · Paid · New balance - "simply include the project #, and the memo in
+  that order with the bill total, open balance, paid and new balance". Fixed: the picker does not change it. The
+  client invoices the money came from are OFF by default ("remove the invoice it's associated with as default") and
+  come back on top with the print menu's **Client invoices on top** tick (`invoices: true` on the POST).
+`amount` is what that payment applied to the bill, so the column ties to the payment; every money column is totalled
+on the last row, so Open balance - Paid = New balance reads on the total too. The company name on the stub is
+`ACB_COMPANY_NAME` in `machine.env`, our mailing address `ACB_COMPANY_ADDRESS`. `--selftest` proves it offline.
 
 **In the ledger:** vendor page > Payments view, the **Stub** column - `Print stub` per payment (POST
-`/api/bill-payment/stub`), a **Stub columns** picker (the registry as checkboxes, QBO's six by default,
-remembered per browser), and the **print history** under each payment. Every print is a row in
+`/api/bill-payment/stub`), the print menu (the external stub's columns as checkboxes, the six above by default,
+remembered per browser; the internal stub's one tick, Client invoices on top, never remembered; **External stub** /
+**Internal stub** buttons), and the **print history** under each payment. Every print is a row in
 `bill_payment_stub` with the stub as printed (snapshot), the columns, the QBO SyncToken at print time and
 its own archived PDF copy beside the ledger DB - `GET /api/bill-payment/stub/file?id=` serves that copy, so
 a print opens as it went out even after a re-print. The status pill is judged live against the mirror:
