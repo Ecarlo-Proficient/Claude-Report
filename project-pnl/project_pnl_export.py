@@ -10223,8 +10223,9 @@ def main() -> int:
                     help="Path to WIP master .xlsx for Contract/ETC lookup")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--overhead-pct", type=float, default=10.0,
-                    help="Company overhead as %% of the CONTRACT (default 10.0; "
-                         "the base is the contract, the user 2026-09-03). "
+                    help="Company overhead rate (default 10.0; MFD is forced to 9.0). "
+                         "The projection takes it on the CONTRACT (the user 2026-09-03); every "
+                         "to-date row takes it on GROSS BILLED (the user 2026-10-02). "
                          "Drives every Overhead + Net Profit row.")
     ap.add_argument("--legacy", action="store_true",
                     help="LEGACY JOB attribution for jobs that predate "

@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
+  making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
+  repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x
+  contract, every to-date figure = rate x gross billed); the ledger was the one renderer left on the contract (fixed
+  10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
+  were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
+  OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview still
+  shows a 10% view beside the 9%; Director's cut shows both views on every division - the owner decides the last two.
 - 10/14/2026 · **Overhead to date = rate x gross billed, never the contract** (owner: "the oh on the actual should be
   the actual billed NOT the contract price for actuals ... that grossly showing us a bad loss for no reason"; the rule
   settled 10/02 on the P&L workbook, the ledger had kept the contract). `dashboard.py` `_project_pnl` and

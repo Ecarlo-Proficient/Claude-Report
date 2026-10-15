@@ -7,6 +7,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
+  making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
+  repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x
+  contract, every to-date figure = rate x gross billed); the ledger was the one renderer left on the contract (fixed
+  10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
+  were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
+  OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview still
+  shows a 10% view beside the 9%; Director's cut shows both views on every division - the owner decides the last two.
 - 2026-10-14 · **Attachment index refreshes incrementally** (owner: the CP800 run took 9 minutes and should be
   faster - its terminal sat on the last draw line for 8 silent minutes). Finding a bill's scans needs a company-wide
   index of every QuickBooks Attachable (~78,000) because QBO cannot filter Attachable by its transaction; the index

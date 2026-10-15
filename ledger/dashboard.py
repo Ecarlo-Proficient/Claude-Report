@@ -2830,7 +2830,7 @@ def _fetch_project_page(con, pn: str) -> dict:
         costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
         gross = round(income - costs, 2)
         oh_rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
-        overhead = round(oh_rate * income, 2)   # the draw's slice of the contract
+        overhead = round(oh_rate * income, 2)   # to date: rate x the draw's gross billed
         d["pl"] = {"income": income, "net_billed": round(net_billed, 2), "retainage": round(income - net_billed, 2), "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
                    "margin_pct": (gross / income) if income else None, "overhead": overhead, "oh_rate": oh_rate,   # shown + the fx bar's formula
                    "overhead_basis": "9% of gross billed (MFD)" if is_mfd else "10% of gross billed",

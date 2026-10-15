@@ -11405,7 +11405,8 @@ function rrRenderCards() {
       mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>`
         + `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`;
     } else {
-      const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.contract != null) ? gp - x.contract * 0.10 : null;
+      // finished: to-date figures, so overhead = 10% of BILLED, never the contract (owner 2026-10-14)
+      const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.billed != null) ? gp - x.billed * 0.10 : null;
       mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td class="n ${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}${gp != null && x.billed ? `<div class="d">${(gp / x.billed * 100).toFixed(1)}%</div>` : ""}</td><td class="n ${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</td><td>${_ge(x.last_day || "–")}</td>`;
     }
     // answer right on the list (owner 2026-09-15: "we only click if we need details"): the verdict + Save;
