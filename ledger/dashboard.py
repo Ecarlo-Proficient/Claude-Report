@@ -576,9 +576,11 @@ def _resolve_steps(pipeline_key):
     if pipeline_key == "wip-draft":
         return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
     if pipeline_key == "billpay":             # the vendor page's Refresh: just-entered payments without a sync-all
-        # mirror first (the stub prints read it), then the bill_payment table the page lists
+        # mirror first (the stub prints read it), then the bill_payment table the page lists, then QuickBooks' uncleared
+        # list so the Cleared column is current (owner 2026-10-15: "cleared or still out there")
         return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
-                {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []}]
+                {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []},
+                {"label": "Pull uncleared checks (QBO bank match)", "script": "ledger/load_uncleared_checks.py", "args": []}]
     if pipeline_key == "billsync":            # the vendor page's Bills-view Refresh: the Bill Tracker without a sync-all
         # mirror -> Bill Tracker.xlsx (the Bills list's source; fails if the file is open in Excel) -> ledger -> QBO open AP
         return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
@@ -2229,6 +2231,98 @@ def _fetch_sales(con) -> dict:
     return out
 
 
+def _mark_cleared_payments(con, payments: list) -> None:
+    """Cashed or still out there (owner 2026-10-15: "need to see when it's been cashed, using bank transaction match i
+    need to know if it's cleared or still out there"). QuickBooks' bank-feed match is the only word: a check on the
+    uncleared list (ledger/load_uncleared_checks.py) is `outstanding` (with its days out and whether it is older than
+    the account's newest matched transaction - `past_match`); a check NOT on a list pulled after its date is `cleared`
+    (QuickBooks never gives the bank date, so `cleared_seen` is the window the ledger first found it cleared in);
+    a card payment never clears a bank (`card`); a check on an account QuickBooks never feed-matches (Joint Checks) is
+    `joint`; a check entered after the last pull is `unknown` until the next refresh.
+    `cleared` = one of outstanding | cleared | card | joint | unknown | None (voided)."""
+    try:
+        unclr = {str(r["qbo_txn_id"]): dict(r) for r in con.execute(
+            "SELECT qbo_txn_id, txn_date, account, loaded_at FROM uncleared_check")}
+        acc = {r["account"]: dict(r) for r in con.execute("SELECT account, matched_through, feed_matched, loaded_at FROM bank_match")}
+    except sqlite3.OperationalError:
+        for p in payments:
+            p["cleared"] = None if p.get("voided") else "unknown"
+            p["cleared_as_of"] = None
+        return
+    try:                                     # written by the loader from its second run on; absent until then = no windows
+        seen = {str(r["qbo_txn_id"]): dict(r) for r in con.execute(
+            "SELECT qbo_txn_id, last_uncleared_at, cleared_seen_at FROM check_cleared")}
+    except sqlite3.OperationalError:
+        seen = {}
+    pulled = max([r["loaded_at"] or "" for r in acc.values()] + [r["loaded_at"] or "" for r in unclr.values()], default="")
+    pulled_day = pulled[:10] if pulled else ""
+    # "not on the list" means cleared ONLY for a payment QuickBooks already held when the list was pulled: a check
+    # entered after the pull is simply not pulled yet. The mirror's `created` (QuickBooks' CreateTime) decides; a
+    # payment the mirror lacks falls back to its date being before the pull day.
+    created: dict = {}
+    try:
+        from shared import qbo_mirror
+        if payments and qbo_mirror.db_path().exists():
+            mcon = qbo_mirror.connect()
+            try:
+                ids = [str(p.get("qbo_txn_id")) for p in payments]
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    for mr in mcon.execute(f"SELECT id, created FROM {qbo_mirror.table('BillPayment')} WHERE id IN "
+                                           f"({','.join('?' * len(chunk))})", chunk):
+                        created[str(mr[0])] = mr[1]
+            finally:
+                mcon.close()
+    except Exception:                               # noqa: BLE001 - no mirror = the date rule alone
+        created = {}
+    pulled_utc = None
+    try:
+        pulled_utc = _dt.datetime.fromisoformat(pulled).astimezone(_dt.timezone.utc) if pulled else None
+    except ValueError:
+        pass
+
+    def held_before_pull(p) -> bool:
+        c = created.get(str(p.get("qbo_txn_id")))
+        if c and pulled_utc:
+            try:
+                return _dt.datetime.fromisoformat(c).astimezone(_dt.timezone.utc) < pulled_utc
+            except ValueError:
+                pass
+        return bool(pulled_day) and str(p.get("txn_date") or "")[:10] < pulled_day
+    today = _dt.date.today()
+    for p in payments:
+        pid = str(p.get("qbo_txn_id"))
+        p["cleared_as_of"] = pulled or None
+        p["cleared_seen"] = None
+        p["cleared_after"] = None
+        p["days_out"] = None
+        p["past_match"] = False
+        if p.get("voided"):
+            p["cleared"] = None
+        elif (p.get("pay_type") or "") == "CreditCard":
+            p["cleared"] = "card"
+        elif pid in unclr:
+            u = unclr[pid]
+            a = acc.get(u.get("account")) or {}
+            # an account QuickBooks never matches to a bank feed (Joint Checks) can't say either way
+            p["cleared"] = "outstanding" if a.get("feed_matched") else "joint"
+            try:
+                p["days_out"] = (today - _dt.date.fromisoformat(str(p.get("txn_date"))[:10])).days
+            except (TypeError, ValueError):
+                pass
+            p["feed_matched"] = bool(a.get("feed_matched"))
+            p["past_match"] = bool(a.get("matched_through") and p.get("txn_date") and str(p["txn_date"])[:10] < a["matched_through"])
+            p["bank_account"] = u.get("account")
+        elif held_before_pull(p):
+            p["cleared"] = "cleared"
+            w = seen.get(pid)
+            if w:
+                p["cleared_seen"] = (w.get("cleared_seen_at") or "")[:10] or None
+                p["cleared_after"] = (w.get("last_uncleared_at") or "")[:10] or None
+        else:
+            p["cleared"] = "unknown"
+
+
 def _mark_voided_payments(payments: list) -> None:
     """Flag a voided BillPayment (total 0 in QBO) and carry its memo. Read from the mirror; a machine
     without the mirror just gets total-0 + no bills as the tell."""
@@ -2396,6 +2490,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
         # voided (owner 2026-09-22: "voided checks need to say voided"): QBO voids a bill payment by zeroing it
         # (TotalAmt 0, lines gone, memo "Voided…"); the memo is the only word on why, so it rides along.
         _mark_voided_payments(payments)
+        _mark_cleared_payments(con, payments)
     except sqlite3.OperationalError:
         pass
     # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the

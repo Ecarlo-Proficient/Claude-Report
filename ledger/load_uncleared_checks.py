@@ -15,7 +15,12 @@ Cleaned (the owner 2026-10-09: "clean the list"): a voided check ($0) and a chec
 never written - see the AP "to print" rule) are left off; both are read from the QBO mirror's copy of the payment, so
 the ledger's Refresh runs the mirror refresh first.
 
-Read-only on QBO (report calls). Never echoes the realm. Reloads both tables whole.
+Cashed (the owner 2026-10-15: "need to see when it's been cashed ... cleared or still out there"): QuickBooks never
+gives the date a check cleared, so before the list is replaced, every check the PREVIOUS pull listed that this pull
+no longer does is written to `check_cleared` with the window it cleared in (last pull that listed it -> this pull).
+The vendor page's Payments view reads both tables: Cleared (seen <date>) / Outstanding N days / not pulled since.
+
+Read-only on QBO (report calls). Never echoes the realm. Reloads the two list tables whole; check_cleared only grows.
 
     python3 ledger/load_uncleared_checks.py
     python3 ledger/load_uncleared_checks.py --dry-run     pull + report, write nothing
@@ -102,6 +107,22 @@ def clean(checks: list, get) -> tuple:
     return kept, voided, to_print
 
 
+def cleared_delta(previous: list, kept: list, now: str) -> list:
+    """The checks that left the uncleared list since the last pull -> rows for check_cleared.
+    `previous` = the uncleared_check rows on file (dicts with qbo_txn_id, txn_type, txn_date, check_no, payee, account,
+    amount, loaded_at); `kept` = this pull's checks (the report rows, `_id`). A check still listed is not cleared; one
+    gone from the list cleared between its last pull and now (or was deleted / voided in QuickBooks - the mirror's
+    change log says which, and the vendor page shows a voided payment as voided before it looks here)."""
+    still = {str(c.get("_id")) for c in kept}
+    out = []
+    for r in previous:
+        if str(r.get("qbo_txn_id")) in still:
+            continue
+        out.append((str(r.get("qbo_txn_id")), r.get("txn_type"), r.get("txn_date"), r.get("check_no"), r.get("payee"),
+                    r.get("account"), r.get("amount"), r.get("loaded_at"), now))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -135,7 +156,14 @@ def main() -> int:
     con = sqlite3.connect(str(a.db))
     try:
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
+        con.row_factory = sqlite3.Row
+        previous = [dict(r) for r in con.execute("SELECT qbo_txn_id, txn_type, txn_date, check_no, payee, account, amount, "
+                                                 "loaded_at FROM uncleared_check")]
+        gone = cleared_delta(previous, checks, now)
         with con:
+            # the checks that left the list since the last pull: cleared (or deleted) between that pull and this one
+            con.executemany("INSERT OR IGNORE INTO check_cleared(qbo_txn_id, txn_type, txn_date, check_no, payee, account, "
+                            "amount, last_uncleared_at, cleared_seen_at) VALUES (?,?,?,?,?,?,?,?,?)", gone)
             con.execute("DELETE FROM uncleared_check")
             con.execute("DELETE FROM bank_match")
             con.executemany(
@@ -147,7 +175,7 @@ def main() -> int:
                             [(acc, thru.get(acc), 1 if thru.get(acc) else 0, now) for acc in accounts])
     finally:
         con.close()
-    print(f"wrote {len(checks)} checks, {len(accounts)} accounts -> {a.db.name}")
+    print(f"wrote {len(checks)} checks, {len(accounts)} accounts -> {a.db.name} · {len(gone)} cleared since the last pull")
     return 0
 
 

@@ -24,3 +24,15 @@ def test_clean():
     assert [c["_id"] for c in kept] == ["3", "6"]
     assert [c["_id"] for c in voided] == ["2", "5"]
     assert [c["_id"] for c in to_print] == ["1", "4"]
+
+
+def test_cleared_delta():
+    """A check the last pull listed that this pull no longer does -> a check_cleared row with its window."""
+    previous = [{"qbo_txn_id": "10", "txn_type": "Bill Payment (Check)", "txn_date": "2026-09-01", "check_no": "48401",
+                 "payee": "V", "account": "Frost", "amount": 500.0, "loaded_at": "2026-10-10T08:00:00"},
+                {"qbo_txn_id": "11", "txn_type": "Check", "txn_date": "2026-09-02", "check_no": "48402",
+                 "payee": "W", "account": "Frost", "amount": 60.0, "loaded_at": "2026-10-10T08:00:00"}]
+    kept = [{"_id": "11", "Transaction Type": "Check", "Amount": "-60"}, {"_id": "12", "Transaction Type": "Check", "Amount": "-9"}]
+    rows = U.cleared_delta(previous, kept, "2026-10-15T09:00:00")
+    assert rows == [("10", "Bill Payment (Check)", "2026-09-01", "48401", "V", "Frost", 500.0, "2026-10-10T08:00:00", "2026-10-15T09:00:00")]
+    assert U.cleared_delta([], kept, "x") == []

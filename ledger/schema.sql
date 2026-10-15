@@ -669,6 +669,21 @@ CREATE TABLE IF NOT EXISTS bank_match (
     feed_matched     INTEGER,                       -- 0 = never matched to a bank feed (Joint Checks Account)
     loaded_at        TEXT
 );
+-- A check seen leaving the uncleared list (owner 2026-10-15: "need to see when it's been cashed"). QuickBooks never
+-- says WHEN a check cleared (the cleared column is dropped by the API), so the ledger records the first refresh that
+-- found it cleared: it was cashed between `last_uncleared_at` (the last pull that still listed it) and `cleared_seen_at`.
+-- Only grows; a check cleared before the first pull ever ran is just "cleared", with no window.
+CREATE TABLE IF NOT EXISTS check_cleared (
+    qbo_txn_id        TEXT PRIMARY KEY,             -- the check / bill payment's QBO id
+    txn_type          TEXT,
+    txn_date          TEXT,
+    check_no          TEXT,
+    payee             TEXT,
+    account           TEXT,
+    amount            NUMERIC,
+    last_uncleared_at TEXT,                         -- the newest pull that still showed it uncleared
+    cleared_seen_at   TEXT                          -- the pull that first found it cleared
+);
 
 -- The owner's "that's OK" on a QBO change (owner 2026-09-24: "need a way to click to say that it's ok and to discard
 -- for next run"). One row per mirror_change id he reviewed; the QBO changes page hides it unless "Show OK'd" is on.

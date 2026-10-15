@@ -3224,7 +3224,7 @@ const _vpRefresh = (() => {
   };
   const attach = (host, parent) => {   // host = where the button goes, parent = where the progress bar goes
     btn.title = _vendorView === "payments"
-      ? "Pull the bill payments from QuickBooks now (the mirror + this year's payments) - no sync-all"
+      ? "Pull the bill payments from QuickBooks now (the mirror + this year's payments + the bank match for the Cleared column) - no sync-all"
       : "Pull the bills from QuickBooks now (the mirror, Bill Tracker.xlsx, the ledger, open AP; ~20 s) - no sync-all. Close Bill Tracker.xlsx in Excel first.";
     host.appendChild(btn); parent.appendChild(prog);
   };
@@ -3243,6 +3243,7 @@ async function _renderVendorPayments(d, body, seq) {
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
   selLabel(); selBtn.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind)); };   // stop the click: the page's menu closer would hide it at once
+  { const rc = document.createElement("button"); rc.type = "button"; rc.className = "btn small"; rc.textContent = "Reset column order"; rc.title = "Put the columns back in their standard order"; rc.hidden = !colOrderSaved("vendorPays"); rc.onclick = () => { colOrderReset("vendorPays"); renderVendorPage(); }; bar.appendChild(rc); }
   { const right = document.createElement("span"); right.className = "stub-bar-right"; _vpRefresh.attach(right, body); right.appendChild(selBtn); bar.appendChild(right); }
   body.insertBefore(bar, _vpRefresh.prog);
   if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
@@ -3255,8 +3256,11 @@ async function _renderVendorPayments(d, body, seq) {
     const printable = pays.filter(p => !p.voided).map(p => String(p.qbo_txn_id));
     all.checked = printable.length > 0 && printable.every(id => _stubSel.has(id));
     all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else printable.forEach(id => _stubSel.delete(id)); renderVendorPage(); };
-    th.appendChild(all); htr.appendChild(th); }
-  for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Client invoice", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    th.appendChild(all); htr._ck = th; }
+  const pulled = (d.payments || []).map(p => p.cleared_as_of).filter(Boolean).sort().pop();
+  for (const [c, al] of VP_PAY_COLS) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c;
+    if (c === "Cleared") th.title = "QuickBooks' bank-feed match: Cleared = matched at the bank; Outstanding = still out there" + (pulled ? ` (as of ${fmtDateShort(pulled)})` : " - Refresh from QuickBooks to pull it");
+    htr.appendChild(th); }
   thead.appendChild(htr);
   for (const p of pays) {
     const pid = String(p.qbo_txn_id);
@@ -3264,7 +3268,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const td = document.createElement("td"); td.className = "left vp-ck"; const cb = document.createElement("input"); cb.type = "checkbox";
       cb.checked = _stubSel.has(pid); cb.disabled = !!p.voided; cb.title = p.voided ? "Voided - nothing to print" : "Select for a multi-print";
       cb.onchange = () => { if (cb.checked) _stubSel.add(pid); else _stubSel.delete(pid); selLabel(); const all = thead.querySelector("input"); if (all) all.checked = pays.filter(x => !x.voided).every(x => _stubSel.has(String(x.qbo_txn_id))); };
-      td.appendChild(cb); tr.appendChild(td); }
+      td.appendChild(cb); tr._ck = td; }
     { const rc = document.createElement("td"); rc.className = "left"; const key = document.createElement("span"); key.className = "bg-key"; key.textContent = p.ref_no || "–"; rc.appendChild(key);   // the caret lands inside .bg-key
       if (p.voided) { const v = document.createElement("span"); v.className = "stub-pill voided vp-voidpill"; v.textContent = "VOIDED"; v.title = p.memo || "Voided in QuickBooks"; rc.appendChild(v); }
       if (p.att) { const ab = attBtn("BillPayment", p.qbo_txn_id, p.att, `payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); }
@@ -3275,6 +3279,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
     tr.appendChild(_vpInvTally(p.bills || [], p.txn_date));
     { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCellC(p.total_amt)); tr.appendChild(amt); }
+    tr.appendChild(_vpClearedCell(p));
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
         b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
@@ -3286,10 +3291,9 @@ async function _renderVendorPayments(d, body, seq) {
     tbody.appendChild(tr);
     // the expansion: one row per bill this payment paid (bill # -> QuickBooks, its project, its client, the amount applied)
     const bl = p.bills || [];
-    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = 8; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
+    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = VP_PAY_COLS.length + 1; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
     for (const b of bl) {
       const br = document.createElement("tr"); br.className = "vp-bill";
-      br.appendChild(document.createElement("td"));
       { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a);
         { const items = bl.map(y => ({ type: "Bill", id: String(y.bill_id), n: y.att || 0, title: `${d.vendor} · bill ${y.bill_ref || y.bill_id}` }));   // ← → flips through this payment's bills
           const ab = attBtn("Bill", b.bill_id, b.att || 0, `${d.vendor} · bill ${b.bill_ref || ""}`, { items, index: bl.indexOf(b) }); ab.style.marginLeft = "6px"; td.appendChild(ab); }
@@ -3300,11 +3304,47 @@ async function _renderVendorPayments(d, body, seq) {
       br.appendChild(_vpInvCell(b, p.txn_date));
       { const td = document.createElement("td"); td.appendChild(moneyCellC(b.amount)); br.appendChild(td); }
       br.appendChild(document.createElement("td"));
+      br.appendChild(document.createElement("td"));
       tbody.appendChild(br);
     }
   }
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+  table.appendChild(thead); table.appendChild(tbody);
+  // drag a header to move the column, remembered on this Mac (owner 2026-10-15: "reorder the payments screen ... by
+  // dragging"); the tick column is put in FRONT afterwards, so it never moves and is never a drop target
+  colOrderable(table, "vendorPays", VP_PAY_COLS.map(c => c[0]), renderVendorPage, VP_PAY_ORDER);
+  htr.insertBefore(htr._ck, htr.firstChild);
+  for (const tr of tbody.rows) { if (tr.cells.length === 1 && tr.cells[0].colSpan > 1) continue;
+    const td = tr._ck || document.createElement("td"); if (!tr._ck) td.className = "vp-ck"; tr.insertBefore(td, tr.firstChild); }
+  scroll.appendChild(table); body.appendChild(scroll);
   _renderStubOrphans(body, d.payments || [], byPay);   // "no longer in the list" = not in the vendor's payments at all, never "filtered out"
+}
+// The payments table's columns (header, alignment) and the standard order Reset goes back to.
+const VP_PAY_COLS = [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Client invoice", "left"], ["Amount", "right"], ["Cleared", "left"], ["Stub", "left"]];
+const VP_PAY_ORDER = VP_PAY_COLS.map(c => c[0]);
+// Cashed or still out there (owner 2026-10-15: "need to see when it's been cashed, using bank transaction match i need to
+// know if it's cleared or still out there"). From QuickBooks' bank-feed match (the uncleared list): Cleared = matched at the
+// bank (QuickBooks never says the bank date; "by <date>" is the refresh that first found it cleared); Outstanding = still
+// on the uncleared list, with its days out - red once it is older than the newest transaction matched on that account
+// (not cashed, or cashed and never matched); a joint check sits on an account QuickBooks never matches; a card payment has
+// nothing to clear; a check entered after the last pull waits for the next Refresh.
+function _vpClearedCell(p) {
+  const td = document.createElement("td"); td.className = "left vp-clr";
+  const pill = (cls, text, tip) => { const s = document.createElement("span"); s.className = "stub-pill " + cls; s.textContent = text; s.title = tip; td.appendChild(s); };
+  const asOf = p.cleared_as_of ? ` (as of ${fmtDateShort(p.cleared_as_of)})` : "";
+  if (!p.cleared) { td.classList.add("dim"); td.textContent = p.voided ? "" : "–"; return td; }
+  if (p.cleared === "card") { td.classList.add("dim"); td.textContent = "Card"; td.title = "A card payment - nothing to clear at the bank"; return td; }
+  if (p.cleared === "unknown") { td.classList.add("dim"); td.textContent = "not pulled yet"; td.title = "Newer than the last bank-match pull - Refresh from QuickBooks"; return td; }
+  if (p.cleared === "joint") { pill("vp-clr-joint", "Joint check", `${p.bank_account || "The Joint Checks account"} is never matched to a bank feed in QuickBooks, so it can't say whether this one was cashed`); return td; }
+  if (p.cleared === "outstanding") {
+    const days = p.days_out == null ? "" : ` · ${p.days_out} day${p.days_out === 1 ? "" : "s"}`;
+    if (p.past_match) pill("vp-clr-late", "Not matched" + days, `Older than the newest transaction QuickBooks matched on ${p.bank_account || "this account"}: not cashed, or cashed and never matched${asOf}`);
+    else pill("vp-clr-out", "Outstanding" + days, `Still on QuickBooks' uncleared list - not matched at the bank yet${asOf}`);
+    return td;
+  }
+  pill("vp-clr-ok", "Cleared" + (p.cleared_seen ? ` by ${fmtDateShort(p.cleared_seen)}` : ""),
+    p.cleared_seen ? `Matched at the bank between ${p.cleared_after ? fmtDateShort(p.cleared_after) : "the pull before"} and ${fmtDateShort(p.cleared_seen)} (QuickBooks never gives the bank date - this is when the ledger first found it cleared)`
+      : `Matched at the bank in QuickBooks${asOf}`);
+  return td;
 }
 // The client invoice a bill is billed through and whether the client paid it (owner 2026-09-23: "also show the
 // invoice paid status"). Live from QuickBooks' invoice when the ledger has it, else the Bill Tracker's paid date.

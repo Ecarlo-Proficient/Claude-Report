@@ -4,6 +4,24 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Vendor Payments: Cleared at the bank + drag the columns** (owner: "vendor payments, need to see when
+  it's been cashed, using bank transaction match i need to know if it's cleared or still out there"; "reorder the
+  payments screen. i want to reorder by dragging"). NEW **Cleared** column on the vendor page's Payments view, after
+  Amount, from QuickBooks' bank-feed match (the Uncleared checks pull): **Cleared** (green; "by <date>" = the refresh
+  that first found it matched, since QuickBooks never gives the bank date - NEW table `check_cleared`, written by
+  `load_uncleared_checks.cleared_delta` on every pull from the checks that left the uncleared list, with the window
+  last-pull -> this-pull), **Outstanding · N days** (amber, still on the uncleared list; red **Not matched** once it is
+  older than the account's newest matched transaction = not cashed, or cashed and never matched), **Joint check** (the
+  Joint Checks account is never feed-matched, so no verdict), **Card** (nothing to clear), **not pulled yet** (entered
+  in QuickBooks after the last pull - judged by the mirror's `created` against the pull time, so a check written the
+  morning of a pull never reads as cleared). `_mark_cleared_payments` in dashboard.py; the Payments view's Refresh
+  (`billpay`) now ends with the uncleared pull, so one click brings the column current. **Drag a header** to move a
+  column (the same `colOrderable` as Bills, key `vendorPays`, standard order `VP_PAY_ORDER`), the order remembered on
+  this Mac, a Reset column order button on the bar while one is saved; the tick column is put in front after the order
+  is applied, so it never moves. Checked on a test instance: 58 RCI payments = 27 joint · 16 cleared · 10 card · 3 not
+  pulled yet · 2 voided; a saved order moves the payment rows and their bill rows alike. `test_uncleared_clean` gained
+  `test_cleared_delta`. The owner's 8787 instance needs a restart for the API side (the JS is live on reload; until
+  then the column shows "–").
 - 10/15/2026 · **Bill payment stubs: an internal and an external stub, each a fixed set** (owner: "we need a internal
   and external stub. The internal remove the invoice it's associated with as default. simply include the project #,
   and the memo in that order with the bill total, open balance, paid and new balance. finally don't include the mail
