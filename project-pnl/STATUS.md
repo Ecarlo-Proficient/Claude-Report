@@ -14,8 +14,8 @@ manual close), RP (no draws — expenses → invoice → profit).
   10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
   were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
   OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
-  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview still
-  shows a 10% view beside the 9%; Director's cut shows both views on every division - the owner decides the last two.
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview and Director's
+  cut show 10% beside 9% ON PURPOSE (owner 10/15: 9% agreed with the director, 10% real - both stay; CP/RP 10% only).
 - 2026-10-14 · **Attachment index refreshes incrementally** (owner: the CP800 run took 9 minutes and should be
   faster - its terminal sat on the last draw line for 8 silent minutes). Finding a bill's scans needs a company-wide
   index of every QuickBooks Attachable (~78,000) because QBO cannot filter Attachable by its transaction; the index

@@ -4,6 +4,23 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Bill payment stubs: an internal and an external stub, each a fixed set** (owner: "we need a internal
+  and external stub. The internal remove the invoice it's associated with as default. simply include the project #,
+  and the memo in that order with the bill total, open balance, paid and new balance. finally don't include the mail
+  format revert to the original header. for external simply put the date, ref, total, open, paid, new and put it on
+  the mail template. every stub should have this"). `bill_payment_stub.py`: **External** (kind `vendor`, the envelope
+  template of 10/14) = `DEFAULT_COLUMNS` Date · **Reference** (the `number` column relabelled with QuickBooks' own
+  word; `memo` is now "Memo") · Bill total · Open balance · Paid · New balance - no Transaction type, no Project; the
+  picker (`ledger.stubColumns.v3`, so the new default applies once) can still add any registry column. **Internal**
+  (the original centered header + payment block, never the envelope) = NEW `INTERNAL_COLUMNS` Project · Memo · Bill
+  total · Open balance · Paid · New balance, fixed - `columns_for("internal")` ignores the pick. The client invoices
+  table on top is OFF by default: `print_stub(..., invoices=True)` / POST `invoices: true` puts it back
+  (`stub["invoices"]`, so the history snapshot says which); the print menu gains an "Internal stub · Client invoices
+  on top" tick (never remembered). One `_bills_table` renders both stubs (band on the external one), so the internal
+  stub now totals every money column like the external one (was: Paid only). Buttons and toasts read **External stub**
+  / **Internal stub**; the Client line stays in the internal header (the invoice map is still read for it). Selftest
+  + `test_bill_payment_stub` updated; both stubs rendered to PDF and checked (3 bills, a partial, an un-invoiced bill).
+  Not changed: the auto-filed stub after Pay in QuickBooks (external, default columns), file names, `<vendor>/Internal/`.
 - 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
   making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
   repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x
@@ -11,8 +28,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
   were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
   OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
-  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview still
-  shows a 10% view beside the 9%; Director's cut shows both views on every division - the owner decides the last two.
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview and Director's
+  cut show 10% beside 9% ON PURPOSE (owner 10/15: 9% agreed with the director, 10% real - both stay; CP/RP 10% only).
 - 10/14/2026 · **Overhead to date = rate x gross billed, never the contract** (owner: "the oh on the actual should be
   the actual billed NOT the contract price for actuals ... that grossly showing us a bad loss for no reason"; the rule
   settled 10/02 on the P&L workbook, the ledger had kept the contract). `dashboard.py` `_project_pnl` and
