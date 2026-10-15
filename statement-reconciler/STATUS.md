@@ -12,6 +12,11 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-15 · **Bartel alias.** The vendor's statements are headed 'Frank Bartel Transportation, Inc.' while
+  QuickBooks keeps the vendor as **Bartel Ready Mix** (30777; the owner deactivated the Frank Bartel vendor in QBO
+  so there is one). The run skipped the statement ('no QBO vendor match'); three aliases now map the statement
+  name, the name without Inc., and the QBO name itself to 30777 (`vendor_aliases.json`). Every open Bartel bill
+  already sits on Bartel Ready Mix, so the next run reconciles against it; nothing else changed.
 - 2026-10-13 · **Approved? reads QuickBooks' approval report** (owner: "check this excel while also keeping in mind the
   last time it synced from qbo"). `QboBill.vendor` (VendorRef.name) keys into `shared/bill_approval`'s report: a matched bill
   on it shows **Pending Approval** / **Requires Approval** (red, like Not Approved; bucket `approve` on the board, the record
