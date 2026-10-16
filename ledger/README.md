@@ -425,7 +425,9 @@ QBO gives it its number when you print it there; untick it for a check already w
 reference, so the box stops at 21 and the server refuses more. "Are you sure?" then `POST /api/pay-bills/commit`
 writes **one BillPayment per vendor**, each re-checked live and refused unless it matches the review exactly; a QBO
 `requestid` per vendor per review means a resend or double click returns the same payment. After each payment its
-bills leave the pay run, the payment and bills go into the mirror, the stub is filed in the vendor's folder (below),
+bills leave the pay run, the payment and bills go into the mirror, BOTH stubs are filed in the vendor's folder (the
+external one and the internal office copy under `Internal/`, below) and open side by side on the page to print (one
+payment written = they open by themselves; several = a **Print <vendor>'s stubs** button per payment; owner 2026-10-16),
 and the Bill Tracker refresh runs. QBO has no payment-method field on a bill payment, only check vs card, so ACH is a
 check-type payment whose reference says how it went.
 
@@ -439,7 +441,9 @@ Touch ID, the stub and the follow-up are the one path above; the vendor page re-
 payment waits there until it **matches**: QBO shows its number and its stub is filed under that number. Nobody types
 the number: `pay_bills.watch()` runs at the end of every mirror refresh (`refresh_mirror.py` - sync-all step 0, the
 vendor Refresh buttons, the queue's own **Refresh from QuickBooks**) and on every load of the queue; it reads the
-mirror only, picks up the number QBO gave the check when it was printed, and files the stub. It also **flags** a pushed
+mirror only, picks up the number QBO gave the check when it was printed, and files both stubs (an older row with only
+the external one filed gets its internal stub on the next pass; the queue row keeps each stub's file, error and
+print-history id, and its **Stubs** button opens both). It also **flags** a pushed
 payment QBO deleted, voided or changed (bills or amounts no longer what was pushed) with what each bill shows now (owes
 X now / paid by another payment / bill deleted); the owner marks it **Resolved** (note optional) or **Keep**s it in
 the queue with a reason (`POST /api/pay-bills/mark`, local only). `GET /api/pay-bills/queue?show=active|all`. A check

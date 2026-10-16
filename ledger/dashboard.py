@@ -3638,6 +3638,24 @@ def fetch_data(db_path: Path, scope: str = "full") -> dict:
     return out
 
 
+def _stub_invoice_map(db_path, pid: str) -> dict:
+    """bill id -> the client invoice it is billed through, exactly as the vendor page shows it (the same
+    _fetch_vendor record: Bill Tracker draw #, live QuickBooks paid state). Feeds the internal stub's Client
+    line - printed from the page, or filed by pay_bills right after Pay in QuickBooks (pay_bills.invoice_map_for)."""
+    con = _connect(db_path)
+    try:
+        r = con.execute("SELECT vendor FROM bill_payment WHERE qbo_txn_id = ?", (str(pid),)).fetchone()
+        if not r:
+            return {}
+        data = _fetch_vendor(con, r["vendor"])
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        con.close()
+    pay = next((p for p in data.get("payments") or [] if str(p.get("qbo_txn_id")) == str(pid)), None)
+    return {str(b["bill_id"]): b for b in (pay or {}).get("bills") or [] if b.get("bill_id")}
+
+
 class Handler(BaseHTTPRequestHandler):
     db_path: Path = DEFAULT_DB
 
@@ -4410,20 +4428,7 @@ class Handler(BaseHTTPRequestHandler):
                                             kind=kind, invoice_of=invoice_of, invoices=invoices)
 
     def _stub_invoice_map(self, pid: str) -> dict:
-        """bill id -> the client invoice it is billed through, exactly as the vendor page shows it (the same
-        _fetch_vendor record: Bill Tracker draw #, live QuickBooks paid state)."""
-        con = _connect(self.db_path)
-        try:
-            r = con.execute("SELECT vendor FROM bill_payment WHERE qbo_txn_id = ?", (str(pid),)).fetchone()
-            if not r:
-                return {}
-            data = _fetch_vendor(con, r["vendor"])
-        except sqlite3.OperationalError:
-            return {}
-        finally:
-            con.close()
-        pay = next((p for p in data.get("payments") or [] if str(p.get("qbo_txn_id")) == str(pid)), None)
-        return {str(b["bill_id"]): b for b in (pay or {}).get("bills") or [] if b.get("bill_id")}
+        return _stub_invoice_map(self.db_path, pid)
 
     def _pnl_portfolio(self):
         con = _connect(self.db_path)
@@ -5193,6 +5198,8 @@ def main():
         _daemonize()
 
     Handler.db_path = args.db
+    # the internal stub filed after Pay in QuickBooks gets the vendor page's bill -> client-invoice map (its Client line)
+    pay_bills.invoice_map_for = lambda pid: _stub_invoice_map(args.db, pid)
     url = f"http://127.0.0.1:{args.port}"
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
 

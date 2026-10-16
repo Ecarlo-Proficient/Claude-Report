@@ -4,6 +4,25 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Both stubs filed and shown after Pay in QuickBooks** (owner: "when i paid bills today, #1 it didn't show
+  me the pay stub to print i like that feature cause i have to print anyways - add show both internal and external to
+  print. and it didn't create a external/internal stub after paying in the accounting drive"). What had happened on
+  the 10/16 Preferred Materials check: the external stub WAS filed on the share (11:07) and the page only said "stub
+  filed" in a line; no internal stub was ever auto-filed (the page's Internal stub button was the only way). Now
+  `pay_bills._stub` files BOTH (`_stub_kind("vendor")` + `_stub_kind("internal")`), `_store_stubs` writes each one's
+  file / error and both print-history ids onto the queue row (`pay_push` + `stub_internal`, `stub_internal_error`,
+  `stub_ids`, ALTERed on first open), `watch()` re-files both when a printed check gets its number and files the
+  internal alone on a row that only has the external (the first pass filed the 7 queued payments' internal stubs,
+  today's check among them), `_stub_result` shapes the result for the page and `assign_number`; `queue()` fills a
+  missing history id from the print history (`_history_ids`) so older rows open both too. `dashboard.py`:
+  `_stub_invoice_map` is module-level and `main()` sets `pay_bills.invoice_map_for` to it, so the auto-filed internal
+  stub carries the Client line like a page print (the watcher inside `refresh_mirror.py` has no map: Client filled
+  for a joint check only). `app.js`: `openStubPair` = both PDFs side by side (each with Open in a new tab / Download),
+  opened by itself when ONE payment was written, a "Print <vendor>'s stubs" button per payment when several; the result
+  line names each stub's state; Pushed payments rows read "matched · stubs filed" and carry a **Stubs** button.
+  Tests: `tests/test_pay_bills_stubs.py` (column migration, both kinds + the map to the internal one only, a failed
+  internal never undoes the external, store/result round trip, history-id fallback). Not changed: a "To print" check
+  still waits for its number before any stub is filed.
 - 10/16/2026 · **Waiting for the server** (owner: "i need to see at a glance all the pushes pending to be in synology
   and their status when i click refresh in the project ledger. that way i know what is up and what is not"). NEW
   `server_updates.py` + `/api/server/updates?fetch=1`: git fetch, then every commit the office server does not run

@@ -37,8 +37,11 @@ double click, a retry or a second review of the same payment gets QBO's first pa
 second one; and every write is a `pay_attempt` row before it is sent, so a payment QBO never answered
 holds its bills off every review until QBO is checked (see `_held`). The live bills are saved to ~/Library/Logs/Proficient/pay-bills/ before
 any write. After each payment: its bills leave the pay run, the payment and bills go into the
-mirror, and - unless it waits to be printed - its stub is filed in the vendor's stub folder
-(bill_payment_stub.print_stub). A "To print" check files its stub when its number is assigned.
+mirror, and - unless it waits to be printed - BOTH its stubs are filed in the vendor's stub folder
+(bill_payment_stub.print_stub: the external one mailed with the check, the internal office copy under
+`<vendor>/Internal/`; owner 2026-10-16: "add show both internal and external to print ... it didn't create a
+external/internal stub after paying"). A "To print" check files them when its number is assigned. The result
+carries each stub's history id so the page opens both to print.
 
     ledger/pay_bills.py --plan              the dry run for the saved pay run, on the terminal
     ledger/pay_bills.py --queue             the pushed payments not matched yet, or flagged
@@ -58,7 +61,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -471,15 +474,90 @@ def _to_mirror(entity: str, recs: list) -> None:
         con.close()
 
 
-def _stub(pid: str) -> dict:
-    """File the stub in the vendor's folder. A failure never undoes the payment - it is reported."""
+# The dashboard sets this to its bill -> client-invoice map (the vendor page's record, `_stub_invoice_map`) so the
+# internal stub's Client line is filled on a payment written from the page. Without it (the watcher run by
+# refresh_mirror.py) the internal stub still prints; its Client line is then filled for a joint check only.
+invoice_map_for: Optional[Callable[[str], dict]] = None
+
+
+def _stub_kind(pid: str, kind: str) -> dict:
+    """File ONE stub of a payment in the vendor's folder: {filed, file, error, id} (id = its print-history row)."""
     try:
         import bill_payment_stub as stubs          # noqa: PLC0415  (ledger-local module)
         from shared import paths                   # noqa: PLC0415
-        r = stubs.print_stub(pid, company=paths.get("ACB_COMPANY_NAME", ""))
-        return {"filed": bool(r.get("ok")), "file": r.get("file"), "error": r.get("error")}
+        inv = None
+        if kind == "internal" and invoice_map_for:
+            try:
+                inv = invoice_map_for(pid)
+            except Exception:                      # noqa: BLE001  (the Client line is a nicety; the stub still prints)
+                inv = None
+        r = stubs.print_stub(pid, company=paths.get("ACB_COMPANY_NAME", ""), kind=kind, invoice_of=inv)
+        return {"filed": bool(r.get("ok")), "file": r.get("file"), "error": r.get("error"), "id": r.get("id")}
     except Exception as e:                         # noqa: BLE001
         return {"filed": False, "error": str(e)}
+
+
+def _stub(pid: str) -> dict:
+    """File BOTH stubs of a payment (owner 2026-10-16): the external one (mailed with the check) and the internal
+    office copy. A failure never undoes the payment - it is reported, per stub. Returns the external stub's
+    {filed, file, error, id} with the internal one under "internal"."""
+    out = _stub_kind(pid, "vendor")
+    out["internal"] = _stub_kind(pid, "internal")
+    return out
+
+
+def _store_stubs(con, pid: str, row, ext: Optional[dict], it: Optional[dict], ref: str) -> None:
+    """Write what was just filed onto the queue row. A kind not attempted (None) keeps its columns; a kind that
+    failed keeps its last good file and records the error; the history ids of both prints ride in stub_ids."""
+    try:
+        ids = json.loads(row["stub_ids"] or "{}")
+    except (TypeError, ValueError):
+        ids = {}
+    vals = {"stub_file": row["stub_file"], "stub_ref": row["stub_ref"], "stub_at": row["stub_at"], "stub_error": row["stub_error"],
+            "stub_internal": row["stub_internal"], "stub_internal_error": row["stub_internal_error"]}
+    if ext is not None:
+        if ext.get("filed"):
+            vals.update(stub_file=ext.get("file"), stub_ref=ref, stub_at=_now(), stub_error=None)
+            ids["vendor"] = ext.get("id")
+        else:
+            vals["stub_error"] = ext.get("error") or "not filed"
+    if it is not None:
+        if it.get("filed"):
+            vals.update(stub_internal=it.get("file"), stub_internal_error=None)
+            ids["internal"] = it.get("id")
+        else:
+            vals["stub_internal_error"] = it.get("error") or "not filed"
+    vals["stub_ids"] = json.dumps(ids)
+    con.execute("UPDATE pay_push SET " + ", ".join(f"{k}=?" for k in vals) + " WHERE payment_id=?", (*vals.values(), pid))
+
+
+def _history_ids(con, pid: str, ids: Optional[dict] = None) -> dict:
+    """{vendor: id, internal: id} of the payment's latest print of each kind: the row's own ids, a missing one
+    looked up in the print history (a row pushed before 10/16 never recorded its external stub's id)."""
+    ids = dict(ids or {})
+    for kind in ("vendor", "internal"):
+        if not ids.get(kind):
+            try:
+                r = con.execute("SELECT id FROM bill_payment_stub WHERE payment_id=? AND kind=? ORDER BY id DESC LIMIT 1", (str(pid), kind)).fetchone()
+            except Exception:                       # noqa: BLE001  (no history table yet)
+                r = None
+            if r:
+                ids[kind] = r[0]
+    return ids
+
+
+def _stub_result(r, con=None) -> dict:
+    """The result's stub block from a queue row: the external stub's state + id, the internal one under "internal"."""
+    try:
+        ids = json.loads((r["stub_ids"] if r else None) or "{}")
+    except (TypeError, ValueError):
+        ids = {}
+    if r and con is not None:
+        ids = _history_ids(con, r["payment_id"], ids)
+    return {"filed": bool(r and r["stub_file"] and not r["stub_error"]), "file": r and r["stub_file"],
+            "error": r and r["stub_error"], "id": ids.get("vendor"),
+            "internal": {"filed": bool(r and r["stub_internal"] and not r["stub_internal_error"]), "file": r and r["stub_internal"],
+                         "error": r and r["stub_internal_error"], "id": ids.get("internal")}}
 
 
 def clean_ref(method: str, ref) -> str:
@@ -525,11 +603,10 @@ def _after_post(res: dict, done: dict, want: dict, lv: dict, credits: list, meth
     watch(only=pid)
     con = _pcon()
     try:
-        r = con.execute("SELECT stub_file, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+        r = con.execute("SELECT * FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+        res["stub"] = _stub_result(r, con)
     finally:
         con.close()
-    res["stub"] = {"filed": bool(r and r["stub_file"] and not r["stub_error"]), "file": r and r["stub_file"],
-                   "error": r and r["stub_error"]}
 
 
 def commit(body: dict) -> dict:
@@ -792,6 +869,9 @@ _PUSH_TABLE = """CREATE TABLE IF NOT EXISTS pay_push (
     qbo_state TEXT, qbo_ref TEXT, checked_at TEXT, flagged_at TEXT,
     stub_file TEXT, stub_ref TEXT, stub_at TEXT, stub_error TEXT,
     owner_state TEXT NOT NULL DEFAULT 'open', owner_note TEXT, noted_at TEXT)"""
+# added 2026-10-16 (both stubs): the internal stub's file + error, and {vendor: id, internal: id} = the print-history
+# rows, so the page opens both to print. ALTERed onto an older table on first open.
+_PUSH_EXTRA = (("stub_internal", "TEXT"), ("stub_internal_error", "TEXT"), ("stub_ids", "TEXT"))
 FLAGS = ("deleted", "voided", "changed", "missing")
 STATE_WORDS = {"to_print": "waiting to print", "matched": "matched", "deleted": "deleted in QuickBooks",
                "voided": "voided in QuickBooks", "changed": "changed in QuickBooks", "missing": "not in the mirror"}
@@ -802,6 +882,10 @@ def _pcon():
     con = sqlite3.connect(str(bill_marks.LEDGER_DB))
     con.row_factory = sqlite3.Row
     con.execute(_PUSH_TABLE)
+    have = {r[1] for r in con.execute("PRAGMA table_info(pay_push)")}
+    for col, typ in _PUSH_EXTRA:
+        if col not in have:
+            con.execute(f"ALTER TABLE pay_push ADD COLUMN {col} {typ}")
     return con
 
 
@@ -847,7 +931,8 @@ def _judge(row, rec: Optional[dict], mst: dict) -> tuple:
 
 
 def watch(file_stubs: bool = True, only: str = "") -> dict:
-    """Judge every open pushed payment against the mirror; file the stub of a newly matched one."""
+    """Judge every open pushed payment against the mirror; file BOTH stubs of a newly matched one (or of one whose
+    number changed - a printed check), and the internal stub alone where only it is missing."""
     import bill_payment_stub as stubs               # noqa: PLC0415  (ledger-local module)
     con, mcon = _pcon(), mirror.connect()
     out = {"checked": 0, "matched": 0, "flagged": 0, "stubs": 0}
@@ -866,12 +951,12 @@ def watch(file_stubs: bool = True, only: str = "") -> dict:
                         (state, ref, _now(), flagged_at, pid))
             con.commit()                            # BEFORE the stub: print_stub records its print in this same DB
             if state == "matched" and file_stubs and (not row["stub_at"] or (row["stub_ref"] or "") != ref):
-                st = _stub(pid)
-                con.execute("UPDATE pay_push SET stub_file=?, stub_ref=?, stub_at=?, stub_error=? WHERE payment_id=?",
-                            (st.get("file"), ref if st.get("filed") else row["stub_ref"], _now() if st.get("filed") else row["stub_at"],
-                             None if st.get("filed") else st.get("error"), pid))
+                st = _stub(pid)                     # both stubs: the file names carry the number
+                _store_stubs(con, pid, row, st, st.get("internal"), ref)
                 out["stubs"] += bool(st.get("filed"))
                 out["matched"] += 1
+            elif state == "matched" and file_stubs and not row["stub_internal"]:
+                _store_stubs(con, pid, row, None, _stub_kind(pid, "internal"), ref)   # the external is filed; the internal was not (an older row, or it failed)
             con.commit()
     finally:
         con.close()
@@ -920,6 +1005,11 @@ def queue(show: str = "active") -> dict:
             d = dict(r)
             d["bills"] = json.loads(d["bills"] or "[]")
             d["credits"] = json.loads(d["credits"] or "[]")
+            try:
+                d["stub_ids"] = json.loads(d.get("stub_ids") or "{}")
+            except (TypeError, ValueError):
+                d["stub_ids"] = {}
+            d["stub_ids"] = _history_ids(con, d["payment_id"], d["stub_ids"])
             d["state_words"] = STATE_WORDS.get(d["qbo_state"] or "", d["qbo_state"] or "")
             d["flagged"] = d["qbo_state"] in FLAGS
             d["done"] = d["qbo_state"] == "matched" and bool(d["stub_at"]) and (d["stub_ref"] or "") == (d["qbo_ref"] or "")
@@ -1019,11 +1109,12 @@ def _assign_number(payment_id: str, number: str, row) -> dict:
     watch(only=pid)
     con = _pcon()
     try:
-        r = con.execute("SELECT stub_ref, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+        r = con.execute("SELECT * FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+        stub = _stub_result(r, con)
     finally:
         con.close()
     return {"ok": True, "payment_id": pid, "number": done.get("DocNumber"),
-            "stub": {"filed": bool(r and r["stub_ref"] == number), "error": r and r["stub_error"]}}
+            "stub": {**stub, "filed": bool(r and r["stub_ref"] == number)}}
 
 
 def _selftest() -> int:

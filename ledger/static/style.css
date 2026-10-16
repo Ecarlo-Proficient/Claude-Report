@@ -2477,6 +2477,12 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .vp-paytable tr.vp-bill > td:first-child { border-right-color: transparent; }
 /* the stub viewer (openStubViewer) fills its dialog; Full screen = the whole window */
 .att-dlg > .stub-view { flex: 1 1 auto; min-height: 0; }
+/* both bill payment stubs side by side after a payment (owner 2026-10-16: "show both internal and external to print") */
+.stub-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.stub-pair .stub-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.stub-pair .att-frame { flex: 1 1 auto; min-height: 0; }
+@media (max-width: 900px) { .stub-pair { grid-template-columns: 1fr; grid-auto-rows: 1fr; } }
+.pq-stubs .btn { margin-right: 6px; }
 .xdlg.att-dlg.att-full:not(.bv-dlg) { width: 99vw; height: 97vh; }
 .vp-paytable td.vp-stub { white-space: nowrap; }
 .vp-paytable td.vp-stub > .btn, .vp-paytable td.vp-stub > .stub-hist { display: inline-flex; align-items: center; vertical-align: middle; gap: 6px; margin-right: 6px; }

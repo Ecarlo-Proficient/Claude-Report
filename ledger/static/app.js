@@ -3192,6 +3192,27 @@ function openStubViewer(histId, title) {
   ov.onclick = (e) => { if (e.target === ov) close(); }; $("#attClose").onclick = close; document.addEventListener("keydown", esc, true);
   _attZoomable(ov.querySelector(".att-view"));
 }
+// Both stubs of one payment side by side - external (mailed) and internal (office copy) - each with its own new-tab
+// and download links, so the owner prints both from one place (2026-10-16: "add show both internal and external to
+// print"). One stub only (the other not filed) falls back to the single viewer.
+function _stubPairOf(vendor, ext, it) {
+  const items = [];
+  if (ext && ext.id) items.push({ id: ext.id, title: "External stub" });
+  if (it && it.id) items.push({ id: it.id, title: "Internal stub" });
+  return { title: vendor || "", items };
+}
+function openStubPair(pair) {
+  if (!pair || !pair.items.length) return;
+  if (pair.items.length === 1) return openStubViewer(pair.items[0].id, `${pair.items[0].title} - ${pair.title}`);
+  let ov = $("#attViewer"); if (ov) ov.remove();
+  ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov);
+  const panes = pair.items.map(it => { const url = "/api/bill-payment/stub/file?id=" + encodeURIComponent(it.id);
+    return `<div class="stub-pane"><div class="att-tools"><b>${_ge(it.title)}</b><a class="btn small" href="${_ge(url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(url)}" download>Download</a></div><iframe class="att-frame" src="${_ge(url)}#toolbar=1&view=FitH" title="${_ge(it.title)}"></iframe></div>`; }).join("");
+  ov.innerHTML = `<div class="xdlg att-dlg att-full" role="dialog"><div class="att-head"><h3>${_ge("Bill payment stubs - " + pair.title)}</h3><button class="btn small" id="attClose">Close</button></div><div class="att-view stub-view stub-pair">${panes}</div></div>`;
+  const close = () => { ov.remove(); document.removeEventListener("keydown", esc, true); };
+  const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  ov.onclick = (e) => { if (e.target === ov) close(); }; $("#attClose").onclick = close; document.addEventListener("keydown", esc, true);
+}
 function _stubLink(h) {   // one printed stub: opens the PDF as it went out, in the ledger's viewer
   const a = document.createElement("a"); a.className = "stub-link";
   a.href = "/api/bill-payment/stub/file?id=" + encodeURIComponent(h.id);
@@ -4105,12 +4126,21 @@ async function payQboWrite(btn) {
   say(`${res.posted} payment${res.posted !== 1 ? "s" : ""} written to QuickBooks, ${qaCents(res.total)}${res.failed ? ` · ${res.failed} not written` : ""}.`, res.failed ? "warn" : "ok");
   for (const r of res.results) {
     if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
-    const st = r.stub || {};
+    const st = r.stub || {}, it = st.internal || {};
     if (r.after_error) say(`${r.vendor}: ${r.after_error} - it is in QuickBooks; refresh before paying again`, "warn");
     if (r.warn) say(`${r.vendor}: ${r.warn}`, "warn");
+    const stubWord = (k, s) => `${k} stub ${s.filed ? "filed" : "NOT filed (" + (s.error || "?") + ")"}`;
     say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)}${(r.credit || 0) > 0.005 ? ` · ${qaCents(r.credit)} held as a credit with the vendor` : ""} · `
-      + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
+      + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : `${stubWord("external", st)} · ${stubWord("internal", it)}` + (st.filed && it.filed ? "" : " - print it from the vendor's Payments")), r.to_print || (st.filed && it.filed) ? "ok" : "warn");
+    if (st.id || it.id) { const row = document.createElement("div"); row.className = "cd-ra-line pq-stubs";
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = `Print ${r.vendor}'s stubs`;
+      b.title = "Both stubs side by side - external (mailed with the check) and internal (office copy)";
+      b.onclick = () => openStubPair(_stubPairOf(r.vendor, st, it)); row.appendChild(b); act.appendChild(row); }
   }
+  // the stubs open by themselves to print (owner 2026-10-16: "it didn't show me the pay stub to print ... i have to print
+  // anyways"): one payment written = its two stubs side by side now; several = a button per vendor above
+  { const withStubs = res.results.filter(r => r.ok && r.stub && (r.stub.id || (r.stub.internal || {}).id));
+    if (withStubs.length === 1) openStubPair(_stubPairOf(withStubs[0].vendor, withStubs[0].stub, withStubs[0].stub.internal)); }
   // the paid bills leave the run now. Only the ledger's own QuickBooks read runs here (mirror + bill payments + open
   // AP) - never the Bill Tracker.xlsx rebuild (owner 2026-09-29: "the bill tracker will pick up after updating.
   // remove from project ledger"): someone having the workbook open must never fail a payment's follow-up.
@@ -4170,14 +4200,17 @@ async function loadPayQueued() {
     const cs = document.createElement("td"); cs.className = "left";
     if (r.flagged) cs.appendChild(stText(r.state_words, "st-bad", `flagged ${fmtDate(r.flagged_at, true)}`));
     else if (r.qbo_state === "to_print") cs.appendChild(stText("waiting to print", "st-warn", "Print it in QuickBooks - the next refresh picks up its check #"));
-    else if (r.qbo_state === "matched") cs.appendChild(stText(r.done ? "matched · stub filed" : "matched · stub not filed", r.done ? "st-ok" : "st-warn",
-      r.done ? (r.stub_file || "") : (r.stub_error || "the stub will be retried on the next refresh")));
+    else if (r.qbo_state === "matched") { const it = !!r.stub_internal && !r.stub_internal_error;
+      cs.appendChild(stText(r.done ? (it ? "matched · stubs filed" : "matched · external stub filed, internal not") : "matched · stubs not filed", r.done && it ? "st-ok" : "st-warn",
+        r.done ? [r.stub_file, it ? r.stub_internal : (r.stub_internal_error || "the internal stub will be retried on the next refresh")].filter(Boolean).join("\n")
+               : (r.stub_error || "the stubs will be retried on the next refresh"))); }
     else cs.appendChild(stText(r.state_words || "–", "st-warn"));
     if (r.owner_state === "kept") { const k = document.createElement("div"); k.className = "pq-note"; k.textContent = "Kept: " + (r.owner_note || ""); cs.appendChild(k); }
     if (r.owner_state === "resolved") { const k = document.createElement("div"); k.className = "pq-note"; k.textContent = "Resolved" + (r.owner_note ? ": " + r.owner_note : ""); cs.appendChild(k); }
     tr.appendChild(cs);
     const cx = document.createElement("td"); cx.className = "left pq-actions";
     const mk = (label, fn, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = label; if (title) b.title = title; b.onclick = fn; cx.appendChild(b); return b; };
+    { const ids = r.stub_ids || {}; if (ids.vendor || ids.internal) mk("Stubs", () => openStubPair(_stubPairOf(r.vendor, { id: ids.vendor }, { id: ids.internal })), "Open both stubs to print - external and internal"); }
     if (r.flagged && r.owner_state !== "resolved") {
       mk("Resolved", () => _pqMark(r, "resolved"), "Investigated - take it off the queue (a note is optional)");
       if (r.owner_state !== "kept") mk("Keep…", () => _pqMark(r, "kept"), "Leave it in the queue, with the reason");
