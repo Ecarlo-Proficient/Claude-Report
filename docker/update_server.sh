@@ -12,6 +12,14 @@
 # It refuses: a checkout with local edits, a second run at the same time.
 # The DSM task runs it every night (03:00) and on demand: with no new commits it rebuilds nothing (it only applies a
 # changed server.env), so once live, whatever is merged to main reaches the server by the next morning, hands-free.
+#
+# PREFLIGHT (10/16/2026 - the update that took the server down: a new compose mount, /volume1/docker/automation/
+# bill-approval, did not exist yet, Docker removed the old container and could not start the new one, and the log
+# said "the old container keeps running"). Before anything changes it reads the NEW commit's compose.yml and
+# server.env.example: every folder / file compose mounts or loads must exist, and server.env must carry every setting
+# the example lists. Anything missing = STOPPED: nothing pulled, nothing rebuilt, the running server untouched, and
+# the log names each missing item. After every start it checks the container really runs and says DOWN if not.
+# The checklist the admin follows is docker/RELEASE.md.
 set -uo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin
 BASE=/volume1/docker/automation
@@ -37,31 +45,76 @@ mode="$(sed -n 's/^ACB_SERVER_MODE=//p' "$BASE/server.env" | tr -d '[:space:]')"
 echo "mode ${mode:-?}, branch $branch, before $(G log --oneline -1)"
 if [ -n "$(G status --porcelain --untracked-files=no)" ]; then echo "the checkout has local edits - nothing changed"; G status --short; exit 1; fi
 before="$(G rev-parse HEAD)"
-if [ "$mode" = "live" ] && [ "$branch" != "main" ]; then
-  # going live: a LIVE server runs main only, so move the checkout onto the reviewed main (same key, same pin)
-  if ! { G fetch origin main && G checkout -B main origin/main; }; then
-    chown -R "$owner" "$SRC"; echo "could not switch to main - nothing rebuilt, the server keeps running"; exit 1
+if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
+
+# what the Synology must already have for the code at $1: compose's mounts + env files exist, server.env carries every
+# setting server.env.example lists. $2 = "release" (new code: a missing setting stops too) or "restart" (same code:
+# only a missing mount stops - the container cannot start without it; a missing setting is reported).
+preflight() {
+  local ref="$1" kind="$2" hard="" soft="" p k
+  while IFS= read -r p; do
+    [ -n "$p" ] && [ ! -e "$p" ] && hard="$hard
+    MISSING on the Synology: $p"
+  done <<PATHS
+$(G show "$ref:docker/compose.yml" | sed -nE 's/^[[:space:]]*-[[:space:]]*"?(\/[^:"#]*).*/\1/p' | sed -E 's/[[:space:]]+$//')
+PATHS
+  for k in $(G show "$ref:docker/server.env.example" | sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p'); do
+    grep -qE "^$k=" "$BASE/server.env" || soft="$soft
+    MISSING in server.env: $k= (the line and its note are in docker/server.env.example)"
+  done
+  [ "$kind" = "release" ] && { hard="$hard$soft"; soft=""; }
+  [ -n "$soft" ] && echo "WARNING - the server runs without:$soft"
+  if [ -n "$hard" ]; then
+    echo "STOPPED before any change - the Synology is not ready for $(G log --oneline -1 "$ref" | cut -c1-80):$hard"
+    echo "Set these up (docker/RELEASE.md), then Run the task again. The server keeps running what it runs now."
+    return 1
   fi
-  echo "switched $branch -> main (live runs main only)"
-  branch=main
+  echo "preflight ok - every mount and setting this code needs is on the Synology"
+}
+
+# after a start: is the container really running? (a failed `up` can leave it removed - say so, never guess)
+running_or_down() {
+  sleep 5
+  if [ "$(docker inspect -f '{{.State.Running}}' office-server 2>/dev/null)" = "true" ]; then
+    echo "office-server is running"; return 0
+  fi
+  echo "THE SERVER IS DOWN - office-server is not running. Fix the error above and Run the task again."; return 1
+}
+
+target="$branch"
+[ "$mode" = "live" ] && target=main          # a LIVE server runs main only
+if ! G fetch origin "$target"; then
+  chown -R "$owner" "$SRC"; echo "FETCH FAILED - nothing changed, the server keeps running"; exit 1
 fi
-if ! { G fetch origin "$branch" && G merge --ff-only "origin/$branch"; }; then
+if [ "$(G rev-parse "origin/$target")" != "$before" ]; then
+  preflight "origin/$target" release || { chown -R "$owner" "$SRC"; exit 1; }
+fi
+if [ "$branch" != "$target" ]; then
+  # going live: move the checkout onto the reviewed main (same key, same pin)
+  if ! G checkout -B "$target" "origin/$target"; then
+    chown -R "$owner" "$SRC"; echo "could not switch to $target - nothing rebuilt, the server keeps running"; exit 1
+  fi
+  echo "switched $branch -> $target (live runs main only)"
+  branch="$target"
+elif ! G merge --ff-only "origin/$branch"; then
   chown -R "$owner" "$SRC"; echo "PULL FAILED - nothing rebuilt, the server keeps running"; exit 1
 fi
 chown -R "$owner" "$SRC"
-if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
 if [ "$(G rev-parse HEAD)" = "$before" ]; then
   # the nightly run, most nights: no new code - no rebuild. `up -d` still applies a changed server.env (going live,
-  # a new setting) and is a no-op otherwise, so the running step is never interrupted for nothing.
+  # a new setting) and starts a container that is down; otherwise a no-op, the running step is never interrupted.
   echo "no new commits - nothing rebuilt"
-  $DC -f docker/compose.yml up -d || { echo "RESTART FAILED - the old container keeps running"; exit 1; }
+  preflight HEAD restart || exit 1
+  $DC -f docker/compose.yml up -d || echo "RESTART FAILED"
+  running_or_down || exit 1
   $DC -f docker/compose.yml ps
   echo "done"; exit 0
 fi
 echo "commits pulled:"; G log --oneline "$before..HEAD"
 # stamp the image with the code it is built from: the scheduler reports it, the ledger lists what is still waiting
 export ACB_BUILD_COMMIT="$(G rev-parse HEAD)" ACB_BUILD_BRANCH="$branch" ACB_BUILT_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-$DC -f docker/compose.yml up -d --build || { echo "BUILD FAILED - the old container keeps running"; exit 1; }
+$DC -f docker/compose.yml up -d --build || echo "BUILD / START FAILED"
+running_or_down || exit 1
 for f in "/volume1/Accounting/_server-test/Bill Tracker.xlsx" "/volume1/Accounting/_server-test/Bill Tracker - compare copy.xlsx"; do
   [ -f "$f" ] || continue
   if command -v synoacltool >/dev/null 2>&1; then synoacltool -enforce-inherit "$f"; else chmod 664 "$f"; fi

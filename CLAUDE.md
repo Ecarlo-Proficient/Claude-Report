@@ -79,6 +79,14 @@ restate them here. Business/strategic context lives in session memory, not in th
    Put explanations in prose outside the code block.
 7. **Never overwrite a data file or write to QBO without an explicit confirm/dry-run gate.** Writers
    default to dry-run; QBO writes are gated (e.g. `--commit`, `CONFIRM=Y`).
+8. **A release to the office server is OUR process - the owner's and Claude's - never the developer's (binding, the
+   owner 2026-10-16, after an update took the server down: "it's THE process for YOU AND I, the dev only job is the
+   pull and update the synology on my behalf").** Any change that reaches the Synology (a path the image copies,
+   `docker/`) is checked BEFORE the release PR merges: run `docker/release_check.py` (or the ledger gear's Waiting
+   for the server), and when it says NOT ready or the update script changed, hand the owner its developer
+   instructions to forward - never merge a release the Synology is not ready for, never leave the Synology side for
+   the developer to work out. A new compose mount or server.env setting is a Synology step: name it in the same
+   commit's STATUS. The checklist is `docker/RELEASE.md`.
 
 ---
 
@@ -244,7 +252,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   to "mac" = rollback). The image copies a read-only allow-list (`tests/test_office_server_image.py` fails a
   QuickBooks writer); the server has its OWN Intuit app and its own mirror; keys live in an encrypted
   Synology shared folder. `push_registers.sh` sends the owner's CompanyHealth rule files to the server one
-  way. The runbook for the developer is `docker/README.md`.
+  way. The runbook for the developer is `docker/README.md`. **Every release follows `docker/RELEASE.md`** (safety rail 8:
+  the checks are ours; the developer gets `release_check.py`'s instructions); `update_server.sh` stops untouched if a mount
+  or setting is missing.
 - **docs/** — Notion architecture, the Invoice Tracker system reference, `ARCHITECTURE.md`
   (the living diagram).
 

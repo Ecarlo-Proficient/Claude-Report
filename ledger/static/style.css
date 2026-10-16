@@ -2600,9 +2600,11 @@ td.stmt-cell { white-space: nowrap; }
 .srv-upd a { color: var(--accent-text); text-decoration: none; } .srv-upd a:hover { text-decoration: underline; }
 .srv-upd td.good a, .srv-upd td.bad a, .srv-upd td.warn a { color: inherit; }   /* a CI result keeps its colour */
 .srv-upd .warn { color: var(--warn-text); } .srv-upd .good { color: var(--pos); } .srv-upd .bad { color: var(--neg-text); font-weight: 600; }
+.srv-ready { margin: 4px 0 6px 18px; padding: 0; font-size: .84em; }
 .srv-counts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 2px; font-size: .86em; }
 .srv-counts b { font-variant-numeric: tabular-nums; }
 .srv-tail { font-family: var(--font-mono); font-size: .8em; white-space: pre-wrap; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; margin: 4px 0 6px; max-height: 160px; overflow: auto; }
+.srv-upd .srv-tail { max-height: 320px; }
 .sync-pill.bad .dot { background: var(--neg); } .sync-pill.bad { border-color: color-mix(in srgb, var(--neg) 60%, var(--border)); color: var(--neg-text); }
 .sp-dot.bad { background: var(--neg); }
 .sp-row.sp-srv .sp-l { white-space: normal; }

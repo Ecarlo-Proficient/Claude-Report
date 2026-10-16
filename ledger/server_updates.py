@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 REPO = Path(__file__).resolve().parent.parent
+import sys  # noqa: E402
+sys.path.insert(0, str(REPO))
+from shared import server_release  # noqa: E402  (THE rule: what the Synology must have before a release reaches it)
 DOCKERFILE = REPO / "docker" / "Dockerfile"
 BUILD_FILES = {"docker/Dockerfile", "docker/compose.yml"}
 PASTED_SCRIPT = "docker/update_server.sh"
@@ -178,5 +181,19 @@ def collect(build: Optional[dict], fetch: bool = True) -> dict:
     rows = classify(commits, server_branch=server_branch, on_main=on_main,
                     paths=image_paths(), ci=ci)
     counts = {k: sum(1 for r in rows if r["stage"] == k) for k in ("release", "update", "none")}
-    return {"ok": True, "fetched": fetched, "repo_url": repo_url(), "server": build, "server_known": server_known, "rows": rows,
+    ready = None
+    try:                              # is the Synology ready for what is on dev? (docker/RELEASE.md step 1)
+        show = lambda ref, p: _git("show", f"{ref}:{p}")
+        checks = server_release.readiness(show("origin/dev", server_release.COMPOSE),
+                                          show("origin/dev", server_release.ENV_EXAMPLE), server_release.server_env_text(),
+                                          old_compose_text=show(base, server_release.COMPOSE),
+                                          old_example_text=show(base, server_release.ENV_EXAMPLE))
+        ready = server_release.summary(checks)
+        ready["repaste"] = server_release.PASTED_SCRIPT in _git("diff", "--name-only", f"{base}..origin/dev").split()
+        ready["instructions"] = server_release.developer_instructions(
+            checks, ready["repaste"], show("origin/dev", server_release.COMPOSE),
+            show("origin/dev", server_release.ENV_EXAMPLE), "dev -> main " + _git("rev-parse", "--short", "origin/dev").strip())
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        notes.append(f"Synology readiness not checked ({e})")
+    return {"ok": True, "fetched": fetched, "repo_url": repo_url(), "ready": ready, "server": build, "server_known": server_known, "rows": rows,
             "counts": counts, "release_pr": release, "repaste": any(r["repaste"] for r in rows), "notes": notes}

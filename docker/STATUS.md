@@ -3,6 +3,25 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-16 · **Releases can no longer take the server down for a missing folder or setting** (owner: "can we make
+  instructions for synology push to make sure it has all these checks? this is more serious than editing code from
+  my laptop. that shouldn't of happened"). The incident: release PR #23 added the compose mount
+  `/volume1/docker/automation/bill-approval` (the SharePoint approval report's Cloud Sync copy); the 10:44 update ran
+  before the folder existed, Docker removed the old container and could not start the new one ("Bind mount failed"),
+  and the log said "the old container keeps running" - the server was down from 10:43. Also found: the live
+  server.env lacks PNL_CP_AT, ACB_BILL_APPROVAL_XLSX and ACB_CP_AWARDED_BASE (added to the example 10/13).
+  Now: `update_server.sh` PREFLIGHT reads the NEW commit's compose.yml + server.env.example before anything changes -
+  a missing mount / env file, or a missing setting on a release, = STOPPED (nothing pulled, the container untouched,
+  each item named); a restart of the same code only stops on a missing mount (a setting is a WARNING). After every
+  start `running_or_down` checks the container really runs and says THE SERVER IS DOWN if not. NEW
+  `shared/server_release.py` = the same rule for the Mac: NEW `docker/release_check.py` (run before merging; exit 1 =
+  not ready) and the ledger's Waiting for the server ("Synology ready / NOT ready", item by item). NEW
+  `docker/RELEASE.md` = the release checklist - **the checks are the owner's and Claude's** (repo safety rail 8; the
+  developer only carries out the Synology steps): `release_check.py` and the ledger write the developer's
+  instructions (`server_release.developer_instructions`: each folder, each server.env line with its exact value,
+  re-paste, Run, what the log should end with). **Re-paste update_server.sh in DSM** (it also carries the version
+  stamp). Tests: `tests/test_update_server_preflight.py` (the script's own function + three end-to-end runs: the 10/16
+  incident now stops untouched, a ready release goes through, a failed start says DOWN), `tests/test_server_release.py`.
 - 2026-10-16 · **The server reports the code it runs** (owner: "i need to see at a glance all the pushes pending to be
   in synology and their status when i click refresh in the project ledger"). `update_server.sh` exports the commit it
   builds (+ branch + time) before `up --build`; `compose.yml` passes them as build args; the Dockerfile keeps them as

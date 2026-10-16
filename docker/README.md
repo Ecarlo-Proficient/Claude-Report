@@ -129,6 +129,10 @@ What to watch:
 
 ### 7b. Updating the server - no terminal needed
 
+**Every release follows `docker/RELEASE.md`** (the checklist: is the Synology ready -> merge -> Run -> confirm).
+Before any change the script now checks that every folder `compose.yml` mounts and every `server.env` setting
+the example lists is on the Synology; anything missing = STOPPED, nothing changed, the server keeps running.
+
 `docker/update_server.sh` pulls the checkout's branch, rebuilds + restarts (the mode stays as server.env says) and puts
 the share's inherited permissions back on the test trackers. In DSM: Control Panel > Task Scheduler > Create > Scheduled
 Task > User-defined script, user **root**, **schedule: daily at 03:00** (after the 02:30 count check). Paste the script's

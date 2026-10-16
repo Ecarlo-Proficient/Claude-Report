@@ -3147,6 +3147,29 @@ function renderServerUpdates() {
     else line("No release PR open (dev -> main)", "srv-meta warn");
   }
   if (u.repaste) line("A commit changes the DSM update script - it applies once re-pasted in DSM", "srv-meta warn");
+  // Is the Synology ready for what is on dev? (shared/server_release - the same check update_server.sh runs there)
+  const rd = u.ready;
+  if (rd) {
+    const want = (rd.missing || []).concat((rd.new || []).filter(r => r.ok !== false));
+    line(rd.ready ? "Synology ready for this release" + ((rd.unknown || []).length ? " (keys folder: confirm on the Synology)" : "")
+                  : `Synology NOT ready - ${rd.missing.length} missing; the update would stop until they are there`,
+         "srv-meta " + (rd.ready ? "good" : "bad"));
+    if (want.length) {
+      const ul = document.createElement("ul"); ul.className = "srv-ready";
+      for (const r of want) { const li = document.createElement("li"); li.className = r.ok === false ? "bad" : (r.ok ? "good" : "dim");
+        li.textContent = `${r.ok === false ? "missing" : r.ok ? "in place" : "can't check here"} · ${r.kind === "mount" ? "folder" : "server.env setting"} ${r.what}${r.new ? " (new)" : ""}`;
+        ul.appendChild(li); }
+      box.appendChild(ul);
+    }
+    if (rd.instructions) {   // the Synology steps for the developer - the checks are ours, he carries them out (docker/RELEASE.md)
+      const det = document.createElement("details"); const sm = document.createElement("summary"); sm.className = "srv-meta";
+      sm.textContent = "Instructions for the developer"; det.appendChild(sm);
+      const pre = document.createElement("div"); pre.className = "srv-tail"; pre.textContent = rd.instructions; det.appendChild(pre);
+      const cp = document.createElement("button"); cp.type = "button"; cp.className = "btn small"; cp.textContent = "Copy";
+      cp.onclick = () => navigator.clipboard.writeText(rd.instructions).then(() => toast("Copied - paste it to the developer"), () => toast("Could not copy"));
+      det.appendChild(cp); box.appendChild(det);
+    }
+  }
   for (const n of u.notes || []) line(n);
   const live = rows.filter(r => r.stage !== "none"), off = rows.filter(r => r.stage === "none");
   if (live.length) box.appendChild(_srvUpdTable(live, u.repo_url));

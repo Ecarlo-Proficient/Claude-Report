@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Waiting for the server says whether the Synology is ready** (after the 10/16 outage): the block
+  shows "Synology ready for this release" or "Synology NOT ready - N missing", item by item (missing folder /
+  server.env setting, what this release adds, what this Mac can't see), from `shared/server_release` - the same rule
+  `docker/update_server.sh` applies on the Synology and `docker/release_check.py` prints. **Instructions for the
+  developer** (folded, with Copy): the Synology steps for this release with exact values, ready to forward - the
+  checks are ours, he carries them out. Release checklist: `docker/RELEASE.md`.
 - 10/16/2026 · **Both stubs filed and shown after Pay in QuickBooks** (owner: "when i paid bills today, #1 it didn't show
   me the pay stub to print i like that feature cause i have to print anyways - add show both internal and external to
   print. and it didn't create a external/internal stub after paying in the accounting drive"). What had happened on
