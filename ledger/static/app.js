@@ -272,14 +272,14 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills", "revised"] },   // Revised bills: the AP-13 follow-up board (owner 2026-10-12)   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "audit",     label: "Audit",     tabs: ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared", "qboar", "qboardel", "dupcustomers", "qboother"],
-    cats: [["AP", ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared"]], ["AR", ["qboar", "qboardel"]], ["Company", ["dupcustomers", "qboother"]]] },   // the sub-tab row shows each category's name before its pages
+  { id: "audit",     label: "Audit",     tabs: ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared", "paydrift", "qboar", "qboardel", "dupcustomers", "qboother"],
+    cats: [["AP", ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared"]], ["AR", ["paydrift", "qboar", "qboardel"]], ["Company", ["dupcustomers", "qboother"]]] },   // the sub-tab row shows each category's name before its pages
   { id: "company",   label: "Company",   tabs: ["money", "reclassify", "processes"] },   // Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", revised: "Revised bills", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", checkdrift: "Checks QBO changed", paydrift: "Payments QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
   qboap: "Bills changed", qboapdel: "Bills deleted", qboar: "Invoices changed", qboardel: "Invoices deleted", qboother: "Other changes",   // short on the tab; the page title says it in full
   wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
 };
@@ -344,6 +344,7 @@ function setTab(t) {
   if (t === "billaudit") loadAccounting();
   if (PAGE_OF[t] === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
+  if (t === "paydrift") loadPayDrift();
   if (t === "revised") loadRevised();
   if (t === "uncleared") loadUncleared();
   if (t === "dupcustomers") loadDupCustomers();
@@ -10291,6 +10292,121 @@ async function cdReapplyWrite(d, btn, box) {
   setTimeout(() => { const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 2500);
 }
 
+// ── Payments QBO changed (owner 2026-10-16: "if any client payment gets offed we need to fix JUST like the bill payments
+// getting unapplied"). Change a credit memo's customer and QuickBooks takes the credit off the payment that used it and the
+// same amount off an invoice instead - the invoice reopens, the payment total stays. QBO does not touch the payment's
+// version, so the mirror still holds it as it was: /api/paydrift = ledger/payment_drift.py, /api/paydrift/reapply =
+// shared/payment_reapply.py (live dry run, then the write after "Are you sure?").
+let PD = null;
+async function loadPayDrift(force) {
+  const note = $("#pdNote"), table = $("#pdTable"); if (!table) return;
+  if (PD && PD.ok && !force) { renderPayDrift(); return; }
+  if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 6);
+  try { PD = await (await fetch("/api/paydrift")).json(); } catch (e) { PD = { ok: false, error: String(e) }; }
+  renderPayDrift();
+}
+function renderPayDrift() {
+  const note = $("#pdNote"), table = $("#pdTable"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  const cols = [["Customer", "left"], ["Payment #", "left"], ["Payment date", "left"], ["Payment total", "right"],
+    ["Credit taken off", "left"], ["Invoice reopened", "left"], ["Amount off", "right"], ["Changed", "left"]];
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  if (!PD || !PD.ok) { if (note) note.textContent = PD && PD.error ? "unavailable" : "";
+    tbody.innerHTML = PD && PD.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(PD.error)}</td></tr>` : ""; return; }
+  if (note) note.textContent = `refreshed ${PD.last_refresh ? fmtDate(PD.last_refresh, true) : "never"}`;
+  { const tr = document.createElement("tr");
+    for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; tr.appendChild(th); }
+    thead.appendChild(tr); }
+  const all = PD.rows || [];
+  const q = (($("#pdSearch") || {}).value || "").trim();
+  const rows = all.filter(r => refHit(q, [r.ref, ...r.off.map(o => o.doc)]));
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No client payment QuickBooks changed - every payment still sits on its invoices and credits."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const tr = document.createElement("tr"); tr.className = "vp-pay";
+    tr.appendChild(leftText(r.customer || "–"));
+    tr.appendChild(qboLinkCell(r.ref || r.payment_id, qboUrl("recvpayment", r.payment_id), "Open the payment in QuickBooks"));
+    tr.appendChild(leftText(r.date ? fmtDateShort(r.date) : "–"));
+    { const td = document.createElement("td"); td.className = "right"; td.textContent = qaCents(r.total); tr.appendChild(td); }
+    for (const list of [r.credits_off, r.invoices_reopened]) { const td = leftText(list.length ? list.join(" · ") : "–"); if (!list.length) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right neg"; td.textContent = qaCents(r.amount_off); tr.appendChild(td); }
+    { const last = r.off.map(o => o.updated || "").sort().pop(); tr.appendChild(leftText(last ? fmtDate(last, true) : "–")); }
+    frag.appendChild(tr);
+    frag.appendChild(pdFixRow(r, cols.length));
+  }
+  tbody.appendChild(frag);
+}
+function pdFixRow(r, span) {
+  const tr = document.createElement("tr"); tr.className = "qa-repair";
+  const td = document.createElement("td"); td.colSpan = span; td.className = "left";
+  const card = document.createElement("div"); card.className = "qa-repair-card";
+  const h = document.createElement("div"); h.className = "qa-repair-head";
+  h.textContent = `Payment #${r.ref || r.payment_id}: ${qaCents(r.total)} · ${r.customer}`; card.appendChild(h);
+  const t = document.createElement("table"); t.className = "qa-repair-tbl";
+  t.innerHTML = `<thead><tr><th class="left">What</th><th class="left">No.</th><th class="left">Customer</th><th class="right">On the payment</th><th class="right">Open now</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const o of r.off) { const x = document.createElement("tr");
+    x.appendChild(leftText(o.type === "CreditMemo" ? "Credit taken off" : "Invoice reopened"));
+    x.appendChild(qboLinkCell(o.doc, qboUrl(o.type === "CreditMemo" ? "creditmemo" : "invoice", o.id), "Open in QuickBooks"));
+    x.appendChild(leftText(o.customer || "–"));
+    for (const v of [o.applied, o.open]) { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(v); x.appendChild(c); }
+    tb.appendChild(x); }
+  t.appendChild(tb); card.appendChild(t);
+  const act = document.createElement("div"); act.className = "qa-repair-act";
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "See what goes back…";
+  b.title = "What re-applying would put back, live from QuickBooks. Nothing is written until you press Write to QuickBooks and confirm.";
+  b.onclick = (e) => { e.stopPropagation(); pdReapplyDry(r, card, b); };
+  act.appendChild(b); card.appendChild(act);
+  td.appendChild(card); tr.appendChild(td); return tr;
+}
+async function pdReapplyDry(r, card, btn) {
+  const old = card.querySelector(".cd-reapply"); if (old) old.remove();
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "Reading QuickBooks…";
+  let d;
+  try { d = await (await fetch(`/api/paydrift/reapply?payment_id=${encodeURIComponent(r.payment_id)}`)).json(); }
+  catch (e) { d = { ok: false, why: [String(e)], back: [] }; }
+  btn.disabled = false; btn.textContent = label;
+  const box = document.createElement("div"); box.className = "cd-reapply";
+  const p = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; box.appendChild(x); };
+  if (d.error) { p(`Dry run: ${d.error}`, "neg"); card.appendChild(box); return; }
+  p(`Dry run, live from QuickBooks - nothing written. ${(d.back || []).length} go back on, ${qaCents(d.amount)}.`, d.ok ? "ok" : "");
+  for (const w of d.why || []) p(w, /^nothing to put back/.test(w) ? "ok" : "neg");   // already back = good news, not an error
+  if ((d.back || []).length) {
+    const t = document.createElement("table"); t.className = "qa-repair-tbl";
+    t.innerHTML = `<thead><tr><th class="left">Goes back on</th><th class="left">No.</th><th class="right">Amount</th><th class="right">Open now</th><th class="right">Open after</th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    for (const x of d.back) { const tr = document.createElement("tr");
+      tr.appendChild(leftText(x.type === "CreditMemo" ? "Credit" : "Invoice"));
+      tr.appendChild(qboLinkCell(x.doc, qboUrl(x.type === "CreditMemo" ? "creditmemo" : "invoice", x.id), "Open in QuickBooks"));
+      for (const v of [x.amount, x.open_now, x.open_after]) { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(v); tr.appendChild(c); }
+      tb.appendChild(tr); }
+    t.appendChild(tb); box.appendChild(t);
+  }
+  const act = document.createElement("div"); act.className = "qa-repair-act";
+  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.textContent = "Write to QuickBooks…";
+  w.disabled = !d.ok;
+  w.onclick = (e) => { e.stopPropagation(); pdReapplyWrite(d, w, box); };
+  act.appendChild(w); box.appendChild(act); card.appendChild(box);
+}
+async function pdReapplyWrite(d, btn, box) {
+  const msg = `Are you sure?\n\nThis writes to QuickBooks:\npayment #${d.ref} · ${d.customer} · ${fmtDate(d.date)} · ${qaCents(d.total)}\n`
+    + `puts ${d.back.length} back on it (${d.back.map(x => x.doc).join(", ")}), ${qaCents(d.amount)}.\n\nOnly this payment changes. It is backed up first.`;
+  if (!confirm(msg)) return;
+  btn.disabled = true; btn.textContent = "Writing…";
+  let res;
+  try { res = await (await fetch("/api/paydrift/reapply", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payment_id: d.payment_id, sync_token: d.sync_token, n: d.n, amount: d.amount, confirm: true }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  const x = document.createElement("div"); x.className = "cd-ra-line " + (res.ok ? "ok" : "neg");
+  x.textContent = res.ok ? `Written and checked: payment #${res.ref} is back as it was, every invoice and credit to the cent.`
+    + (res.mirror_refreshed ? "" : " Refresh from QuickBooks to update this page.") : `Not written: ${res.error || "failed"}`;
+  box.appendChild(x);
+  if (!res.ok) { btn.disabled = false; btn.textContent = "Write to QuickBooks…"; return; }
+  btn.textContent = "Written";
+  setTimeout(() => { const y = window.scrollY; loadPayDrift(true).then(() => window.scrollTo(0, y)); }, 2500);
+}
+
 // Clear copy bulk fix: the bar under the chips. Step 1 proves every listed check again LIVE from QuickBooks (no
 // write) and lists each with its short pays and credits; step 2 writes only the ones that proved, after "Are you
 // sure?" - the server re-proves each one right before its own write and skips any that changed.
@@ -11239,7 +11355,7 @@ function init() {
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
     if (document.querySelector(".panel:not([hidden])")) return;
     const vis = x => !!(x && x.offsetParent);
-    const el = ["#vpSearch", "#bfQuick", "#ifQuick", "#pfSearch", "#qaSearch", "#cdSearch", "#ucSearch", "#dcSearch", "#acctSearch"].map(id => $(id)).find(vis)
+    const el = ["#vpSearch", "#bfQuick", "#ifQuick", "#pfSearch", "#qaSearch", "#cdSearch", "#pdSearch", "#ucSearch", "#dcSearch", "#acctSearch"].map(id => $(id)).find(vis)
       || [...document.querySelectorAll('.tab-page:not([hidden]) input[type="search"]')].find(vis);
     if (!el) return;
     e.preventDefault(); el.focus(); el.select();
@@ -11339,7 +11455,7 @@ function init() {
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
   // Group by (audit pages): None / Day / Month, remembered per page
-  { const RR = { qboaudit: () => renderQboAudit(), checkdrift: () => renderCheckDrift(), uncleared: () => renderUncleared(), dupcustomers: () => renderDupCustomers(), billaudit: () => { if (ACCT && ACCT.ok) renderAccounting(); } };
+  { const RR = { qboaudit: () => renderQboAudit(), checkdrift: () => renderCheckDrift(), paydrift: () => renderPayDrift(), uncleared: () => renderUncleared(), dupcustomers: () => renderDupCustomers(), billaudit: () => { if (ACCT && ACCT.ok) renderAccounting(); } };
     for (const seg of document.querySelectorAll(".aud-groupby")) {
       const pg = seg.dataset.page, paint = () => seg.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.g === audGroupBy(pg)));
       paint();
@@ -11350,6 +11466,9 @@ function init() {
   $$("#qaDays .seg-btn").forEach(b => { b.onclick = () => { qaDays = Number(b.dataset.days); loadQboAudit(true); }; });
   { const el = $("#btnQaReload"); if (el) el.onclick = () => loadQboAudit(true); }
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
+  { const el = $("#btnPdReload"); if (el) el.onclick = () => loadPayDrift(true); }
+  { const el = $("#btnPdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#pdProg"), fill: $("#pdFill"), step: $("#pdStep"), after: () => loadPayDrift(true) }); }
+  { const el = $("#pdSearch"); if (el) { el.addEventListener("input", renderPayDrift); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderPayDrift(); } }); } }
   { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
   { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
   { const el = $("#btnRcPreview"); if (el) el.onclick = () => rcPreview("lines");

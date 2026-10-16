@@ -61,6 +61,8 @@ import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - 
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
+import payment_drift      # noqa: E402  (local: client payments QBO stripped of a credit / invoice - the Payments QBO changed audit, /api/paydrift)
+import reapply_payment    # noqa: E402  (local: put a stripped client payment back - an owner-confirmed QBO write)
 import invoice_view       # noqa: E402  (local: the invoice viewer - an invoice as QuickBooks holds it: lines, payments, joint checks; /api/invoice/view)
 import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
 import draw_periods       # noqa: E402  (local: a job's draw periods as set on the ledger - the project page's editor; never QBO)
@@ -4041,6 +4043,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(reapply_check.dry_run(self._query().get("payment_id") or ""))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
+        elif path == "/api/paydrift/reapply":   # dry run: what re-applying a stripped client payment would write (live read, no write)
+            try:
+                self._json(reapply_payment.dry_run(self._query().get("payment_id") or ""))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+        elif path == "/api/paydrift":      # Payments QBO changed: client payments QBO took a credit / invoice off (owner 2026-10-16)
+            try:
+                self._json(payment_drift.audit())
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "rows": [], "error": f"payment audit failed: {e}"})
         elif path == "/api/checkdrift":    # Checks QBO changed: paid checks QBO unapplied / moved on its own (owner 2026-09-24, check 48314)
             try:
                 res = check_drift.audit(since=self._query().get("since") or check_drift.SINCE)
@@ -4149,6 +4161,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pay_bills("mark")
         elif p == "/api/checkdrift/reapply":  # THE QBO WRITE: re-apply a stripped check, only the plan the owner confirmed
             self._check_reapply()
+        elif p == "/api/paydrift/reapply":    # THE QBO WRITE: re-apply a stripped client payment, only the plan the owner confirmed
+            self._pay_reapply()
         elif p == "/api/reclassify/commit":   # THE QBO WRITE: move the ticked lines, only the preview the owner confirmed
             self._reclassify_commit()
         elif p == "/api/draw-periods/save":   # a ledger write - a job's draw periods as set on the page (draw_period); never QBO
@@ -4952,6 +4966,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": "not confirmed"}, 400)
         try:
             res = reapply_check.commit(pid, str(body["sync_token"]), n, amount)
+        except Exception as e:             # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if res.get("ok"):
+            r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
+            res["mirror_refreshed"] = r.returncode == 0
+        self._json(res)
+
+    def _pay_reapply(self):
+        """{payment_id, sync_token, n, amount, confirm: true} -> put the client payment back exactly as the dry run the
+        owner saw and confirmed, then refresh the mirror so the page shows QuickBooks as it now is."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            pid = str(body.get("payment_id") or "").strip()
+            n, amount = int(body.get("n")), float(body.get("amount"))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        if not pid.isdigit() or body.get("confirm") is not True or not body.get("sync_token"):
+            return self._json({"ok": False, "error": "not confirmed"}, 400)
+        try:
+            res = reapply_payment.commit(pid, str(body["sync_token"]), n, amount)
         except Exception as e:             # noqa: BLE001
             return self._json({"ok": False, "error": str(e)})
         if res.get("ok"):

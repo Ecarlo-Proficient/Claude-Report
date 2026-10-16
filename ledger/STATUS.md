@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Payments QBO changed** (Audit > AR; owner: "if any client payment gets offed we need to fix JUST like
+  the bill payments getting unapplied"). Changing a credit memo's customer makes QuickBooks take the credit off the payment
+  and the same amount off an invoice (it reopens); the payment keeps its version, so the mirror still holds it whole.
+  `payment_drift.py` flags a payment whose invoice / credit shows more open than every mirrored payment leaves;
+  `reapply_payment.py` (the write) + `shared/payment_reapply.py` (plan + checks; shared/ ships to the server so it never writes) = the re-apply (live dry run -> Are you sure -> write, backup, re-check to the cent), shared
+  with `one-offs/credit_memo_reclass.py`. Proven live on checks #0087532 / #0086618 (Grand Homes, 10/16).
+  Tests: `tests/test_payment_reapply.py`.
 - 10/16/2026 · **Fold ticks that reach the paper** (owner: "external stub did not have the little lines to fold on this
   new pass"). The ticks were in the PDF all along, but as a 0.5px #c4c4c4 hairline in the outer 0.18 in of the sheet,
   which is inside every printer's unprintable margin, so paper never showed them. `bill_payment_stub.CSS` `.tick`:

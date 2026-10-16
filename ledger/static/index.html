@@ -403,6 +403,31 @@
     </section><!-- /sec: checkdrift -->
     </div><!-- /tab: checkdrift -->
 
+    <!-- Payments QBO changed: client payments QuickBooks took a credit / invoice off (owner 2026-10-16) -->
+    <div class="tab-page" data-tab="paydrift" hidden>
+    <section class="subpage" data-sec="paydrift" id="sec-paydrift">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Audit - client payments QuickBooks changed <span class="count" id="pdNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnPdRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID) and re-run the audit">⟳&nbsp;Refresh from QuickBooks</button>
+            <button class="btn small" id="btnPdReload" title="Re-run the audit on the mirror (no QuickBooks call)">Reload</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="pdProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="pdFill"></div></div>
+          <div class="sync-step" id="pdStep"></div>
+        </div>
+        <div class="filters">
+          <input type="search" id="pdSearch" class="ref-search" placeholder="⌘F - payment #, invoice # or credit #" autocomplete="off">
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="pdTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: paydrift -->
+    </div><!-- /tab: paydrift -->
+
     <!-- Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24) -->
     <div class="tab-page" data-tab="uncleared" hidden>
     <section class="subpage" data-sec="uncleared" id="sec-uncleared">
