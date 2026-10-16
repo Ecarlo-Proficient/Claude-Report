@@ -11,6 +11,9 @@ services:
       args:
         APP_UID: 1027                  # the Synology automation user's uid/gid (Control Panel > User; `id` over SSH)
         APP_GID: 100
+        ACB_BUILD_COMMIT: ${ACB_BUILD_COMMIT:-}   # the commit being built - update_server.sh exports these three
+        ACB_BUILD_BRANCH: ${ACB_BUILD_BRANCH:-}
+        ACB_BUILT_AT: ${ACB_BUILT_AT:-}
     image: office-server:1
     restart: unless-stopped
     stop_grace_period: 120s            # a restart lets the step in progress finish (AP / AR write the trackers)

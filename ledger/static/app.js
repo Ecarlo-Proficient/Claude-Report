@@ -461,6 +461,7 @@ function showError(msg) {
 async function manualRefresh() {
   const btn = $("#btnRefresh"); const orig = btn.textContent;
   btn.disabled = true; btn.textContent = "Refreshing…";
+  loadServerUpdates();                      // what is still waiting to reach the office server (asks GitHub)
   try { await load(true); }                 // load(true) = keep what you've expanded
   finally { btn.disabled = false; btn.textContent = orig; }
   toast(meta.loaded_at ? `Refreshed · ledger loaded ${fmtDate(meta.loaded_at, true)}` : "Refreshed");
@@ -3081,8 +3082,78 @@ function renderServerBox() {
   }
   t.appendChild(tb); box.appendChild(t);
   const foot = document.createElement("div"); foot.className = "set-actions";
-  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "Check now"; b.onclick = () => { b.disabled = true; loadServer().finally(() => { b.disabled = false; }); }; foot.appendChild(b);
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "Check now"; b.onclick = () => { b.disabled = true; Promise.all([loadServer(), loadServerUpdates()]).finally(() => { b.disabled = false; }); }; foot.appendChild(b);
   box.appendChild(foot);
+}
+
+// ── What is still waiting to reach the office server (owner 2026-10-16: "i need to see at a glance all the pushes
+// pending to be in synology and their status when i click refresh") ── /api/server/updates?fetch=1 =
+// ledger/server_updates.py: git fetch, then every commit on dev / main the server does not run yet - waiting for
+// release (dev -> main PR) · waiting for the next update (03:00) · not for the server - with its CI result and the
+// open release PR. Asks GitHub, so it loads on a click (Refresh view, Check now, the gear's first open), never on the 90 s poll.
+let SRV_UPD = null, _srvUpdBusy = false;
+async function loadServerUpdates() {
+  if (_srvUpdBusy) return;
+  _srvUpdBusy = true; renderServerUpdates();
+  try { SRV_UPD = await (await fetch("/api/server/updates?fetch=1")).json(); }
+  catch (e) { SRV_UPD = { ok: false, error: String(e) }; }
+  finally { _srvUpdBusy = false; renderServerUpdates(); }
+}
+const SRV_STAGE = { release: "Waiting for release", update: "Waiting for the next update", none: "Not for the server" };
+const SRV_STAGE_CLS = { release: "warn", update: "good", none: "dim" };
+const SRV_CI_CLS = { passed: "good", failed: "bad", running: "warn", cancelled: "warn" };
+function _srvUpdRow(r, repo) {
+  const tr = document.createElement("tr");
+  const c1 = document.createElement("td");
+  if (repo) { const a = document.createElement("a"); a.href = `${repo}/commit/${r.sha}`; a.target = "_blank"; a.rel = "noopener"; a.textContent = r.short; c1.appendChild(a); }
+  else c1.textContent = r.short;
+  tr.appendChild(c1);
+  const c2 = document.createElement("td"); c2.className = "srv-subj"; c2.title = r.subject;
+  const s = String(r.subject || ""); c2.textContent = s.length > 120 ? s.slice(0, 117).trimEnd() + "..." : s;
+  if (r.repaste) { const n = document.createElement("div"); n.className = "warn"; n.textContent = "re-paste the update script in DSM"; c2.appendChild(n); }
+  tr.appendChild(c2);
+  const c3 = document.createElement("td"); c3.className = "srv-stage " + (SRV_STAGE_CLS[r.stage] || ""); c3.textContent = r.word || SRV_STAGE[r.stage] || r.stage; tr.appendChild(c3);
+  const c4 = document.createElement("td");
+  if (r.ci) { c4.className = SRV_CI_CLS[r.ci] || ""; if (r.ci_url) { const a = document.createElement("a"); a.href = r.ci_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = r.ci; c4.appendChild(a); } else c4.textContent = r.ci; }
+  else { c4.className = "dim"; c4.textContent = "-"; c4.title = "No CI run of its own - pushed together with a later commit"; }
+  tr.appendChild(c4);
+  return tr;
+}
+function _srvUpdTable(rows, repo) {
+  const t = document.createElement("table"); t.className = "srv-table";
+  t.innerHTML = "<thead><tr><th>Commit</th><th>Change</th><th>Where it stands</th><th>CI</th></tr></thead>";
+  const tb = document.createElement("tbody"); for (const r of rows) tb.appendChild(_srvUpdRow(r, repo)); t.appendChild(tb);
+  return t;
+}
+function renderServerUpdates() {
+  const box = $("#srvUpdates"); if (!box) return; box.innerHTML = "";
+  const head = document.createElement("div"); head.className = "srv-head";
+  const w = document.createElement("span"); w.className = "srv-word"; w.textContent = "Waiting for the server"; head.appendChild(w);
+  const u = SRV_UPD, line = (txt, cls) => { const d = document.createElement("div"); d.className = cls || "srv-meta"; d.textContent = txt; box.appendChild(d); return d; };
+  if (_srvUpdBusy) { const m = document.createElement("span"); m.className = "srv-meta"; m.textContent = "checking GitHub..."; head.appendChild(m); }
+  box.appendChild(head);
+  if (!u) { if (!_srvUpdBusy) line("Click Refresh view or Check now to see what has not reached the server yet."); return; }
+  if (!u.ok) { line("Could not check: " + (u.error || "unknown error"), "srv-meta bad"); return; }
+  const b = u.server || {};
+  if (u.server_known) line(`The server runs ${String(b.commit).slice(0, 7)}${b.branch ? " · " + b.branch : ""}${b.built_at ? " · built " + fmtDate(b.built_at, true) : ""}`);
+  const rows = u.rows || [], c = u.counts || {};
+  const counts = document.createElement("div"); counts.className = "srv-counts";
+  for (const k of ["release", "update", "none"]) { const s = document.createElement("span"); s.className = SRV_STAGE_CLS[k]; s.innerHTML = `<b>${c[k] || 0}</b> `; s.appendChild(document.createTextNode(SRV_STAGE[k].toLowerCase())); counts.appendChild(s); }
+  box.appendChild(counts);
+  if (c.release) {
+    const pr = u.release_pr;
+    if (pr) { const d = line("", "srv-meta"); const a = document.createElement("a"); a.href = pr.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = `Release PR #${pr.number}`; d.appendChild(a);
+      d.appendChild(document.createTextNode(" open · " + ({ APPROVED: "approved", REVIEW_REQUIRED: "needs the other person's review", CHANGES_REQUESTED: "changes requested" }[pr.reviewDecision] || "review pending") + (pr.isDraft ? " · draft" : ""))); }
+    else line("No release PR open (dev -> main)", "srv-meta warn");
+  }
+  if (u.repaste) line("A commit changes the DSM update script - it applies once re-pasted in DSM", "srv-meta warn");
+  for (const n of u.notes || []) line(n);
+  const live = rows.filter(r => r.stage !== "none"), off = rows.filter(r => r.stage === "none");
+  if (live.length) box.appendChild(_srvUpdTable(live, u.repo_url));
+  else line("Nothing waiting - the server runs everything that changes it.", "srv-meta good");
+  if (off.length) { const det = document.createElement("details"); const sm = document.createElement("summary"); sm.className = "srv-meta";
+    sm.textContent = `${off.length} commit${off.length === 1 ? " that never goes" : "s that never go"} to the server (ledger, WIP, docs...)`; det.appendChild(sm);
+    det.appendChild(_srvUpdTable(off, u.repo_url)); box.appendChild(det); }
 }
 
 // Vendor payments view: the QBO BillPayments (money out) this year, from the local bill_payment table.
@@ -11199,7 +11270,7 @@ function init() {
   { const el = $("#btnFullRefresh"); if (el) el.onclick = () => runPipeline("all",
       "Full refresh - run EVERY pipeline?\n\nRuns the source producers (AR sync -> Notion/Teams, AP sync -> Bill Tracker.xlsx) AND the loaders, in order. Real writes; expect multiple Touch ID prompts; takes a few minutes.",
       { ..._consoleEls(), btn: el }); }
-  $("#btnSettings").onclick = () => openPanel("#settings");
+  $("#btnSettings").onclick = () => { openPanel("#settings"); if (!SRV_UPD) loadServerUpdates(); };
   { const el = $("#btnSysReload"); if (el) el.onclick = () => loadSystems(true); }
   for (const id of ["#sysSearch", "#sysOwner", "#sysHealth", "#sysState", "#sysLife", "#sysRetired"]) {
     const el = $(id); if (el) el.addEventListener("input", renderSystems);

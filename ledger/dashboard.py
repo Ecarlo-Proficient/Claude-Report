@@ -65,6 +65,7 @@ import invoice_view       # noqa: E402  (local: the invoice viewer - an invoice 
 import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
 import draw_periods       # noqa: E402  (local: a job's draw periods as set on the ledger - the project page's editor; never QBO)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
+import server_updates     # noqa: E402  (local: every commit still waiting to reach the office server - git + GitHub, read-only)
 import server_status      # noqa: E402  (local: the office server as the ledger watches it - server-status.json + writer.json -> one judgement)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
@@ -79,7 +80,7 @@ STATIC = HERE / "static"
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
 # 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
-LEDGER_VERSION = "1.6.0"
+LEDGER_VERSION = "1.6.1"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -4067,6 +4068,9 @@ class Handler(BaseHTTPRequestHandler):
             self._statement_file(self._query(), "file")
         elif path == "/api/server":          # the office server monitor: server-status.json + writer.json -> ok / late / down / failing / standing down
             self._json(server_status.read(paths.accounting_base() / "_automation"))
+        elif path == "/api/server/updates":  # what is still waiting to reach the server (git fetch + GitHub CI / release PR) - only on a click, never the 90 s poll
+            _srv = server_status.read(paths.accounting_base() / "_automation")
+            self._json(server_updates.collect(_srv.get("build"), fetch=self._query().get("fetch") == "1"))
         elif path == "/api/revisions":       # the REVISED-bill follow-up board (Notion, written by bill-tracker/revised_bills.py) + where each stands
             self._revisions(self._query())
         elif path == "/api/bill-payment/stubs":     # the printed-stub history for a vendor / payment (status vs QBO now) + the column registry

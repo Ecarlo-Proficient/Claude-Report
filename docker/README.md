@@ -140,6 +140,12 @@ re-paste it. It pins GitHub's host key, moves a live server onto `main` (live ru
 second run at once, hands the checkout back to its owner, and logs every commit it pulled. The result
 is appended to `/volume1/docker/automation/update_server.log` (readable from the Mac at `/Volumes/docker/automation/`).
 
+**Re-paste after 10/16/2026.** The script now stamps the image with the commit it builds (`ACB_BUILD_COMMIT` /
+`ACB_BUILD_BRANCH` / `ACB_BUILT_AT`, compose build args -> Dockerfile ENV); the scheduler reports it in
+server-status.json and the ledger's gear (Office server -> Waiting for the server) lists every commit the server does
+not run yet. Until the new text is pasted in DSM and one update rebuilds the image, the server's version reads as
+unknown and the ledger lists only the commits not yet released to main.
+
 ### 8. Going live - the checklist (in this order)
 
 Everything the switch needs is built and tested (`docker/STATUS.md`): Notion writes only what changed, the Bill

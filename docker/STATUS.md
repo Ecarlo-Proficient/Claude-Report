@@ -3,6 +3,12 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-16 · **The server reports the code it runs** (owner: "i need to see at a glance all the pushes pending to be
+  in synology and their status when i click refresh in the project ledger"). `update_server.sh` exports the commit it
+  builds (+ branch + time) before `up --build`; `compose.yml` passes them as build args; the Dockerfile keeps them as
+  ENV (last, so the package layer stays cached); `scheduler.build_info()` writes them to status.json as `build`
+  (commit None = an unstamped image: unknown, never guessed). **Needs the DSM task's text re-pasted** (README 7b) -
+  the script runs from the pasted copy, never the checkout. Test: `tests/test_server_updates.py`.
 - 2026-10-13 · **Daily CP P&Ls on the server (owner: "set up synology pnl for cp only, to update daily once at 6am
   every day, the overview as the last piece").** `scheduler.py` gains `pnl-cp`: at `PNL_CP_AT` (06:00, the container's
   Chicago clock) it runs `project-pnl/project_pnl_export.py active cp --from-folders --no-prompt` - the Active list is

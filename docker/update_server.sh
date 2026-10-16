@@ -59,6 +59,8 @@ if [ "$(G rev-parse HEAD)" = "$before" ]; then
   echo "done"; exit 0
 fi
 echo "commits pulled:"; G log --oneline "$before..HEAD"
+# stamp the image with the code it is built from: the scheduler reports it, the ledger lists what is still waiting
+export ACB_BUILD_COMMIT="$(G rev-parse HEAD)" ACB_BUILD_BRANCH="$branch" ACB_BUILT_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 $DC -f docker/compose.yml up -d --build || { echo "BUILD FAILED - the old container keeps running"; exit 1; }
 for f in "/volume1/Accounting/_server-test/Bill Tracker.xlsx" "/volume1/Accounting/_server-test/Bill Tracker - compare copy.xlsx"; do
   [ -f "$f" ] || continue

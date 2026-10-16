@@ -2575,6 +2575,7 @@ td.stmt-cell { white-space: nowrap; }
 @media (max-width: 860px) { .stmt-wrap { grid-template-columns: 1fr; } .stmt-legend { position: static; max-height: none; order: -1; } }
 
 /* ── The office server monitor (owner 2026-10-09: "make sure we can monitor action") ─────────────────────────── */
+.srv-box { overflow-x: auto; }   /* a wide jobs table scrolls inside its box, never the whole gear panel */
 .srv-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .srv-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); flex: none; }
 .srv-dot.ok { background: var(--pos); } .srv-dot.late, .srv-dot.standing { background: #d99a2b; } .srv-dot.down, .srv-dot.failing { background: var(--neg); }
@@ -2585,6 +2586,16 @@ td.stmt-cell { white-space: nowrap; }
 .srv-table td { text-align: left; padding: 3px 6px; border-top: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .srv-table td.bad { color: var(--neg-text); font-weight: 600; } .srv-table td.good { color: var(--pos); } .srv-table td.warn { color: var(--warn-text); }
 .srv-table details summary { cursor: pointer; color: var(--text-dim); font-size: .9em; }
+.srv-upd { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.srv-table td.srv-subj { white-space: normal; }
+.srv-table td.srv-stage { white-space: normal; min-width: 92px; }
+.srv-upd .srv-table { table-layout: auto; }
+.srv-table td.dim, .srv-upd .dim { color: var(--text-dim); }
+.srv-upd a { color: var(--accent-text); text-decoration: none; } .srv-upd a:hover { text-decoration: underline; }
+.srv-upd td.good a, .srv-upd td.bad a, .srv-upd td.warn a { color: inherit; }   /* a CI result keeps its colour */
+.srv-upd .warn { color: var(--warn-text); } .srv-upd .good { color: var(--pos); } .srv-upd .bad { color: var(--neg-text); font-weight: 600; }
+.srv-counts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 2px; font-size: .86em; }
+.srv-counts b { font-variant-numeric: tabular-nums; }
 .srv-tail { font-family: var(--font-mono); font-size: .8em; white-space: pre-wrap; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; margin: 4px 0 6px; max-height: 160px; overflow: auto; }
 .sync-pill.bad .dot { background: var(--neg); } .sync-pill.bad { border-color: color-mix(in srgb, var(--neg) 60%, var(--border)); color: var(--neg-text); }
 .sp-dot.bad { background: var(--neg); }

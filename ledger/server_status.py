@@ -92,6 +92,7 @@ def assess(status: Optional[dict], writer: Optional[str], now: Optional[dt.datet
     elif skipped and _skip_is_current(skipped, jobs_in, now):
         health, reason = "standing down", "AP / AR skipped: " + skipped.split(" ", 1)[-1]
     return {"present": True, "health": health, "reason": reason, "mode": mode, "host": status.get("host"),
+            "build": status.get("build") if isinstance(status.get("build"), dict) else None,
             "writer": writer, "written": status.get("written"), "age_min": age, "jobs": jobs}
 
 

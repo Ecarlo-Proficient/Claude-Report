@@ -30,7 +30,8 @@ Two modes (ACB_SERVER_MODE):
                    rollback. A missing or unreadable writer file stands the server down too (fails closed).
 
 What it reports:
-  STATUS_DIR/status.json  - every job's last run, last good run, exit code and the tail of its output; also copied
+  STATUS_DIR/status.json  - the code the container runs (`build`: commit / branch / built_at, stamped at build time),
+                            every job's last run, last good run, exit code and the tail of its output; also copied
                             to SHARE_STATUS_FILE (optional) so the Mac ledger can show the server's last good run.
   Teams (TEAMS_WEBHOOK_ALERTS, optional) - a failed run, and no good mirror refresh for ALERT_QUIET_MINUTES.
                             One alert per job per hour at most.
@@ -70,8 +71,16 @@ HOST = os.getenv("ACB_HOST_NAME", "office-server")
 TIMEOUTS = {"mirror": 2700, "reconcile": 3600, "ap": 1800, "ar": 1200, "ar-export": 900, "payments-test": 300,
             "pnl-cp": 7200}
 
+def build_info() -> dict:
+    """The code this container runs, stamped into the image by docker/update_server.sh (Dockerfile ARG -> ENV).
+    commit None = an image built without the stamp: the ledger then says the version is unknown, never guesses."""
+    return {"commit": (os.getenv("ACB_BUILD_COMMIT") or "").strip() or None,
+            "branch": (os.getenv("ACB_BUILD_BRANCH") or "").strip() or None,
+            "built_at": (os.getenv("ACB_BUILT_AT") or "").strip() or None}
+
+
 _stop = False
-_state: dict = {"mode": MODE, "host": HOST, "jobs": {}}
+_state: dict = {"mode": MODE, "host": HOST, "build": build_info(), "jobs": {}}
 _alerted: dict = {}
 _bg: dict = {}        # the one background job in flight: {name, proc, started, log}
 

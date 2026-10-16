@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Waiting for the server** (owner: "i need to see at a glance all the pushes pending to be in synology
+  and their status when i click refresh in the project ledger. that way i know what is up and what is not"). NEW
+  `server_updates.py` + `/api/server/updates?fetch=1`: git fetch, then every commit the office server does not run
+  yet (from the `build` stamp in server-status.json), each sorted: **Needs release** (on dev only - the dev -> main PR) ·
+  **Next update (03:00)** (on main, not on the server yet) · **Never goes** (changes nothing the image copies - read
+  from the Dockerfile's COPY lines; folded away), with its CI result from GitHub, the open release PR and a warning
+  when a commit changes the DSM update script (re-paste). Shown in the gear under the server monitor; loads on
+  **Refresh view**, **Check now** and the gear's first open - never on the 90 s poll (it asks GitHub). Until the
+  server reports its version it lists the commits not yet released to main and says why. The server monitor's box
+  now scrolls a wide jobs table inside itself (it pushed the whole gear panel sideways). LEDGER_VERSION 1.6.1.
+  Test: `tests/test_server_updates.py`.
 - 10/16/2026 · **Checks QBO changed: select all** (owner: "instead of me having to click indvidually the ones to revert
   i need a select all"). The main Checks table gains a tick column: every clear-copy check has a tick, the header box
   ticks every one shown (half-ticked when some), on ANY chip - To fix included, not only Clear copy. The bar above the

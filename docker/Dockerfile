@@ -49,4 +49,14 @@ COPY docker/scheduler.py      /app/docker/scheduler.py
 RUN mkdir -p /data && chown -R ${APP_UID}:${APP_GID} /data
 USER app
 
+# The code this image was built from - passed by docker/update_server.sh (compose build args). The scheduler puts
+# it in server-status.json, so the ledger can list every commit still waiting to reach the server. Last, so a new
+# commit never invalidates the package layer above. Empty = built some other way (version unknown).
+ARG ACB_BUILD_COMMIT=""
+ARG ACB_BUILD_BRANCH=""
+ARG ACB_BUILT_AT=""
+ENV ACB_BUILD_COMMIT=${ACB_BUILD_COMMIT} \
+    ACB_BUILD_BRANCH=${ACB_BUILD_BRANCH} \
+    ACB_BUILT_AT=${ACB_BUILT_AT}
+
 ENTRYPOINT ["python", "/app/docker/scheduler.py"]
