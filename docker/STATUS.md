@@ -3,6 +3,13 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-16 · **A failed `up` always fails the task.** Gap left by the preflight entry below: when `up` errored but
+  a container still ran (a build error leaves the old one up), `running_or_down` said "office-server is running" and
+  the script ended `done`, exit 0 - the DSM task looked green while the new code never went in. Now `up_failed` logs
+  `docker compose ps -a`, says THE SERVER IS DOWN or `the update did NOT go in - office-server still runs what it ran
+  before`, and exits 1 (both the restart and the release path). RELEASE.md's log table gains the line. Test:
+  `test_a_failed_build_with_the_old_container_up_still_fails_the_task`. **Re-paste update_server.sh in DSM** with the
+  preflight change.
 - 2026-10-16 · **Releases can no longer take the server down for a missing folder or setting** (owner: "can we make
   instructions for synology push to make sure it has all these checks? this is more serious than editing code from
   my laptop. that shouldn't of happened"). The incident: release PR #23 added the compose mount

@@ -42,6 +42,7 @@ places:
    | `office-server is running` · `done` | released | step 7 |
    | `STOPPED before any change` + `MISSING ...` | nothing pulled, the server untouched | set up what it names, **Run** again |
    | `THE SERVER IS DOWN` | the container did not start | fix the error just above it, **Run** again now |
+   | `the update did NOT go in` | Docker failed (e.g. a build error) but the old container still runs | fix the error above it, **Run** again |
    | `WARNING - the server runs without` | running, a setting missing | add the setting, **Run** again |
 
 ## 3. After (the owner + Claude)

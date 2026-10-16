@@ -18,7 +18,8 @@
 # said "the old container keeps running"). Before anything changes it reads the NEW commit's compose.yml and
 # server.env.example: every folder / file compose mounts or loads must exist, and server.env must carry every setting
 # the example lists. Anything missing = STOPPED: nothing pulled, nothing rebuilt, the running server untouched, and
-# the log names each missing item. After every start it checks the container really runs and says DOWN if not.
+# the log names each missing item. After every start it checks the container really runs and says DOWN if not; a failed
+# `up` logs `ps -a` and exits 1 even when the old container still runs (the update did not go in).
 # The checklist the admin follows is docker/RELEASE.md.
 set -uo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin
@@ -81,6 +82,15 @@ running_or_down() {
   echo "THE SERVER IS DOWN - office-server is not running. Fix the error above and Run the task again."; return 1
 }
 
+# `up` itself returned an error: log what Docker really has and never end on "done" - even when a container still runs
+# (a build error leaves the old one up), the update did not go in and the task must show it failed.
+up_failed() {
+  echo "$1 FAILED - what Docker has now:"
+  $DC -f docker/compose.yml ps -a
+  running_or_down && echo "the update did NOT go in - office-server still runs what it ran before. Fix the error above and Run the task again."
+  exit 1
+}
+
 target="$branch"
 [ "$mode" = "live" ] && target=main          # a LIVE server runs main only
 if ! G fetch origin "$target"; then
@@ -105,7 +115,7 @@ if [ "$(G rev-parse HEAD)" = "$before" ]; then
   # a new setting) and starts a container that is down; otherwise a no-op, the running step is never interrupted.
   echo "no new commits - nothing rebuilt"
   preflight HEAD restart || exit 1
-  $DC -f docker/compose.yml up -d || echo "RESTART FAILED"
+  $DC -f docker/compose.yml up -d || up_failed RESTART
   running_or_down || exit 1
   $DC -f docker/compose.yml ps
   echo "done"; exit 0
@@ -113,7 +123,7 @@ fi
 echo "commits pulled:"; G log --oneline "$before..HEAD"
 # stamp the image with the code it is built from: the scheduler reports it, the ledger lists what is still waiting
 export ACB_BUILD_COMMIT="$(G rev-parse HEAD)" ACB_BUILD_BRANCH="$branch" ACB_BUILT_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-$DC -f docker/compose.yml up -d --build || echo "BUILD / START FAILED"
+$DC -f docker/compose.yml up -d --build || up_failed "BUILD / START"
 running_or_down || exit 1
 for f in "/volume1/Accounting/_server-test/Bill Tracker.xlsx" "/volume1/Accounting/_server-test/Bill Tracker - compare copy.xlsx"; do
   [ -f "$f" ] || continue

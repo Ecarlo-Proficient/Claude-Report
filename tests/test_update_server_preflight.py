@@ -164,3 +164,12 @@ def test_a_failed_start_says_the_server_is_down(tmp_path):
     rc, log, _ = _update(tmp_path, base, copy, STUB_UP_RC="1", STUB_RUNNING="false")
     assert rc == 1
     assert "THE SERVER IS DOWN" in log and "keeps running" not in log.split("BUILD / START FAILED", 1)[-1]
+
+
+def test_a_failed_build_with_the_old_container_up_still_fails_the_task(tmp_path):
+    base, copy = _world(tmp_path, mounts_exist=True)
+    rc, log, calls = _update(tmp_path, base, copy, STUB_UP_RC="1", STUB_RUNNING="true")
+    assert rc == 1, log                                              # never "done" / exit 0 after a failed up
+    assert "BUILD / START FAILED" in log and "the update did NOT go in" in log
+    assert not log.rstrip().endswith("done")
+    assert "ps -a" in calls                                          # the real state is logged
