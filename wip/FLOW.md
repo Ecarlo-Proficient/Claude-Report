@@ -1,6 +1,6 @@
 # wip/ - how the WIP update works
 
-Last changed: 10/02/2026 - the CP reader falls back to the signed pay app (shared.draws.read_pay_app, .xls included) when a job has no .xlsx draw workbook; CP831's Draw #2 change order (33,361) now reaches the WIP Review. Earlier: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
+Last changed: 10/16/2026 - `master_wip_test.read_mfd_etc_from_division_tab` opens the master through shared/xlsx_read: a master that cannot be opened stops the run instead of every MFD job quietly dropping to the divisor formula. Flow unchanged. Earlier: 10/02/2026 - the CP reader falls back to the signed pay app (shared.draws.read_pay_app, .xls included) when a job has no .xlsx draw workbook; CP831's Draw #2 change order (33,361) now reaches the WIP Review. Earlier: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
 Also, 10/01/2026 - **split billing**: a job the owner ruled is invoiced to two builders on purpose
 (job rulings `customers: all`, RP7401-FTW) reads costs + billed from ALL its customers in one report
 (`qbo_api.report_customers`) and is no longer held as a duplicate.

@@ -54,6 +54,8 @@ sys.path.insert(0, str(PROJECT_ROOT))           # qbo_vault.py
 sys.path.insert(0, str(BILL_TRACKER_DIR))       # qbo_bill_tracker.py
 
 from shared import paths
+from shared.xlsx_read import SourceUnreadable, open_source  # noqa: E402
+from shared.xlsx_save import NotSaved, save_verified  # noqa: E402
 from shared.xlsx_guard import put as xl_text  # noqa: E402  (outside text never runs in Excel)
 
 
@@ -66,7 +68,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from openpyxl import Workbook, load_workbook
+    from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Color
     from openpyxl.styles.differential import DifferentialStyle
     from openpyxl.utils import get_column_letter
@@ -110,6 +112,10 @@ BACKUP_RETENTION_DAYS = 14
 # skips (never guess), but exits EXIT_STALE_LOCK so the office server raises its once-an-hour alert.
 STALE_LOCK_HOURS = 12
 EXIT_STALE_LOCK = 3
+# The new workbook failed a check: nothing written, the tracker on disk is unchanged.
+EXIT_NOT_SAVED = 2
+# The tracker is on disk but cannot be opened: the run stops (nothing written) and the office server alerts.
+EXIT_UNREADABLE = 4
 
 
 def open_in_excel(path: Path) -> Optional[Path]:
@@ -660,8 +666,12 @@ def validate_xlsx(path: Path) -> List[str]:
 # ─────────────────────── backup rotation ───────────────────────
 
 def rotate_backup(workbook_path: Path, retention_days: int = BACKUP_RETENTION_DAYS) -> None:
-    """Snapshot the existing workbook before overwriting. One file per day;
-    prune anything older than `retention_days`.
+    """Snapshot the existing workbook before it is replaced. Called only after `read_existing` opened it,
+    so a backup is never a broken file. Two kinds of copy in `_backups/`:
+      `<stem> - previous.xlsx` - the tracker as it stood just before this run (replaced every run);
+      the dated copy           - the FIRST copy of each day, never overwritten that day, pruned after
+                                 `retention_days` (its name keeps the historical separator, so the
+                                 pruning below still finds the older ones).
     """
     import shutil
     if not workbook_path.exists():
@@ -671,9 +681,12 @@ def rotate_backup(workbook_path: Path, retention_days: int = BACKUP_RETENTION_DA
     stem = workbook_path.stem
     today_iso = dt.date.today().isoformat()
     target = backups_dir / f"{stem} — {today_iso}{workbook_path.suffix}"
+    previous = backups_dir / f"{stem} - previous{workbook_path.suffix}"
     try:
-        shutil.copy2(workbook_path, target)
-    except Exception as e:
+        shutil.copy2(workbook_path, previous)
+        if not target.exists():
+            shutil.copy2(workbook_path, target)
+    except OSError as e:
         print(f"  ⚠ backup copy failed: {e}")
         return
 
@@ -705,6 +718,15 @@ def rotate_backup(workbook_path: Path, retention_days: int = BACKUP_RETENTION_DA
 
 SHEET_NAMES = ["Bills"]
 BILLS_TABLE = "tblBills"
+
+
+def read_existing(path: Path):
+    """The tracker as it stands, opened ONCE for every reader below. None = no tracker yet (first run).
+
+    A tracker that exists but cannot be opened (a share hiccup, a file mid-copy) raises SourceUnreadable.
+    It must never read as "no edits": the rebuild would then save over every typed Lien, Note and audit
+    mark. The run stops instead, writes nothing, and the next run tries again."""
+    return open_source(path, data_only=True)
 
 
 def _read_sheet_edits(ws) -> Dict[str, Dict[str, str]]:
@@ -757,8 +779,8 @@ def _read_sheet_edits(ws) -> Dict[str, Dict[str, str]]:
     return out
 
 
-def preserve_edits(path: Path) -> Dict[str, Dict[str, str]]:
-    """Read existing workbook's Bills sheet and return {_Key → {Lien, Notes}}.
+def preserve_edits(wb) -> Dict[str, Dict[str, str]]:
+    """Read the existing workbook's Bills sheet (`read_existing`) and return {_Key → {Lien, Notes}}.
 
     Bills is the only editable sheet — division sheets and the Audit sheet are
     read-only views, rebuilt each sync. Both Lien and Notes are ALWAYS
@@ -769,15 +791,10 @@ def preserve_edits(path: Path) -> Dict[str, Dict[str, str]]:
     sheet collapsed to bill-grain rows. Any line-level keys found are collapsed
     to bill-level so edits carry over. First non-empty value wins per bill.
 
-    Returns empty dict on first run (no file) or unreadable workbook —
-    safe to feed into `_render_rows` either way.
+    `wb` None (first run, no tracker yet) -> {}. An unreadable tracker never
+    reaches here: `read_existing` stops the run first.
     """
-    if not path.exists():
-        return {}
-    try:
-        wb = load_workbook(path, data_only=True)
-    except Exception as e:
-        print(f"  ⚠ couldn't open existing workbook for preservation: {e}")
+    if wb is None:
         return {}
     # Fall back through legacy sheet names so an upgrade from older layouts
     # (Open Bills, Pay List, AP Workspace) doesn't lose pending edits.
@@ -810,19 +827,12 @@ def preserve_edits(path: Path) -> Dict[str, Dict[str, str]]:
     return migrated
 
 
-def preserve_audit_marks(path: Path) -> Dict[str, str]:
-    """Read the existing `Audit - Coding` sheet's user-entered `Status` marks,
+def preserve_audit_marks(wb) -> Dict[str, str]:
+    """Read the existing (`read_existing`) `Audit - Coding` sheet's user-entered `Status` marks,
     keyed by the hidden `_Key` (bill_id). These persist across runs and mirror into
     the Bills Notes so the audit and Bills stay consistent (the user 2026-08-25).
-    First non-empty mark per bill wins. Empty/first-run/unreadable → {}."""
-    if not path.exists():
-        return {}
-    try:
-        wb = load_workbook(path, data_only=True)
-    except Exception as e:
-        print(f"  ⚠ couldn't read audit marks: {e}")
-        return {}
-    if "Audit - Coding" not in wb.sheetnames:
+    First non-empty mark per bill wins. `wb` None (first run) → {}."""
+    if wb is None or "Audit - Coding" not in wb.sheetnames:
         return {}
     ws = wb["Audit - Coding"]
     hdr = [(c.value or "") for c in ws[1]]
@@ -2726,17 +2736,25 @@ def main() -> int:
 
     # Read existing workbook's Bills sheet for Lien/Notes preservation
     print("→ reading existing workbook for Lien/Notes preservation …")
-    edits = preserve_edits(OUTPUT_PATH)
-    if edits:
+    try:
+        existing = read_existing(OUTPUT_PATH)
+    except SourceUnreadable as e:
+        print(f"\n✗ {e}\n  Stopped - nothing written. Rebuilding now would save over every typed Lien, "
+              f"Note and audit mark. The next run tries again; if it keeps failing, restore "
+              f"_backups/{OUTPUT_PATH.stem} - previous{OUTPUT_PATH.suffix}.")
+        return EXIT_UNREADABLE
+    edits = preserve_edits(existing)
+    if existing is None:
+        print("  no existing workbook - first run, nothing to preserve")
+    else:
         nonblank = sum(1 for v in edits.values()
                        if (v.get("Lien") or "") or (v.get("Notes") or ""))
         print(f"  {nonblank} _Keys with Lien/Notes edits carried forward")
-    else:
-        print("  no existing workbook — first run, nothing to preserve")
 
     # Audit Status marks (Audit - Coding) — persist across runs AND push into the
     # Bills Notes so the two stay consistent (the audit is the entry point).
-    audit_marks = preserve_audit_marks(OUTPUT_PATH)
+    audit_marks = preserve_audit_marks(existing)
+    existing = None                                 # read; free it before the build
     for _bid, _mark in audit_marks.items():
         _mark = (_mark or "").strip()
         if not _mark:
@@ -2830,20 +2848,14 @@ def main() -> int:
     skip = _skip_if_open(OUTPUT_PATH, "the save (opened during the build)")
     if skip is not None:
         return skip
-    wb.save(OUTPUT_PATH)
-    post_process_xlsx(OUTPUT_PATH)
-
-    # Excel-strict preflight — bail loud if any known-bad pattern survived.
-    # Better to fail here than ship a workbook that Excel will mangle on open.
-    print("→ validating xlsx (Excel-strict preflight) …")
-    failures = validate_xlsx(OUTPUT_PATH)
-    if failures:
-        print("✗ validation FAILED — Excel would warn on open:")
-        for f in failures:
-            print(f"    {f}")
-        print(f"\n  workbook saved anyway at: {OUTPUT_PATH}")
-        print("  but you should NOT trust it until these are fixed.")
-        return 2
+    # Built and checked in a temp file; only a workbook that passed this tool's Excel-strict preflight AND the
+    # repo-wide check (rule 5b) reaches the tracker. A failure leaves the tracker on disk untouched.
+    print("→ saving (built aside, checked, then written in) …")
+    try:
+        save_verified(wb, OUTPUT_PATH, post_process=post_process_xlsx, checks=validate_xlsx)
+    except NotSaved as e:
+        print(f"✗ the new workbook failed its checks - NOT written, the tracker is unchanged:\n    {e}")
+        return EXIT_NOT_SAVED
     print(f"  ✓ saved {OUTPUT_PATH}")
 
     # 600 on the owner's Mac (his own account). On the office server the file

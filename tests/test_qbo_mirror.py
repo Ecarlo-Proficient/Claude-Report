@@ -141,6 +141,45 @@ def test_refresh_past_feed_reach_falls_back_to_updated_plus_sweep(monkeypatch):
     assert any(e == "Customer" and "Active IN (true, false)" in w for e, w, _ in seen)
 
 
+def test_capped_cdc_rereads_by_page_and_never_loops(monkeypatch):
+    """A bulk edit stamps 1000+ bills with ONE LastUpdatedTime: /cdc returns the
+    same full page however it is asked. The refresh must make ONE /cdc call,
+    then re-read Bill through the paged query + id sweep, and finish."""
+    con = m.connect(":memory:")
+    m.upsert_many(con, "Bill", [_bill(i) for i in range(m.CDC_CAP + 5)], "t0")
+    m._meta_set(con, "last_refresh", "2026-09-16T12:00:00Z")
+    same = "2026-09-16T13:00:00Z"
+    cdc_calls = []
+
+    def fake_cdc(access, cid, entities, since):
+        cdc_calls.append(since)
+        assert len(cdc_calls) == 1, "a capped feed must not be asked again"
+        return {"CDCResponse": [{"QueryResponse": [
+            {"Bill": [_bill(i, total=20.0, upd=same, tok=1) for i in range(m.CDC_CAP)],
+             "maxResults": m.CDC_CAP}]}]}
+
+    alive = [str(i) for i in range(m.CDC_CAP + 5) if i != 3]          # bill 3 deleted in QBO
+
+    def fake_pages(access, cid, entity, where="", select="*"):
+        if entity != "Bill":
+            return iter([])
+        if select == "Id":
+            return iter([[{"Id": i} for i in alive]])
+        if where.startswith("MetaData.LastUpdatedTime"):              # the edits /cdc could not hold
+            return iter([[_bill(i, total=20.0, upd=same, tok=1) for i in range(m.CDC_CAP, m.CDC_CAP + 5)]])
+        return iter([])
+
+    monkeypatch.setattr(m, "_cdc_call", fake_cdc)
+    monkeypatch.setattr(m, "_query_pages", fake_pages)
+    monkeypatch.setattr(m, "now_utc", lambda: dt.datetime(2026, 9, 17, 9, 0, tzinfo=dt.timezone.utc))
+    res = m.refresh(con, "a", "c", progress=None)
+    assert res["mode"] == "cdc" and len(cdc_calls) == 1
+    totals = {r["Id"]: r["TotalAmt"] for r in m.load("Bill", con=con)}
+    assert "3" not in totals and len(totals) == m.CDC_CAP + 4
+    assert set(totals.values()) == {20.0}                               # every edit landed, none skipped
+    assert m._meta_get(con, "last_refresh") == "2026-09-17T09:00:00Z"
+
+
 def test_seed_flags_rows_the_full_pull_did_not_see(monkeypatch):
     con = m.connect(":memory:")
     m.upsert_many(con, "Term", [{"Id": "1", "Name": "Net 30", "SyncToken": "0", "MetaData": {}},

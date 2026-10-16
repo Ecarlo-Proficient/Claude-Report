@@ -22,7 +22,10 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-import cp_wip_reader as CP        # CP READER: folder scan / draws
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root, for shared/
+from shared.xlsx_read import open_source  # noqa: E402  (a file that exists is read, or the run stops)
+
+import cp_wip_reader as CP       # CP READER: folder scan / draws
 import wip_writer as W            # the shared report ENGINE
 import rp_wip_reader as RP
 import wip_review_common as WR    # shared WIP-review diff/merge (ledger accept/merge flow)
@@ -57,10 +60,11 @@ def read_mfd_etc_from_division_tab(wip_path: Path) -> dict:
 
     Read BY HEADER NAME: the tab's column order is owned by mfd_wip_cols and has
     already moved twice. Never read it by position. Returns {} if the tab is gone.
+    A master that cannot be opened raises SourceUnreadable: read as {}, every MFD
+    job would quietly drop to the divisor formula.
     """
-    try:
-        wb = load_workbook(wip_path, data_only=True, read_only=True)
-    except Exception:
+    wb = open_source(wip_path, data_only=True, read_only=True)
+    if wb is None:
         return {}
     try:
         if MFD_SHEET not in wb.sheetnames:

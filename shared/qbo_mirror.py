@@ -868,28 +868,31 @@ def refresh(con, access: str, cid: str, progress: Progress = print) -> dict:
 
 
 def _refresh_cdc(con, access: str, cid: str, since: str, say) -> dict:
+    """One /cdc call for every entity. /cdc has no paging: an entity that hits
+    the cap came back INCOMPLETE, and asking again "from the newest stamp" can
+    return the same page forever (a bulk edit stamps 1000+ records alike) or
+    skip records if the page is not oldest-first. So a capped entity is not
+    continued on /cdc - it is re-read through the paged query instead
+    (`_reread_entity`), the same complete path a stale stamp already uses."""
     seen_at = iso_z(now_utc())
     up = de = 0
     per: Dict[str, dict] = {}
     parsed = parse_cdc(_cdc_call(access, cid, list(ENTITIES), since))
-    pending = list(parsed.items())
-    while pending:
-        entity, slot = pending.pop(0)
+    for entity, slot in parsed.items():
         n_up = upsert_many(con, entity, slot["alive"], seen_at, track=True)
         n_de = mark_deleted(con, entity, [i for i, _ in slot["deleted"]], seen_at, track=True,
                             when_by_id={i: w for i, w in slot["deleted"] if w})
         con.commit()
+        if slot["capped"]:
+            say(f"  {entity}: {CDC_CAP}+ changes - the feed is incomplete, re-reading it page by page")
+            more = _reread_entity(con, access, cid, entity, since, seen_at)
+            n_up += more["upserted"]
+            n_de += more["deleted"]
         p = per.setdefault(entity, {"upserted": 0, "deleted": 0})
         p["upserted"] += n_up
         p["deleted"] += n_de
         up += n_up
         de += n_de
-        if slot["capped"] and slot["newest"]:
-            # more than the cap changed: ask again for this entity from its newest stamp
-            say(f"  {entity}: {CDC_CAP}+ changes, continuing from {slot['newest']}")
-            more = parse_cdc(_cdc_call(access, cid, [entity], slot["newest"]))
-            if entity in more and (more[entity]["alive"] or more[entity]["deleted"]):
-                pending.append((entity, more[entity]))
     for entity, p in per.items():
         if p["upserted"] or p["deleted"]:
             say(f"  {entity}: {p['upserted']} changed, {p['deleted']} deleted")
@@ -898,27 +901,31 @@ def _refresh_cdc(con, access: str, cid: str, since: str, say) -> dict:
     return {"upserted": up, "deleted": de, "per": per}
 
 
+def _reread_entity(con, access: str, cid: str, entity: str, since: str, seen_at: str) -> dict:
+    """Everything one entity changed since `since`, complete: the paged query
+    on LastUpdatedTime (edits and creations - paging ends, it cannot loop),
+    then an id sweep (deletions, which a query never returns)."""
+    n_up = 0
+    where = _and(f"MetaData.LastUpdatedTime > '{since}'", _list_where(entity))
+    for batch in _query_pages(access, cid, entity, where):
+        n_up += upsert_many(con, entity, batch, seen_at, track=True)
+        con.commit()
+    sw = sweep_deleted(con, access, cid, [entity])
+    return {"upserted": n_up + sw["fetched"], "deleted": sw["deleted"]}
+
+
 def _refresh_by_updated(con, access: str, cid: str, since_dt: dt.datetime, say) -> dict:
     seen_at = iso_z(now_utc())
     since = iso_z(since_dt)
-    up = 0
+    up = de = 0
     per: Dict[str, dict] = {}
     for e in ENTITIES:
-        n = 0
-        where = _and(f"MetaData.LastUpdatedTime > '{since}'", _list_where(e))
-        for batch in _query_pages(access, cid, e, where):
-            n += upsert_many(con, e, batch, seen_at, track=True)
-            con.commit()
-        if n:
-            say(f"  {e}: {n} updated since {since}")
-        per[e] = {"upserted": n, "deleted": 0}
-        up += n
-    sw = sweep_deleted(con, access, cid, list(ENTITIES), say)
-    for e, d in sw["per"].items():
-        per.setdefault(e, {"upserted": 0, "deleted": 0})
-        per[e]["deleted"] += d["deleted"]
-        per[e]["upserted"] += d["fetched"]
-    return {"upserted": up + sw["fetched"], "deleted": sw["deleted"], "per": per}
+        per[e] = _reread_entity(con, access, cid, e, since, seen_at)
+        if per[e]["upserted"] or per[e]["deleted"]:
+            say(f"  {e}: {per[e]['upserted']} changed, {per[e]['deleted']} deleted since {since}")
+        up += per[e]["upserted"]
+        de += per[e]["deleted"]
+    return {"upserted": up, "deleted": de, "per": per}
 
 
 def sweep_deleted(con, access: str, cid: str, entities: List[str], say=None) -> dict:

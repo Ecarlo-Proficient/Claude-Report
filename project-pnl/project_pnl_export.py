@@ -97,6 +97,7 @@ from shared import draws
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
 from shared import bizdev_cut   # the ONE test for a business-development cut
 from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
+from shared.xlsx_read import SourceUnreadable, open_source  # a source file that exists is read, or the job stops
 from shared.joint_checks import (pair_joint_checks, joint_account_ids, is_joint_deposit,  # the ONE joint-check rule
                                  memo_of as jc_memo_of)
 from shared.qbo_api import (
@@ -1627,13 +1628,13 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
       - LEGACY: any tab whose name contains 'wip' with the original
         'Original/Revised Contract Price' / 'Original/Revised ETC' headers.
     Both feed the same keys the P&L templates already consume via
-    _num("contract_saved","revised_contract","original_contract","contract")."""
+    _num("contract_saved","revised_contract","original_contract","contract").
+
+    No file -> {}. A file that cannot be opened raises SourceUnreadable: read as
+    {} it would hand every job "no contract" and the P&Ls would fall back silently."""
     out: Dict[str, dict] = {}
-    if not path.exists():
-        return out
-    try:
-        wb = openpyxl.load_workbook(str(path), data_only=True)
-    except Exception:
+    wb = open_source(path, data_only=True)
+    if wb is None:
         return out
     # Prefer the unified Test-Master tab; else fall back to legacy 'wip' tabs.
     sheet_names = (["Test-Master"] if "Test-Master" in wb.sheetnames
@@ -1776,13 +1777,12 @@ def read_back_ledger_marks(path: Path,
     Bill rows are written with NO fill, so any solid fill on a row with a
     DATE is the estimator's mark. Keyed by (bill #, date, vendor, amount) —
     the color itself is preserved verbatim, so other color conventions keep
-    working too. Returns {sheet: {key: argb}}."""
+    working too. Returns {sheet: {key: argb}}. No prior workbook -> {}; one
+    that cannot be opened raises SourceUnreadable (the regenerated file would
+    otherwise be saved over the PM's marks)."""
     out: Dict[str, Dict[tuple, str]] = {}
-    if not path.exists():
-        return out
-    try:
-        wb = openpyxl.load_workbook(str(path))
-    except Exception:
+    wb = open_source(path)
+    if wb is None:
         return out
     for nm in sheets:
         if nm not in wb.sheetnames:
@@ -1848,13 +1848,12 @@ def read_back_ledger_marks(path: Path,
 def read_back_inputs(path: Path, sheet: str = "P&L") -> Dict[str, float]:
     """Read the user-typed yellow input cells (Contract Price / ETC) from a
     PREVIOUSLY generated P&L so a re-sync preserves them (the user 2026-06-23).
-    Locates the cells by their label in column A; returns {} if not found."""
+    Locates the cells by their label in column A; returns {} if not found or no
+    prior workbook. One that cannot be opened raises SourceUnreadable (the
+    regenerated file would otherwise be saved over the PM's typed values)."""
     out: Dict[str, float] = {}
-    if not path.exists():
-        return out
-    try:
-        wb = openpyxl.load_workbook(str(path), data_only=False)
-    except Exception:
+    wb = open_source(path, data_only=False)
+    if wb is None:
         return out
     if sheet not in wb.sheetnames:
         return out
@@ -4110,18 +4109,16 @@ def build_sheet_pl(
         # can see what you are grabbing these numbers from").
         _rep_src = ""
         if _ctr is None or _etc is None:
-            try:
-                from shared import wip_contracts as _wc
-                _rc, _rе, _rs = _wc.contract_for(proj)
-            except Exception:                    # a missing report never fails a run
-                _rc = _rе = None
-                _rs = ""
-            if _rc is not None:
+            # A report that is not there reads as "no report names this job"; one that is there
+            # but cannot be opened stops this job (SourceUnreadable) rather than quote an older one.
+            from shared import wip_contracts as _wc
+            _rep_ctr, _rep_etc, _rep_where = _wc.contract_for(proj)
+            if _rep_ctr is not None:
                 if _ctr is None:
-                    _ctr = _rc
-                if _etc is None and _rе is not None:
-                    _etc = _rе
-                _rep_src = _rs
+                    _ctr = _rep_ctr
+                if _etc is None and _rep_etc is not None:
+                    _etc = _rep_etc
+                _rep_src = _rep_where
         # NOTHING ANYWHERE => THERE IS NO PROJECTION, so the whole ① block goes
         # (the owner 2026-09-04: "if there is 0 wip with contract/etc for the
         # completed mfd, just remove those rows entirely and just show the
@@ -5980,11 +5977,11 @@ def _find_cp_takeoffs(proj: str) -> List[Path]:
 def _read_cost_code_sheet(path: Path, sheet_hint: str) -> Dict[str, float]:
     """Cost-code budget rows from ONE workbook sheet whose name contains
     `sheet_hint`: col A = cost code, col C = cached budget $. Stops at the
-    first non-code row (total rows etc.); skips zero and uncached rows."""
+    first non-code row (total rows etc.); skips zero and uncached rows.
+    An unreadable workbook raises SourceUnreadable, never reads as "no budget"."""
     out: Dict[str, float] = {}
-    try:
-        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
-    except Exception:
+    wb = open_source(path, read_only=True, data_only=True)
+    if wb is None:
         return out
     # Several sheets can carry the hint ('Cost Codes V2' + the old descriptive
     # 'Cost Codes' in one workbook — CP831). V2 first, then first sheet that
@@ -6057,11 +6054,10 @@ def _read_yards_sheet(path: Path) -> Tuple[float, Dict[str, float]]:
     into the SL/PV/CS/MS families in ways only the estimator knows (CP745 moves
     a ~$1.7k concrete line from the foundation group into paving). So the TOTAL
     is the only figure a $/yd comparison may lean on; per-family yards are
-    deliberately NOT inferred."""
+    deliberately NOT inferred. An unreadable takeoff raises SourceUnreadable."""
     total, rows = 0.0, {}
-    try:
-        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
-    except Exception:
+    wb = open_source(path, read_only=True, data_only=True)
+    if wb is None:
         return 0.0, {}
     target = next((n for n in wb.sheetnames
                    if "concrete yards" in n.strip().lower()), None)
@@ -6142,14 +6138,14 @@ def _find_rp_takeoff(proj: str) -> Optional[Path]:
 
 def load_rp_budget(proj: str) -> Tuple[Dict[str, float], str]:
     """RP budget by cost code from the takeoff's 'Cost Gral' sheet, filtered
-    to the project's side of the RP#/RP#-FTW split."""
+    to the project's side of the RP#/RP#-FTW split. An unreadable takeoff
+    raises SourceUnreadable, never reads as "no budget"."""
     tk = _find_rp_takeoff(proj)
     if not tk:
         return {}, ""
     out: Dict[str, float] = {}
-    try:
-        wb = openpyxl.load_workbook(str(tk), read_only=True, data_only=True)
-    except Exception:
+    wb = open_source(tk, read_only=True, data_only=True)
+    if wb is None:
         return {}, ""
     target = next((nm for nm in wb.sheetnames
                    if "cost" in nm.lower() and "gral" in nm.lower()), None)
@@ -10319,7 +10315,12 @@ def main() -> int:
             print(f"  ✗ no CP job folder at the top of {CP_AWARDED_BASE}")
             return 1
     else:
-        wip_master = load_wip_master(Path(args.wip_master).expanduser())
+        try:
+            wip_master = load_wip_master(Path(args.wip_master).expanduser())
+        except SourceUnreadable as e:
+            print(f"  ✗ {e}\n    Stopped - no P&L written. Without the WIP master every job would "
+                  f"lose its contract and ETC. Run again once it opens.")
+            return 1
         projects, was_expanded = expand_active_projects(projects, wip_master)
     if was_expanded and not projects:
         print(f"  ✗ `active` found no Active projects in the WIP master "
@@ -10367,6 +10368,7 @@ def main() -> int:
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM
     generated: List[Path] = []
     not_found: List[str] = []
+    failed: List[str] = []         # jobs that stopped with an error: the run exits 1, never "done"
     touched_divs: set = set()      # divisions whose Overview a run invalidates
 
     for proj in projects:
@@ -10445,7 +10447,10 @@ def main() -> int:
                 generated.append(path)
                 touched_divs.add(pnl_paths.division_of(proj))
         except Exception as e:
+            # The job's workbook was not written (its old one is untouched); the rest of the batch
+            # still runs, and the run ends failed so the office server alerts.
             ui_fail(f"{proj}: {e}")
+            failed.append(proj)
             if os.getenv("ACB_DEBUG"):
                 import traceback
                 traceback.print_exc()
@@ -10457,6 +10462,7 @@ def main() -> int:
                 generated.append(p)
         except Exception as e:
             ui_fail(f"cross-check {rf.name}: {e}")
+            failed.append(f"cross-check {rf.name}")
 
     # THE OVERVIEW IS PART OF THE RUN (the user 2026-09-03: "make sure now if we
     # update any mfd p&l it will get updated on the overview"). It is assembled
@@ -10470,8 +10476,9 @@ def main() -> int:
         for _d in sorted(d for d in touched_divs if d):
             try:
                 _res = _CP.rebuild_overview(_d.lower(), to_automations=TO_AUTOMATIONS)
-            except Exception as e:                 # never fail a good P&L run
+            except Exception as e:                 # the job P&Ls stand; the run still ends failed
                 ui_fail(f"{_d} Overview not rebuilt: {e}")
+                failed.append(f"{_d} Overview")
                 continue
             if _res:
                 ui_event(f"{_d} Overview rebuilt — {_res['jobs']} jobs, "
@@ -10481,11 +10488,13 @@ def main() -> int:
     ui_banner(f"Done — {len(generated)} workbook(s)")
     if not_found:
         ui_cfg("Not in QBO", f"{_YEL}{', '.join(not_found)}{_RESET}")
+    if failed:
+        ui_cfg("FAILED", f"{_RED}{', '.join(failed)}{_RESET}")
     for p in generated:
         print(f"  {_GREEN}→{_RESET} {_BOLD}{p.name}{_RESET}")
         print(f"    {_DIM}{p.parent}{_RESET}")
     ui_close()
-    return 0 if not not_found else 1
+    return 0 if not (not_found or failed) else 1
 
 
 if __name__ == "__main__":

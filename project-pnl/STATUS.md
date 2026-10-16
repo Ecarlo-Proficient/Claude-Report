@@ -7,6 +7,18 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 10/16/2026 · **A source that exists is read, or the job stops** (code review). Seven readers returned EMPTY when a
+  file was there but would not open: the WIP master (`load_wip_master` - every job then had no contract / ETC and fell
+  back to billed), the takeoff (`_read_cost_code_sheet`, `_read_yards_sheet`, `load_rp_budget` - Budget vs Actual
+  blank), the WIP reports (`shared/wip_contracts._scan` - quietly fell through to the OLDER report and quoted it as the
+  source) and the job's previous P&L (`read_back_inputs`, `read_back_ledger_marks` - the PM's typed Contract / ETC and
+  green confirmations were dropped and the new file saved over them). All now open through
+  `shared/xlsx_read.open_source`: missing = empty as before, there but unreadable = `SourceUnreadable` naming the file.
+  An unreadable WIP master stops the run before any QuickBooks pull; any other stops that job (old workbook untouched)
+  and the batch goes on. The run now ends **FAILED (exit 1) with a FAILED list** when any job, cross-check or Overview
+  failed - it used to exit 0, so the office server never heard about a job that did not build. Also: the identifier
+  `_rе` (a Cyrillic "е" that looked like a Latin e) is now `_rep_etc`, and the catch-all around `contract_for` is gone
+  (a missing report already reads as "no report names this job"). Test: `tests/test_source_unreadable.py`.
 - 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
   making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
   repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x

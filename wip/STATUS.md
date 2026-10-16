@@ -7,6 +7,11 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-10-16 · **MFD ETC read never fails silently** (code review): `master_wip_test.read_mfd_etc_from_division_tab`
+  returned {} when the master would not open, so every MFD job quietly fell to the divisor formula (contract ÷ markup).
+  It now opens through `shared/xlsx_read.open_source` - missing tab still = {} (the documented fallback), an unreadable
+  master stops the run. The script also bootstraps the repo root itself instead of relying on `wip_writer`'s import
+  having done it first. Test: `tests/test_source_unreadable.py`.
 - 2026-10-02 · **CP reader reads .xls pay apps** - with no .xlsx draw workbook it falls back to `shared.draws.read_pay_app` (the reader the P&L uses), so contract + approved COs + billed + retainage come from the signed G702. CP831: Draw #2's 33,361 CO was missing from the WIP (tab fell back to the proposal); the review now proposes it. NOTE: an --apply-review writes only the jobs the reader finds - 14 old jobs on 'Test - CP' (CP519, CP591 ...) show as REMOVED and would drop off; the owner decides before any write.
 - 2026-10-01 · **Split billing counts every customer** (owner: "the split billing is correct, count both
   RP7401-FTW invoices"). A `customers: all` job ruling (`shared/job_rulings`, register `Registers/job_rulings.json`)

@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from shared import paths
+from shared.xlsx_read import open_source
 
 WIP_DIR_DEFAULT = "Company Files - WIP Report"
 _CONTRACT_HDR = "TOTAL CONTRACT PRICE"
@@ -68,12 +69,14 @@ def _scan(path: Path) -> Dict[str, Tuple[float, Optional[float], str]]:
 
     The FIRST usable row per project wins; addendum rows never count. Sheets
     are read in workbook order, which puts the newest period first in the MFD
-    report ('3-31-26' before '12-31-25')."""
-    from openpyxl import load_workbook
+    report ('3-31-26' before '12-31-25').
+
+    A report that cannot be opened raises SourceUnreadable. Read as empty, the
+    lookup would quietly fall through to the NEXT, older report and quote its
+    contract as the source."""
     out: Dict[str, Tuple[float, Optional[float], str]] = {}
-    try:
-        wb = load_workbook(str(path), read_only=True, data_only=True)
-    except Exception:
+    wb = open_source(path, read_only=True, data_only=True)
+    if wb is None:
         return out
     try:
         for sn in wb.sheetnames:

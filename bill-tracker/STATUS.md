@@ -4,6 +4,18 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 10/16/2026 · **The clerks' Lien / Notes / audit marks can no longer be wiped** (code review, owner: "the right way,
+  no hacks"). Before: an existing tracker that would not open (a share hiccup, a file cut off mid-copy) read as "no
+  edits", the rebuild was saved over it, and the one daily backup was overwritten by every run - so the bad file
+  became the backup too. Now: `read_existing` opens the tracker ONCE through `shared/xlsx_read.open_source`; there but
+  unreadable = **exit 4, nothing written** (the office server alerts on any non-zero exit; the message names
+  `_backups/Bill Tracker - previous.xlsx` to restore from if it keeps failing). Backups copy only a tracker that just
+  opened: `- previous` (just before each run) and the day's FIRST dated copy (kept all day, 14-day pruning unchanged).
+  The save is `shared/xlsx_save.save_verified`: built in a hidden temp beside the tracker, `post_process_xlsx`, then
+  `validate_xlsx` AND `xlsx_verify.assert_clean` (rule 5b - it was never called here), and only a clean file is
+  written INTO the tracker (same file, so the share's permissions stay - a rename would hand it the automation user's
+  permissions, the 10/05 lockout). A failed check = **exit 2, tracker untouched** (it used to save the bad file
+  "anyway"). Tests: `tests/test_bill_tracker_keeps_edits.py`, `tests/test_xlsx_save.py`.
 - 10/14/2026 · **RP stage-invoice match** (owner: on a job billed in stages a July bill must not land on
   the bigger later invoice). `qbo_bill_tracker.find_matching_invoice_ex` RP branch gains a STAGE pass before the
   cover pass: when `shared/rp_invoicing` says the job is billed in stages, the bill matches the FIRST stage invoice
