@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Checks QBO changed: select all** (owner: "instead of me having to click indvidually the ones to revert
+  i need a select all"). The main Checks table gains a tick column: every clear-copy check has a tick, the header box
+  ticks every one shown (half-ticked when some), on ANY chip - To fix included, not only Clear copy. The bar above the
+  table reads "Re-apply N selected · $X" + Clear selection and runs the same live proof -> Ready/Skip list -> "Are you
+  sure?" -> write as the 10/06 bulk fix (`reapply_check.bulk_dry_run` / `bulk_commit`, unchanged). A check with no
+  proven copy (Hunt down) has no tick. Front end only (`static/app.js` cdPick / cdSyncSelAll, `style.css`). Verified on
+  the 10/15 11:30-11:51 CT burst: 17 of 17 ticked by the header box, 17 of 17 prove live; not written.
 - 10/15/2026 · **Vendor Payments: Cleared at the bank + drag the columns** (owner: "vendor payments, need to see when
   it's been cashed, using bank transaction match i need to know if it's cleared or still out there"; "reorder the
   payments screen. i want to reorder by dragging"). NEW **Cleared** column on the vendor page's Payments view, after

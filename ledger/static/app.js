@@ -9953,8 +9953,7 @@ function renderCheckDrift() {
     for (const [k, label] of CD_KINDS) { const b = document.createElement("button"); b.className = "acct-chip" + (cdKind === k ? " active" : "");
       b.textContent = label; b.onclick = () => { cdKind = k; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; seg.appendChild(b); }
     filt.appendChild(seg); }
-  cdBulkBar();
-  if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
+  if (cdFilter === "history") { cdShown = []; cdBulkBar(); renderStripHistory(thead, tbody); return; }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
   const fn = r => fn0(r) && cdKindFn()(r);
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -9962,21 +9961,35 @@ function renderCheckDrift() {
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
   const base = all.filter(r => fn(r) && refHit(q.join(" "), [r.check, ...r.reopened.map(b => b.doc_number), ...r.copies.map(b => b.doc_number), ...r.late.map(b => b.doc_number)]));
   const rows = hfSorted("checkdrift", base.filter(r => hfPasses("checkdrift", r)));
+  cdShown = rows.filter(cdClear);
+  { const ok = new Set(all.filter(cdClear).map(r => r.payment_id)); for (const id of [...cdPick]) if (!ok.has(id)) cdPick.delete(id); }
+  cdBulkBar();
   const cols = [["Vendor", "left", "vendor"], ["Priority", "left"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
     ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Moved to a newer bill", "left"], ["What happened", "left"], ["Changed", "left"]];
   thead.innerHTML = "";
+  const span = cols.length + 1;          // + the tick column (select all, owner 2026-10-16)
   { const tr = document.createElement("tr");
+    { const th = document.createElement("th"); th.className = "left acct-check"; th.style.width = "32px";
+      const all = document.createElement("input"); all.type = "checkbox"; all.id = "cdSelAll"; all.title = "Select every clear-copy check shown";
+      all.disabled = !cdShown.length; all.onchange = () => { for (const r of cdShown) all.checked ? cdPick.add(r.payment_id) : cdPick.delete(r.payment_id); cdPickChanged(); };
+      th.appendChild(all); tr.appendChild(th); }
     for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
       if (hk) hfDecorate(th, "checkdrift", hk, () => base.filter(r => hfPasses("checkdrift", r, hk)), renderCheckDrift); tr.appendChild(th); }
     thead.appendChild(tr); }
   tbody.innerHTML = "";
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No check QuickBooks changed - every paid check still sits on its bills."}</td></tr>`; return; }
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${span}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No check QuickBooks changed - every paid check still sits on its bills."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
   const billTxt = b => `#${b.doc_number} ${fmtDateShort(b.txn_date)} ${qaCents(b.balance)}` + (b.exact ? "" : " (possible)");
   for (const g of audBuckets(rows, r => r.changed_local || r.last_changed, audGroupBy("checkdrift"))) {
-  if (g.label) frag.appendChild(audBand("checkdrift", g, cols.length));
+  if (g.label) frag.appendChild(audBand("checkdrift", g, span));
   for (const r of g.rows) {
     const tr = document.createElement("tr"); tr.className = "vp-pay";
+    { const td = document.createElement("td"); td.className = "left acct-check";
+      if (cdClear(r)) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "cd-pick"; cb.dataset.pid = r.payment_id; cb.checked = cdPick.has(r.payment_id);
+        cb.title = "Re-apply with the others ticked"; cb.onclick = (e) => e.stopPropagation();
+        cb.onchange = () => { cb.checked ? cdPick.add(r.payment_id) : cdPick.delete(r.payment_id); cdPickChanged(); }; td.appendChild(cb); }
+      else if (cdOpen(r) && r.floating > 1) td.title = "No proven copy - fix it from its own card";
+      tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span");
       if (typeof openVendorPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openVendorPage(r.vendor); }; sp.appendChild(a); }
       else sp.textContent = r.vendor || "–";
@@ -10003,10 +10016,11 @@ function renderCheckDrift() {
       tr.appendChild(td); }
     tr.appendChild(leftText(r.changed_local ? fmtDate(r.changed_local, true) : "–"));   // Central, not QBO's Pacific stamp
     frag.appendChild(tr);
-    frag.appendChild(cdFixRow(r, cols.length));
+    frag.appendChild(cdFixRow(r, span));
   }
   }
   tbody.appendChild(frag);
+  cdSyncSelAll();
 }
 // History (owner 2026-09-25: "don't just remove it once i fix it, it needs a history"): every check QuickBooks left
 // with no bills, oldest first, fixed or not - the same list the QBO report prints (ledger/strip_history.py)
@@ -10153,19 +10167,31 @@ async function cdReapplyWrite(d, btn, box) {
 // Clear copy bulk fix: the bar under the chips. Step 1 proves every listed check again LIVE from QuickBooks (no
 // write) and lists each with its short pays and credits; step 2 writes only the ones that proved, after "Are you
 // sure?" - the server re-proves each one right before its own write and skips any that changed.
-let cdBulkRes = null;
-function cdBulkRows() { const q = (($("#cdSearch") || {}).value || "").trim();
-  return ((CD && CD.rows) || []).filter(r => cdClear(r) && cdKindFn()(r) && refHit(q, [r.check, ...r.reopened.map(b => b.doc_number)])); }
+// Select all (owner 2026-10-16: "instead of me having to click individually the ones to revert i need a select all"):
+// every clear-copy check in the table has a tick, the header box ticks every one shown, on any chip - the bar re-applies
+// the ticked ones through the same live proof + "Are you sure?" as before. A check with no proven copy has no tick.
+let cdBulkRes = null, cdShown = [];
+const cdPick = new Set();
+function cdPickChanged() { cdBulkRes = null; cdBulkBar(); cdSyncSelAll(); }
+function cdSyncSelAll() { const all = $("#cdSelAll"); if (!all) return;
+  const n = cdShown.filter(r => cdPick.has(r.payment_id)).length;
+  all.checked = !!cdShown.length && n === cdShown.length; all.indeterminate = n > 0 && n < cdShown.length;
+  document.querySelectorAll("#cdTable .cd-pick").forEach(cb => { cb.checked = cdPick.has(cb.dataset.pid); }); }
+function cdBulkRows() { return ((CD && CD.rows) || []).filter(r => cdClear(r) && cdPick.has(r.payment_id)); }
 function cdBulkBar() {
   const bar = $("#cdBulk"); if (!bar) return;
-  if (cdFilter !== "clear") { bar.hidden = true; bar.innerHTML = ""; return; }
+  if (cdFilter === "history" || (!cdShown.length && !cdPick.size)) { bar.hidden = true; bar.innerHTML = ""; return; }
   bar.hidden = false; bar.innerHTML = "";
   if (CD && CD.clear_copy_error) { const x = document.createElement("div"); x.className = "cd-ra-line neg"; x.textContent = "Clear copy unavailable: " + CD.clear_copy_error; bar.appendChild(x); return; }
   const rows = cdBulkRows();
   const act = document.createElement("div"); act.className = "qa-repair-act";
-  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.disabled = !rows.length;
-  b.textContent = `Check all ${rows.length} live · ${qaCents(rows.reduce((t, r) => t + num(r.floating), 0))}…`;
-  b.onclick = () => cdBulkDry(rows, b); act.appendChild(b); bar.appendChild(act);
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small primary"; b.disabled = !rows.length;
+  b.textContent = `Re-apply ${rows.length} selected · ${qaCents(rows.reduce((t, r) => t + num(r.floating), 0))}…`;
+  b.title = "Proves each ticked check again live from QuickBooks first (nothing written), then asks before writing";
+  b.onclick = () => cdBulkDry(rows, b); act.appendChild(b);
+  if (rows.length) { const c = document.createElement("button"); c.type = "button"; c.className = "btn small"; c.textContent = "Clear selection";
+    c.onclick = () => { cdPick.clear(); cdPickChanged(); }; act.appendChild(c); }
+  bar.appendChild(act);
   if (cdBulkRes) bar.appendChild(cdBulkRes);
 }
 async function cdBulkDry(rows, btn) {
@@ -10230,7 +10256,7 @@ async function cdBulkWrite(ready, amt, btn, box) {
   p(`Written: ${res.written} of ${res.results.length} checks.` + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : ""), bad.length ? "warn" : "ok");
   for (const r of bad) p(`Check #${r.check || r.payment_id} not written: ${r.error}`, "neg");
   btn.textContent = "Written";
-  setTimeout(() => { cdBulkRes = null; const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 3000);
+  setTimeout(() => { cdBulkRes = null; cdPick.clear(); const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 3000);
 }
 
 // ── Uncleared checks (owner 2026-09-24: "a list of all unmatched checks and/or any checks that haven't been deposited").
