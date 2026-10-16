@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/16/2026 · **Fold ticks that reach the paper** (owner: "external stub did not have the little lines to fold on this
+  new pass"). The ticks were in the PDF all along, but as a 0.5px #c4c4c4 hairline in the outer 0.18 in of the sheet,
+  which is inside every printer's unprintable margin, so paper never showed them. `bill_payment_stub.CSS` `.tick`:
+  0.2 in in from each edge, 0.3 in long, 1px #8a8a8a. Today's two external stubs (37824 Preferred Materials, the RP
+  payment after it) re-filed from the mirror so the files on the share carry them. Internal stubs unaffected (no ticks).
 - 10/16/2026 · **Waiting for the server says whether the Synology is ready** (after the 10/16 outage): the block
   shows "Synology ready for this release" or "Synology NOT ready - N missing", item by item (missing folder /
   server.env setting, what this release adds, what this Mac can't see), from `shared/server_release` - the same rule

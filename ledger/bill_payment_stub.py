@@ -42,7 +42,8 @@ vendor in the bottom"): the top 3.5 in of page 1 is the envelope panel for a 8 1
 envelope - our name + address where the top window falls (3/8 in from the left, 2 3/8 in up from the bottom), the
 vendor's print-on-check name + bill address where the bottom window falls (7/8 in from the left, 3/4 in up from the
 bottom), the payment (date / type / check # / Amount) to the right of both windows, the bills below the first fold.
-Faint ticks at both page edges mark the folds (3.5 / 7 / 10.5 in: 3.5 in panels, the last half inch folds under).
+Short ticks at both page edges mark the folds (3.5 / 7 / 10.5 in: 3.5 in panels, the last half inch folds under) -
+0.2 in in from the paper's edge, 0.3 in long, so they land inside the printer's printable area.
 Our address is ACB_COMPANY_ADDRESS in machine.env (lines split on `|`), under ACB_COMPANY_NAME. The internal stub
 keeps the centered report header - it is never mailed.
 
@@ -760,8 +761,11 @@ table.credit tr.total td { border-top: 1px solid #333; border-bottom: 2px solid 
 .panel .kv .kvrule { grid-column: 1 / -1; border-top: 1px solid #333; margin: 4px 0 3px; }
 .panel .kv .lbl.amtl { font-size: 14px; align-self: baseline; color: #111; text-transform: none; letter-spacing: 0; }
 .panel .kv .amt { font-size: 15px; font-weight: 700; }
-.tick { position: absolute; height: 0; border-top: 0.5px solid #c4c4c4; width: 0.18in; }
-.tick.l { left: -0.6in; } .tick.r { left: 7.72in; }
+/* fold ticks: 0.2 in in from each paper edge, 0.3 in long, 1px mid-grey - inside what a printer can put on paper
+   (the outer 0.18 in hairline of 10/14 was in the printer's unprintable margin and never reached the page, owner
+   2026-10-16: "did not have the little lines to fold") */
+.tick { position: absolute; height: 0; border-top: 1px solid #8a8a8a; width: 0.3in; }
+.tick.l { left: -0.4in; } .tick.r { left: 7.4in; }
 """
 
 # page inches: the folds (3.5in panels; the last half inch folds under) less the 0.5in top page margin
