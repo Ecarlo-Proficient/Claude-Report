@@ -333,6 +333,8 @@ def change_flags(entity: str, kind: str, before: Optional[dict], after: Optional
     if kind == "deleted":
         if entity == "Bill" and _num(b.get("TotalAmt")) and (_num(b.get("Balance")) or 0) <= 0.005:
             fl.append("deleted paid bill")
+        elif entity == "Invoice":           # the AR watch (owner 2026-10-11: "are the invoices getting deleted as well")
+            fl.append("deleted open invoice" if (_num(b.get("Balance")) or 0) > 0.005 else "deleted paid invoice")
         elif entity in ("BillPayment", "Payment"):
             fl.append("payment deleted")
         else:

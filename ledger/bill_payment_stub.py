@@ -3,21 +3,48 @@
 top and the bills it paid below (owner 2026-09-22: "it needs to look like qbo format, but we need
 the payment on top and the bills it's paying below").
 
-One stub per payment, one payment per page. Columns are a registry the caller adds to or drops
-from; the default set is QBO's own "Bills and Applied Payments" columns:
+One stub per payment, one payment per page. Two kinds (owner 2026-10-15: "we need a internal and external
+stub"), each with its own fixed column set:
 
-    date · type · number · memo · amount · open_balance
+    external (kind "vendor", the one mailed with the check, on the envelope template):
+        date · number · bill_total · balance_before · amount · open_balance
+        (Date · Reference · Bill total · Open balance · Paid · New balance - "simply put the date, ref, total,
+        open, paid, new and put it on the mail template ... every stub should have this")
+    internal (the office copy, the original centered header, never mailed):
+        project · memo · bill_total · balance_before · amount · open_balance
+        (Project · Memo · Bill total · Open balance · Paid · New balance - "simply include the project #, and the
+        memo in that order with the bill total, open balance, paid and new balance")
+
+The column registry is still there for the external stub: the ledger's picker (or --columns / --add / --drop) can
+put Transaction type, Project, Memo or Due date back on it. The internal stub always prints its own set.
 
 `amount` is what THIS payment applied to the bill (the column ties to the payment total); the
 bill's own total is the optional `bill_total` column. Both stubs read each bill as Open balance - Paid = New
 balance (owner 2026-10-07: "shown on amount paid - open balance = new total"; the vendor stub too the same day:
 "fix the partials ... use columns", no partial sentence): the balance just before THIS payment (the bill total
 less every earlier payment on it, from the bill's own LinkedTxn), what it applied and what is left. On the internal
-stub a check drawn on the Joint Checks account shows its type as "Joint check".
+stub a check drawn on the Joint Checks account shows its type as "Joint check" (both stubs, owner 2026-10-09).
+
+A payment bigger than the bills it pays (owner 2026-10-13, a joint check paying a bill we had already paid) is what
+QuickBooks calls "Amount to Credit": the BillPayment's TotalAmt is more than its lines, no extra line - QuickBooks
+holds the difference as a credit with the vendor (HDS White Cap check 20119: 9,552.63 paid, 9,251.63 applied, 301.00
+credit). Both stubs print it as a block under the bills - Paid on bills / Credit on account / Total - instead of the
+old "check this payment" warning, which now fires only on a shortfall. A vendor credit QuickBooks applied on the
+payment is a negative Paid row (QuickBooks subtracts it from the check), so the Paid column always adds up to what was
+applied.
 
 Reads the raw QBO mirror only (shared/qbo_mirror: BillPayment -> Line[].LinkedTxn -> Bill; Vendor
 for the print name and address). Read-only everywhere; writes just the HTML/PDF it was asked for.
 PDF = the HTML printed by Chrome headless (Letter portrait), the same recipe as the process guides.
+
+The vendor stub is MAILABLE (owner 2026-10-14: "a mailable view with a two window design, our info on top and the
+vendor in the bottom"): the top 3.5 in of page 1 is the envelope panel for a 8 11/16 x 3 5/8 double-window check
+envelope - our name + address where the top window falls (3/8 in from the left, 2 3/8 in up from the bottom), the
+vendor's print-on-check name + bill address where the bottom window falls (7/8 in from the left, 3/4 in up from the
+bottom), the payment (date / type / check # / Amount) to the right of both windows, the bills below the first fold.
+Faint ticks at both page edges mark the folds (3.5 / 7 / 10.5 in: 3.5 in panels, the last half inch folds under).
+Our address is ACB_COMPANY_ADDRESS in machine.env (lines split on `|`), under ACB_COMPANY_NAME. The internal stub
+keeps the centered report header - it is never mailed.
 
     python3 ledger/bill_payment_stub.py --vendor COWTOWN --date 2026-09-21
     python3 ledger/bill_payment_stub.py --payment 1318748 --payment 1318747
@@ -130,11 +157,11 @@ Row = Dict[str, object]
 COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
     "date":         ("Date",               "left",  lambda r: mdy(r["bill_date"])),
     "type":         ("Transaction type",   "left",  lambda r: str(r.get("type") or "Bill")),
-    "number":       ("Transaction number", "left",  lambda r: str(r["number"] or "")),
-    "memo":         ("Memo/Description",   "left",  lambda r: str(r["memo"] or "")),
+    "number":       ("Reference",          "left",  lambda r: str(r["number"] or "")),   # QuickBooks' word on its own stub (the bill #)
+    "memo":         ("Memo",               "left",  lambda r: str(r["memo"] or "")),
     "project":      ("Project",            "left",  lambda r: str(r["project"] or "")),
     "due_date":     ("Due date",           "left",  lambda r: mdy(r["due_date"])),
-    "bill_total":   ("Bill amount",        "right", lambda r: money(r["bill_total"])),
+    "bill_total":   ("Bill total",         "right", lambda r: money(r["bill_total"])),
     # the money as of THIS payment: Open balance - Paid = New balance (owner 2026-10-07; the picker shows these
     # same labels, so what is ticked is what prints - the keys stay for saved picks and the print history)
     "balance_before": ("Open balance",     "right", lambda r: "" if r.get("balance_before") is None else money(r["balance_before"])),
@@ -143,9 +170,13 @@ COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
 }
 KINDS = ("vendor", "internal")
 MONEY_ORDER = ("bill_total", "balance_before", "amount", "open_balance")   # always on the right, in this order
-DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "type", "number", "memo", "balance_before", "amount", "open_balance")
+# the external stub (owner 2026-10-15: "the date, ref, total, open, paid, new")
+DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "number", "bill_total", "balance_before", "amount", "open_balance")
+# the internal stub (owner 2026-10-15: "the project #, and the memo in that order with the bill total, open balance, paid
+# and new balance") - fixed, the picker does not change it
+INTERNAL_COLUMNS: Tuple[str, ...] = ("project", "memo", "bill_total", "balance_before", "amount", "open_balance")
 WIDTHS = {"date": 64, "type": 88, "number": 100, "project": 90, "due_date": 64, "bill_total": 74, "amount": 74,
-          "open_balance": 80, "balance_before": 80}   # px on a 7.3in Letter page; memo takes what is left
+          "open_balance": 80, "balance_before": 80}   # px on a 7.3in Letter page; memo takes what is left (project, then the reference, when there is no memo)
 MONEY_COLUMNS = {"bill_total", "balance_before", "amount", "open_balance"}   # get a total on the last row
 
 
@@ -167,22 +198,15 @@ def resolve_columns(columns: Optional[Sequence[str]] = None,
 
 
 def columns_for(kind: str, columns: Optional[Sequence[str]] = None) -> List[str]:
-    """The columns a print of this kind gets. Vendor: exactly the pick (owner 2026-10-07: "columns not matching
-    stub"), the money ones moved to the right in MONEY_ORDER. Internal: the pick without Transaction type (always
-    "Bill"; its width goes to the memo), Project after the memo, and always Open balance - Paid = New balance.
-    Idempotent."""
+    """The columns a print of this kind gets. External ("vendor"): exactly the pick (owner 2026-10-07: "columns not
+    matching stub"; the default pick = DEFAULT_COLUMNS), the money ones moved to the right in MONEY_ORDER. Internal:
+    always INTERNAL_COLUMNS (owner 2026-10-15) - the pick is ignored. Idempotent."""
     if kind not in KINDS:
         raise ValueError(f"unknown stub kind {kind!r} - {', '.join(KINDS)}")
+    if kind == "internal":
+        return list(INTERNAL_COLUMNS)
     cols = resolve_columns(columns)
-    if kind == "vendor":
-        return [k for k in cols if k not in MONEY_ORDER] + [k for k in MONEY_ORDER if k in cols]
-    tail = ["balance_before", "amount", "open_balance"]
-    cols = [k for k in cols if k != "type"] or cols
-    cols = [k for k in cols if k not in tail] + tail
-    if "project" not in cols:
-        at = cols.index("memo") + 1 if "memo" in cols else (cols.index("number") + 1 if "number" in cols else 0)
-        cols.insert(at, "project")
-    return cols
+    return [k for k in cols if k not in MONEY_ORDER] + [k for k in MONEY_ORDER if k in cols]
 
 
 INVOICE_STATE_TEXT = {"awaiting": "Not invoiced yet", "noproject": "No project #", "untracked": "Not tracked", "open": "Not paid"}
@@ -349,19 +373,17 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
         addr_lines.append(city)
     rows: List[Row] = []
     agg: Dict[Tuple[str, str], float] = {}
-    unapplied = 0.0
     for ln in bp.get("Line", []) or []:
-        paid = _num(ln.get("Amount"))
         linked = [t for t in (ln.get("LinkedTxn") or []) if t.get("TxnId")]
-        if not linked:
-            unapplied = round(unapplied + paid, 2)
+        if not linked:                                     # QuickBooks writes no line for the unapplied part: it is TotalAmt - lines
             continue
         key = (str(linked[0].get("TxnType") or "Bill"), str(linked[0]["TxnId"]))
-        agg[key] = round(agg.get(key, 0.0) + paid, 2)
-    for (ttype, tid), paid in agg.items():
+        agg[key] = round(agg.get(key, 0.0) + _num(ln.get("Amount")), 2)
+    for (ttype, tid), applied in agg.items():
         rec = txn_of(ttype, tid) or {}
         total = _num(rec.get("TotalAmt"))
         is_bill = ttype == "Bill"
+        paid = -applied if ttype == "VendorCredit" else applied   # a credit QuickBooks applied comes OFF the check
         before = _balance_before(rec, bp, tid, txn_of) if is_bill and rec else None
         rows.append({
             "bill_id": tid,
@@ -380,11 +402,11 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
             "partial": is_bill and bool(rec) and abs(total - paid) > 0.005,
         })
     rows.sort(key=lambda r: (str(r["bill_date"] or ""), _natural(r["number"])))
-    if abs(unapplied) > 0.005:
-        rows.append({"bill_id": "", "txn_type": "", "type": "Unapplied", "bill_date": bp.get("TxnDate"), "due_date": None,
-                     "number": "", "memo": "amount not applied to a bill", "project": "", "bill_total": unapplied,
-                     "paid": unapplied, "open_balance": 0.0, "balance_before": None, "balance_after": None, "partial": False})
-    total_paid = round(sum(r["paid"] for r in rows), 2)   # type: ignore[misc]
+    total_paid = round(sum(r["paid"] for r in rows), 2)   # type: ignore[misc]   what the check applied, credits off
+    total_amt = _num(bp.get("TotalAmt"))
+    credit = round(total_amt - total_paid, 2)               # QuickBooks' "Amount to Credit": the check beyond its bills
+    if credit < 0.005:
+        credit = 0.0
     return {
         "payment_id": str(bp.get("Id")),
         "txn_date": bp.get("TxnDate"),
@@ -394,10 +416,12 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
         "method": method,
         "ref": ref,
         "account": acct,
-        "total": _num(bp.get("TotalAmt")),
+        "joint": method == "Check" and is_joint_account(acct),   # paid out of the Joint Checks account, both stubs
+        "total": total_amt,
         "rows": rows,
         "rows_total": total_paid,
-        "ties": abs(total_paid - _num(bp.get("TotalAmt"))) < 0.005,
+        "credit": credit,                                       # a credit with the vendor made by this payment (0 = none)
+        "ties": abs(total_paid + credit - total_amt) < 0.005,   # false only when the check is SHORT of its bills
     }
 
 
@@ -607,11 +631,12 @@ def history_snapshot(con: sqlite3.Connection, hist_id: int) -> Optional[dict]:
 
 def print_stub(payment_id: str, columns: Optional[Sequence[str]] = None, company: str = "",
                db_path: Optional[Path] = None, kind: str = "vendor",
-               invoice_of: Optional[Dict[str, dict]] = None) -> dict:
+               invoice_of: Optional[Dict[str, dict]] = None, invoices: bool = False) -> dict:
     """The dashboard's print: build from the mirror (a deleted payment still builds - the mirror keeps
     it), write the PDF into the vendor folder, record the history row. Returns {ok, id, file, stub}.
-    kind="internal" groups the bills under the client invoices they were paid from (see apply_internal). A payment the
-    mirror has not seen yet answers {ok: False, missing: True} so the caller can refresh and retry."""
+    kind="internal" prints the office copy (Project · Memo · the money); `invoices=True` also puts the client invoices
+    the money came from on top (see apply_internal) - off by default (owner 2026-10-15). A payment the mirror has not
+    seen yet answers {ok: False, missing: True} so the caller can refresh and retry."""
     from shared import qbo_mirror as mirror
     cols = columns_for(kind, columns)
     mcon = mirror.connect()
@@ -629,6 +654,8 @@ def print_stub(payment_id: str, columns: Optional[Sequence[str]] = None, company
         stub["vendor_id"] = vid
         stub["kind"] = kind
         if kind == "internal":
+            stub["invoices"] = bool(invoices)
+
             def invoice_by_doc(doc: str) -> Optional[dict]:
                 hit = mirror.load("Invoice", "doc_number = ?", (str(doc),), con=mcon)
                 return hit[0] if len(hit) == 1 else None
@@ -676,9 +703,11 @@ def columns_registry() -> List[dict]:
 # ───────────────────────── the page ─────────────────────────
 
 CSS = """
-@page { size: Letter portrait; margin: 0.55in 0.6in; }
+@page { size: Letter portrait; margin: 0.5in 0; }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: Helvetica, Arial, -apple-system, sans-serif; font-size: 10.5px; color: #111; }
+/* the side margins live on the body, not the page: Chrome clips whatever is printed inside a page margin, and the
+   mailable stub's fold ticks sit on the paper's edge */
+body { margin: 0; padding: 0 0.6in; font-family: Helvetica, Arial, -apple-system, sans-serif; font-size: 10.5px; color: #111; }
 .stub { page-break-after: always; }
 .stub:last-child { page-break-after: auto; }
 .hdr { text-align: center; margin: 0 0 18px; }
@@ -710,15 +739,142 @@ tr.total td { border-top: 1px solid #333; border-bottom: 2px solid #333; font-we
 .rule { margin: 0 0 22px; }
 .pay .kv .kvrule { grid-column: 1 / -1; border-top: 1px solid #333; margin: 4px 0 3px; }
 .pay .kv .lbl.amtl { font-size: 14px; align-self: baseline; }
+table.credit { width: auto; min-width: 46%; margin: 14px 0 0 auto; }
+table.credit td { padding: 4px 4px; }
+table.credit td:first-child { padding-right: 24px; }
+table.credit tr.total td { border-top: 1px solid #333; border-bottom: 2px solid #333; }
+.credit-note { margin-top: 8px; text-align: right; font-weight: 600; }
+/* the mailable vendor stub: positions are page inches less the 0.5in top page margin / 0.6in body padding */
+.stub.mail { position: relative; }
+.panel { position: relative; height: 3.22in; }
+.panel .abs { position: absolute; }
+.panel .ours { left: 0; top: 0.02in; width: 3.0in; font-size: 11px; line-height: 0.165in; }
+.panel .ours .co { font-weight: 700; font-size: 12px; }
+.panel .vend { left: 0.5in; top: 1.65in; width: 3.05in; font-size: 10.5px; line-height: 0.15in; }
+.panel .vend .name { font-weight: 700; font-size: 11.5px; }
+.panel .right { left: 4.45in; top: 0; width: 2.85in; }
+.panel .right .rpt { font-size: 14px; font-weight: 700; margin: 0 0 8px; }
+.panel .kv { display: grid; grid-template-columns: max-content 1fr; column-gap: 14px; row-gap: 3px; }
+.panel .kv .lbl { font-size: 9.5px; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+.panel .kv .v { font-weight: 600; text-align: right; }
+.panel .kv .kvrule { grid-column: 1 / -1; border-top: 1px solid #333; margin: 4px 0 3px; }
+.panel .kv .lbl.amtl { font-size: 14px; align-self: baseline; color: #111; text-transform: none; letter-spacing: 0; }
+.panel .kv .amt { font-size: 15px; font-weight: 700; }
+.tick { position: absolute; height: 0; border-top: 0.5px solid #c4c4c4; width: 0.18in; }
+.tick.l { left: -0.6in; } .tick.r { left: 7.72in; }
 """
 
+# page inches: the folds (3.5in panels; the last half inch folds under) less the 0.5in top page margin
+FOLD_TICKS = (3.0, 6.5, 9.98)
 
-def _internal_table(s: dict, cols: Sequence[str]) -> str:
-    """Internal stub body (owner 2026-10-07: "invoice one row, total of that, ___ then the bills it was applied to"):
-    the client invoice(s) this payment came from, one row each with what it took from it, and their total; a rule;
-    then the bills it paid, each ONCE, as Open balance - Paid = New balance, and their total."""
+
+def company_address() -> List[str]:
+    """Our mailing address for the top window: ACB_COMPANY_ADDRESS in machine.env, lines split on `|`."""
+    return [ln.strip() for ln in paths.get("ACB_COMPANY_ADDRESS", "").split("|") if ln.strip()]
+
+
+def _mail_panel(s: dict, company: str, address: Sequence[str]) -> str:
+    """The envelope panel on top of the vendor stub: our block in the top window, the vendor in the bottom one,
+    the payment to the right of both, fold ticks on the page edges."""
+    addr = list(s.get("address") or [])
+    if addr and str(addr[0]).strip().upper() == str(s.get("pay_to") or "").strip().upper():
+        addr = addr[1:]                                    # QuickBooks repeats the name as address line 1
+    out = ["<div class='panel'><div class='abs ours'>"]
+    if company:
+        out.append(f"<div class='co'>{_esc(company)}</div>")
+    out.append("<br>".join(_esc(a) for a in address) + "</div>")
+    out.append(f"<div class='abs vend'><div class='name'>{_esc(s['pay_to'])}</div>" + "<br>".join(_esc(a) for a in addr) + "</div>")
+    out.append("<div class='abs right'><p class='rpt'>Bill Payment Stub</p><div class='kv'>")
+    kv = [("Payment date", mdy(s["txn_date"])),
+          ("Payment type", "Joint check" if s.get("joint") else s["method"]),
+          ("Check number" if s["method"] == "Check" else "Reference", s["ref"])]
+    for lbl, val in kv:
+        if val:
+            out.append(f"<div class='lbl'>{_esc(lbl)}</div><div class='v'>{_esc(val)}</div>")
+    out.append(f"<div class='kvrule'></div><div class='lbl amtl'>Amount</div><div class='v amt'>${money(s['total'])}</div>")
+    out.append("</div></div>")
+    for y in FOLD_TICKS:
+        out.append(f"<div class='tick l' style='top:{y}in'></div><div class='tick r' style='top:{y}in'></div>")
+    out.append("</div>")
+    return "".join(out)
+
+
+def _credit_block(s: dict) -> str:
+    """Under the bills, when the payment is more than the bills it pays (QuickBooks' "Amount to Credit", owner
+    2026-10-13): Paid on bills / Credit on account / Total, and one line saying what the credit is. The vendor's copy
+    asks them to hold it; the internal copy says QuickBooks holds it with that vendor."""
+    credit = _num(s.get("credit"))
+    if credit < 0.005:
+        return ""
+    word = "check" if s["method"] in CHECK_METHODS or s.get("joint") else "payment"
+    if s.get("kind") == "internal":
+        note = (f"This {word} is ${money(credit)} more than the bills it pays. QuickBooks holds that as a credit with "
+                f"{_esc(s['vendor'])} (Amount to Credit), to apply to a future bill.")
+    else:
+        note = (f"This {word} is ${money(credit)} more than the bills it pays. Please hold the ${money(credit)} as a "
+                f"credit on our account.")
+    return ("<table class='credit'><tbody>"
+            f"<tr class='row'><td>Paid on bills</td><td class='r'>${money(s['rows_total'])}</td></tr>"
+            f"<tr class='row'><td>Credit on account</td><td class='r'>${money(credit)}</td></tr>"
+            f"<tr class='total'><td>Total of this {word}</td><td class='r'>${money(s['total'])}</td></tr>"
+            f"</tbody></table><div class='credit-note'>{note}</div>")
+
+
+def _stretch_column(cols: Sequence[str]) -> Optional[str]:
+    """The column that takes the page's leftover width: the memo, else the project, else the reference."""
+    return next((k for k in ("memo", "project", "number") if k in cols), None)
+
+
+def _bills_table(s: dict, cols: Sequence[str], total_label: str, band: bool) -> str:
+    """One row per bill in the given columns, every money column totalled on the last row (Bill total · Open balance
+    · Paid · New balance all add up, so Open balance - Paid = New balance reads on the total too), then the credit
+    block when the payment is more than its bills and the warning when it is short. `band` = the vendor's grey name
+    band on top (the external stub)."""
     spec = COLUMNS
-    word = "check" if s["method"] == "Check" else "payment"
+    stretch = _stretch_column(cols)
+    out = ["<table><thead><tr>"]
+    for k in cols:
+        label, align, _ = spec[k]
+        w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS and k != stretch else ""
+        out.append(f"<th class='{align[0]}{' memo' if k == stretch else ''}'{w}>{_esc(label)}</th>")
+    out.append("</tr></thead><tbody>")
+    if band:
+        out.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
+    for r in s["rows"]:
+        out.append("<tr class='row'>")
+        for k in cols:
+            _, align, get = spec[k]
+            out.append(f"<td class='{align[0]}{' memo' if k == stretch else ''}'>{_esc(get(r))}</td>")
+        out.append("</tr>")
+    out.append("<tr class='total'>")
+    first_money = next((i for i, k in enumerate(cols) if k in MONEY_COLUMNS), len(cols))
+    for i, k in enumerate(cols):
+        if i == 0 and first_money > 0:
+            out.append(f"<td colspan='{first_money}'>{_esc(total_label)}</td>")
+        elif i < first_money:
+            continue
+        elif k == "amount":
+            out.append(f"<td class='r'>${money(s['rows_total'])}</td>")
+        elif k == "bill_total":
+            out.append(f"<td class='r'>${money(sum(r['bill_total'] for r in s['rows']))}</td>")
+        elif k == "balance_before":
+            out.append(f"<td class='r'>${money(sum(r.get('balance_before') or 0 for r in s['rows']))}</td>")
+        elif k == "open_balance":
+            out.append(f"<td class='r'>${money(sum(r.get('balance_after') or 0 for r in s['rows']))}</td>")
+        else:
+            out.append("<td></td>")
+    out.append("</tr></tbody></table>")
+    out.append(_credit_block(s))
+    if not s["ties"]:
+        out.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
+                   f"${money(s['total'])} - check this payment in QuickBooks.</div>")
+    return "".join(out)
+
+
+def _invoices_table(s: dict) -> str:
+    """The client invoice(s) this payment came from (owner 2026-10-07: "invoice one row, total of that, ___ then the
+    bills it was applied to"), one row each with what it took from it, their total, then a rule. On the internal stub
+    only when asked for (stub["invoices"]; owner 2026-10-15: "remove the invoice it's associated with as default")."""
     out = ["<table class='invs'><thead><tr><th>Client invoice</th><th>Invoice date</th><th>Project</th><th>Draw</th>"
            "<th class='r'>Invoice amount</th><th class='r'>Applied</th></tr></thead><tbody>"]
     for g in s.get("groups") or []:
@@ -730,45 +886,51 @@ def _internal_table(s: dict, cols: Sequence[str]) -> str:
             out.append(f"<tr class='row'><td colspan='2'>{_esc(g['label'])}</td><td>{_esc(g['project'])}</td><td></td><td class='r'>{money(g['paid'])}</td></tr>")
     out.append(f"<tr class='total'><td colspan='5'>Total</td><td class='r'>${money(sum(g['paid'] for g in s.get('groups') or []))}</td></tr>"
                "</tbody></table><div class='rule'></div>")
-    out.append("<table><thead><tr>")
-    for k in cols:
-        label, align, _ = spec[k]
-        w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS else ""
-        out.append(f"<th class='{align[0]}{' memo' if k == 'memo' else ''}'{w}>{_esc(label)}</th>")
-    out.append("</tr></thead><tbody>")
-    for r in s["rows"]:
-        out.append("<tr class='row'>")
-        for k in cols:
-            _, align, get = spec[k]
-            out.append(f"<td class='{align[0]}{' memo' if k == 'memo' else ''}'>{_esc(get(r))}</td>")
-        out.append("</tr>")
-    paid_at = cols.index("amount") if "amount" in cols else len(cols) - 1
-    out.append(f"<tr class='total'><td colspan='{paid_at}'>Total paid on this {word}</td><td class='r'>${money(s['rows_total'])}</td>"
-               + "<td></td>" * (len(cols) - paid_at - 1) + "</tr></tbody></table>")
-    if not s["ties"]:
-        out.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
-                   f"${money(s['total'])} - check this payment in QuickBooks.</div>")
     return "".join(out)
 
 
+def _internal_table(s: dict, cols: Sequence[str]) -> str:
+    """Internal stub body: the bills it paid, each ONCE, as Project · Memo · Bill total · Open balance · Paid · New
+    balance, and their total. The client invoices the money came from go on top only when the print asked for them
+    (stub["invoices"]) - off by default (owner 2026-10-15)."""
+    word = "check" if s["method"] == "Check" else "payment"
+    return (_invoices_table(s) if s.get("invoices") else "") + _bills_table(s, cols, f"Total paid on this {word}", band=False)
+
+
+def _vendor_table(s: dict, cols: Sequence[str]) -> str:
+    """The external stub's bills: the picked columns under the vendor's name band, totals, the credit block when the
+    payment is more than its bills, the warning when it is short."""
+    return _bills_table(s, cols, f"Total for {s['vendor']}", band=True)
+
+
 def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
-              company: str = "", report_date: Optional[dt.date] = None) -> str:
-    """The printable page(s): one stub per payment, the payment on top, its bills below."""
+              company: str = "", report_date: Optional[dt.date] = None,
+              address: Optional[Sequence[str]] = None) -> str:
+    """The printable page(s): one stub per payment. External ("vendor"): the mailable envelope panel on top (our
+    block / the vendor / the payment), its bills below the first fold. Internal: the original centered header, the
+    payment block, the bills (the client invoices on top only when stub["invoices"]). `address` = our mailing lines
+    for the top window (default: ACB_COMPANY_ADDRESS)."""
     picked = resolve_columns(columns)
     report_date = report_date or dt.date.today()
+    address = company_address() if address is None else list(address)
     parts = ["<!doctype html><html><head><meta charset='utf-8'><title>Bill payment stubs</title>",
              f"<style>{CSS}</style></head><body>"]
     for s in stubs:
         cols = columns_for(s.get("kind") or "vendor", picked)
-        parts.append("<section class='stub internal-stub'>" if s.get("kind") == "internal" else "<section class='stub'>")
+        internal = s.get("kind") == "internal"
+        parts.append("<section class='stub internal-stub'>" if internal else "<section class='stub mail'>")
+        if not internal:
+            parts.append(_mail_panel(s, company, address))
+            parts.append(_vendor_table(s, cols))
+            parts.append("</section>")
+            continue
+        # the internal stub: the centered header (no date under the title, owner 2026-10-07 - Payment date sits on the
+        # right), then the payment block
         parts.append("<div class='hdr'>")
         if company:
             parts.append(f"<p class='co'>{_esc(company)}</p>")
-        internal = s.get("kind") == "internal"
-        parts.append(f"<p class='rpt'>Bill Payment Stub{' - Internal' if internal else ''}</p>")
-        # no date under the title (owner 2026-10-07): Payment date sits on the right; the page moves up a line
-        if internal:
-            parts.append("<div class='internal'>INTERNAL - NOT FOR THE VENDOR</div>")
+        parts.append("<p class='rpt'>Bill Payment Stub - Internal</p>")
+        parts.append("<div class='internal'>INTERNAL - NOT FOR THE VENDOR</div>")
         parts.append("</div>")
         # the payment block
         parts.append("<div class='pay'><div class='to'><div class='lbl'>Paid to</div>")
@@ -778,10 +940,9 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
         parts.append("</div><div class='kv'>")
         # no Account line - the owner's own stub does not show it (2026-09-22); the value stays in the record
         kv = [("Payment date", mdy(s["txn_date"])),
-              ("Payment type", "Joint check" if internal and s.get("joint") else s["method"]),
+              ("Payment type", "Joint check" if s.get("joint") else s["method"]),
               ("Check number" if s["method"] == "Check" else "Reference", s["ref"])]
-        if internal:
-            kv.append(("Client", s.get("client") or ""))
+        kv.append(("Client", s.get("client") or ""))
         kv.append(("Amount", "$" + money(s["total"])))
         for lbl, val in kv:
             if not val:
@@ -793,46 +954,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
                 continue
             parts.append(f"<div class='lbl'>{_esc(lbl)}</div><div class='{cls}'>{_esc(val)}</div>")
         parts.append("</div></div>")
-        if internal:
-            parts.append(_internal_table(s, cols))
-            parts.append("</section>")
-            continue
-        # the bills table
-        spec = COLUMNS
-        parts.append("<table><thead><tr>")
-        for k in cols:
-            label, align, _ = spec[k]
-            w = f" style='width:{WIDTHS[k]}px'" if k in WIDTHS else ""
-            parts.append(f"<th class='{align[0]}{' memo' if k == 'memo' else ''}'{w}>{_esc(label)}</th>")
-        parts.append("</tr></thead><tbody>")
-        parts.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
-        for r in s["rows"]:
-            parts.append("<tr class='row'>")
-            for k in cols:
-                _, align, get = spec[k]
-                parts.append(f"<td class='{align[0]}{' memo' if k == 'memo' else ''}'>{_esc(get(r))}</td>")
-            parts.append("</tr>")
-        parts.append("<tr class='total'>")
-        first_money = next((i for i, k in enumerate(cols) if k in MONEY_COLUMNS), len(cols))
-        for i, k in enumerate(cols):
-            if i == 0 and first_money > 0:
-                parts.append(f"<td colspan='{first_money}'>Total for {_esc(s['vendor'])}</td>")
-            elif i < first_money:
-                continue
-            elif k == "amount":
-                parts.append(f"<td class='r'>${money(s['rows_total'])}</td>")
-            elif k == "bill_total":
-                parts.append(f"<td class='r'>${money(sum(r['bill_total'] for r in s['rows']))}</td>")
-            elif k == "balance_before":
-                parts.append(f"<td class='r'>${money(sum(r.get('balance_before') or 0 for r in s['rows']))}</td>")
-            elif k == "open_balance":
-                parts.append(f"<td class='r'>${money(sum(r.get('balance_after') or 0 for r in s['rows']))}</td>")
-            else:
-                parts.append("<td></td>")
-        parts.append("</tr></tbody></table>")
-        if not s["ties"]:
-            parts.append(f"<div class='warn'>Bill lines total ${money(s['rows_total'])} but the payment is "
-                         f"${money(s['total'])} - check this payment in QuickBooks.</div>")
+        parts.append(_internal_table(s, cols))
         parts.append("</section>")
     parts.append("</body></html>")
     return "".join(parts)
@@ -952,7 +1074,7 @@ def _selftest() -> int:
     assert s["pay_to"] == "TEST VENDOR INC" and s["address"][-1] == "FORT WORTH TX 76100"
     assert s["method"] == "Check" and s["ref"] == "25760" and s["account"] == "Test Bank ****0000"
     assert resolve_columns() == list(DEFAULT_COLUMNS)
-    assert resolve_columns(add=["bill_total"], drop=["type"]) == ["date", "number", "memo", "balance_before", "amount", "open_balance", "bill_total"]
+    assert resolve_columns(add=["memo"], drop=["date"]) == ["number", "bill_total", "balance_before", "amount", "open_balance", "memo"]
     assert resolve_columns(["memo", "amount"]) == ["memo", "amount"]
     for bad in ({"add": ["nope"]}, {"columns": ["memo", "typo"]}):
         try:
@@ -960,14 +1082,48 @@ def _selftest() -> int:
             raise AssertionError("unknown column accepted")
         except ValueError:
             pass
-    page = stub_html([s], company="Test Co, LLC")
+    page = stub_html([s], company="Test Co, LLC", address=["PO Box 1", "Testville, TX 75000"])
+    # the mailable panel (owner 2026-10-14): our block in the top window, the vendor in the bottom one, the payment to
+    # the right, fold ticks, and the bills only after the panel
+    assert "<section class='stub mail'><div class='panel'>" in page
+    assert "<div class='abs ours'><div class='co'>Test Co, LLC</div>PO Box 1<br>Testville, TX 75000</div>" in page
+    assert "<div class='abs vend'><div class='name'>TEST VENDOR INC</div>PO BOX 1<br>FORT WORTH TX 76100</div>" in page
+    assert page.index("class='abs ours'") < page.index("class='abs vend'") < page.index("class='abs right'") < page.index("<table>")
+    assert page.count("class='tick l'") == 3 and page.count("class='tick r'") == 3
+    assert "class='hdr'" not in page and "Paid to" not in page           # the centered header is the internal stub's
+    dup = stub_html([dict(s, address=["TEST VENDOR INC", "PO BOX 1", "FORT WORTH TX 76100"])], address=[])
+    assert "<div class='name'>TEST VENDOR INC</div>PO BOX 1<br>" in dup   # QuickBooks' repeated name line dropped
+    assert "class='abs ours'></div>" in dup                              # no company, no address: an empty block, no crash
     for needle in ("Test Co, LLC", "Bill Payment Stub", "09/21/2026", "TEST VENDOR INC", "Check number", "25760",
-                   "Memo/Description", "Open balance", "New balance", money(1000), "$" + money(1300), "06/17/2026"):
+                   ">Reference<", "1001", "Bill total", "Open balance", "New balance", money(1000), "$" + money(1300), "06/17/2026"):
         assert needle in page, needle
+    # the external stub (owner 2026-10-15): Date · Reference · Bill total · Open balance · Paid · New balance, nothing else
+    head = page[page.index("<thead>"):page.index("</thead>")]
+    assert head.index(">Date<") < head.index("Reference") < head.index("Bill total") < head.index("Open balance") < head.index(">Paid<") < head.index("New balance")
+    for off in ("Memo", "Project", "Transaction type", "RP1234", "Due date"):
+        assert off not in head, off
+    assert "<th class='l memo'>Reference</th>" in page                     # with no memo or project the Reference column takes the leftover width
     assert "2026-09-21" not in page.replace("Bill Payment Stub", "")   # never year-first on the page
-    nomemo = stub_html([s], columns=["date", "number", "amount"])       # memo unticked at print time
-    assert "Memo/Description" not in nomemo and "Paid" in nomemo and "New balance" not in nomemo   # exactly the pick
-    assert "partial payment" not in page and "Transaction type" in page       # columns, never a sentence
+    withmemo = stub_html([s], columns=["date", "number", "memo", "amount"])   # memo ticked at print time
+    assert ">Memo<" in withmemo and "Paid" in withmemo and "New balance" not in withmemo   # exactly the pick
+    assert "<th class='l memo'>Memo</th>" in withmemo and "<th class='l' style='width:100px'>Reference</th>" in withmemo
+    assert "partial payment" not in page                                      # columns, never a sentence
+    # the internal stub (owner 2026-10-15): Project · Memo · the money, the original header, no client invoices unless asked
+    assert columns_for("internal") == list(INTERNAL_COLUMNS) == columns_for("internal", ["date", "amount"])   # the pick never changes it
+    si = dict(s, kind="internal", groups=[{"invoice_no": "INV-77", "date": "2026-09-01", "project": "RP1234", "label": "Draw 3",
+                                          "invoice_total": 5000.0, "rows": [], "paid": 1300.0}], client="TEST GC")
+    ipage = stub_html([si], company="Test Co, LLC")
+    ihead = ipage[ipage.index("<thead>"):ipage.index("</thead>")]
+    assert ihead.index(">Project<") < ihead.index(">Memo<") < ihead.index("Bill total") < ihead.index("Open balance") < ihead.index(">Paid<") < ihead.index("New balance")
+    assert ">Date<" not in ihead and "Reference" not in ihead and "Transaction type" not in ihead
+    assert "RP1234-FTW" in ipage and "job one (partial)" in ipage              # the project # and the memo, per bill
+    assert "Client invoice" not in ipage and "INV-77" not in ipage and "class='rule'" not in ipage   # invoices off by default
+    assert "class='hdr'" in ipage and "<p class='co'>Test Co, LLC</p>" in ipage and "Paid to" in ipage and "class='panel'" not in ipage   # the original header, no envelope
+    assert "Bill Payment Stub - Internal" in ipage and "INTERNAL - NOT FOR THE VENDOR" in ipage and ">TEST GC<" in ipage
+    itot = "".join(f"<td class='r'>${money(x)}</td>" for x in (1500, 1500, 1300, 200))
+    assert itot in ipage                                                      # every money column totalled: 1500 - 1300 = 200
+    iwith = stub_html([dict(si, invoices=True)])
+    assert "Client invoice" in iwith and "INV-77" in iwith and "Draw 3" in iwith and iwith.index("INV-77") < iwith.index("<th class='l' style='width:90px'>Project</th>")
     assert ">500.00</td><td class='r'>300.00</td><td class='r'>200.00<" in page, "partial bill = 500 - 300 = 200"
     tot = "".join(f"<td class='r'>${money(x)}</td>" for x in (1500, 1300, 200))
     assert tot in page                                                        # totals tie: before - paid = new
@@ -975,21 +1131,39 @@ def _selftest() -> int:
     assert _file_name(s) == "TEST VENDOR - Bill Payment Stub 25760 09-21-2026.pdf"
     assert _file_name(dict(s, method="Credit card", ref="AMEX-0000")) == "TEST VENDOR - Bill Payment Stub AMEX-0000 09-21-2026.pdf"
     assert _file_name(dict(s, ref="")) == "TEST VENDOR - Bill Payment Stub Check p1 09-21-2026.pdf"   # no check #: the id keeps same-day payments apart
-    # a bill on two lines is ONE row; a vendor credit and an unapplied amount are rows of their own; everything still ties
-    bp2 = dict(bp, TotalAmt=1350.0, Line=[{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
-                                        {"Amount": 400.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
-                                        {"Amount": 300.0, "LinkedTxn": [{"TxnType": "VendorCredit", "TxnId": "vc1"}]},
-                                        {"Amount": 50.0}])
-    s2 = build_stub(bp2, lambda t, i: bills.get(i) if t == "Bill" else ({"DocNumber": "VC-9", "TxnDate": "2026-06-01", "TotalAmt": 300.0} if i == "vc1" else None), vendor)
-    assert s2["ties"] and [r["type"] for r in s2["rows"]] == ["Vendor credit", "Bill", "Unapplied"], s2["rows"]
-    assert s2["rows"][1]["paid"] == 1000.0 and not s2["rows"][1]["partial"]
-    assert "Vendor credit" in stub_html([s2]) and "Unapplied" in stub_html([s2])
+    # a bill on two lines is ONE row; a vendor credit QuickBooks applied comes OFF the check (Ubaldo 48395: 3,499.56 bill
+    # - 150.00 credit = a 3,349.56 check), so the Paid column adds up to the check
+    vc = lambda t, i: bills.get(i) if t == "Bill" else ({"DocNumber": "VC-9", "TxnDate": "2026-06-01", "TotalAmt": 300.0} if i == "vc1" else None)   # noqa: E731
+    bp2 = dict(bp, TotalAmt=700.0, Line=[{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                       {"Amount": 400.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                       {"Amount": 300.0, "LinkedTxn": [{"TxnType": "VendorCredit", "TxnId": "vc1"}]}])
+    s2 = build_stub(bp2, vc, vendor)
+    assert s2["ties"] and s2["credit"] == 0 and [r["type"] for r in s2["rows"]] == ["Vendor credit", "Bill"], s2["rows"]
+    assert s2["rows"][0]["paid"] == -300.0 and s2["rows"][1]["paid"] == 1000.0 and not s2["rows"][1]["partial"]
+    assert s2["rows_total"] == 700.0 and "(300.00)" in stub_html([s2])                 # the credit row comes off the Paid column
+    assert "Vendor credit" in stub_html([s2], columns=["date", "type", "number", "amount"])   # its type shows when Transaction type is ticked
+    assert "Credit on account" not in stub_html([s2]) and "check this payment" not in stub_html([s2])
+    # the check is MORE than its bills (HDS White Cap 20119: 9,552.63 paid, 9,251.63 on bills): QuickBooks keeps the
+    # 301.00 as a credit with the vendor - the stub says so under the bills, on both copies, and never warns
+    bp3 = dict(bp, TotalAmt=1601.0)
+    s3 = build_stub(bp3, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)
+    assert s3["ties"] and s3["credit"] == 301.0 and s3["rows_total"] == 1300.0 and len(s3["rows"]) == 2
+    p3 = stub_html([s3])
+    for needle in ("Paid on bills", "$" + money(1300), "Credit on account", "$" + money(301), "Total of this check", "$" + money(1601),
+                   "hold the $301.00 as a credit on our account"):
+        assert needle in p3, needle
+    assert "check this payment" not in p3 and "Unapplied" not in p3
+    i3 = stub_html([dict(s3, kind="internal", groups=[], client="")], columns_for("internal"))
+    assert "Credit on account" in i3 and "QuickBooks holds that as a credit with TEST VENDOR" in i3 and "hold the" not in i3
+    assert "class='hdr'" in i3 and "Paid to" in i3 and "class='panel'" not in i3   # the internal stub keeps its header
+    assert "Credit on account" not in page                                        # a check that equals its bills: no block
     assert not (_natural("1001") < _natural("999")) and _natural("999") < _natural("1001")
     assert _safe_name("A/B: C") == "A-B- C"
-    assert "Bill amount" not in page and "Bill amount" in stub_html([s], columns=["number", "bill_total", "amount"])
+    assert "Bill total" in page and "Bill total" not in stub_html([s], columns=["number", "amount"])   # in the default set; off when unticked
     assert "check this payment" not in stub_html([s])
-    bp_bad = dict(bp, TotalAmt=1400.0)
-    assert "check this payment" in stub_html([build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)])
+    bp_bad = dict(bp, TotalAmt=1200.0)                                            # SHORT of its bills: still the warning
+    s_bad = build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)
+    assert not s_bad["ties"] and s_bad["credit"] == 0 and "check this payment" in stub_html([s_bad])
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "stub.html"
         p.write_text(page, encoding="utf-8")
@@ -1019,9 +1193,9 @@ def _selftest() -> int:
     # the internal stub: invoice on top, bills below, Open balance - Paid = New balance; joint check from the client's Payment
     assert columns_for("vendor") == list(DEFAULT_COLUMNS)
     assert columns_for("vendor", ["open_balance", "date", "amount", "number"]) == ["date", "number", "amount", "open_balance"]
-    assert [c["label"] for c in columns_registry()][-3:] == ["Open balance", "Paid", "New balance"]   # picker = stub
+    assert [c["label"] for c in columns_registry()][-4:] == ["Bill total", "Open balance", "Paid", "New balance"]   # picker = stub
     assert columns_for("vendor", columns_for("vendor")) == columns_for("vendor")
-    assert columns_for("internal") == ["date", "number", "memo", "project", "balance_before", "amount", "open_balance"]
+    assert columns_for("internal") == columns_for("internal", ["date", "number", "memo", "amount"]) == list(INTERNAL_COLUMNS)
     bills["b2"]["LinkedTxn"] = [{"TxnId": "p0", "TxnType": "BillPaymentCheck"}, {"TxnId": "pj", "TxnType": "BillPaymentCheck"}]
     pays = {"p0": {"Id": "p0", "TxnDate": "2026-06-30", "Line": [{"Amount": 100.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b2"}]}]}}
     invs = {"i1": {"Id": "i1", "DocNumber": "34457", "TxnDate": "2026-05-20", "TotalAmt": 600.0, "PrivateNote": "MFD1 - Job - May Draw 2026\n(Period)"},
@@ -1035,18 +1209,25 @@ def _selftest() -> int:
     assert find_joint_payment(bpj, [cpay, dict(cpay, Id="c2", TotalAmt=5.0)]) is cpay
     assert find_joint_payment(bpj, [dict(cpay, TxnDate="2026-07-30")]) is not None   # entered on another day, same check #
     assert find_joint_payment(bp, [cpay]) is None                                  # not on the joint account
+    assert sj["joint"] and not build_stub(bp, getj, vendor)["joint"]               # the account decides, before apply_internal
+    assert "Joint check" not in stub_html([build_stub(bp, getj, vendor)])
     apply_internal(sj, cpay, getj, lambda d: None, lambda c: "GC ONE")
     assert sj["joint"] and sj["client"] == "GC ONE"
     assert [(g["invoice_no"], g["label"], g["paid"]) for g in sj["groups"]] == [("34457", "May Draw 2026", 600.0), ("34458", "June Draw 2026", 700.0)]
     seg = [(r["number"], r["balance_before"], r["paid"], r["balance_after"]) for g in sj["groups"] for r in g["rows"]]
     assert seg == [("1001", 1000.0, 600.0, 400.0), ("1001", 400.0, 400.0, 0.0), ("1002", 400.0, 300.0, 100.0)], seg
-    ip = stub_html([sj], columns_for("internal"))
-    for needle in ("INTERNAL - NOT FOR THE VENDOR", "Joint check", "GC ONE", "34457", "05/20/2026", "May Draw 2026",
-                   "Client invoice", "New balance", "Total paid on this check"):
+    ip = stub_html([sj], columns_for("internal"))                                 # invoices off by default: the bills alone
+    for needle in ("INTERNAL - NOT FOR THE VENDOR", "Joint check", "GC ONE", "New balance", "Total paid on this check"):
         assert needle in ip, needle
-    assert "partial payment" not in ip and "Transaction type" not in ip
+    for off in ("Client invoice", "34457", "May Draw 2026", "Transaction type", "partial payment"):
+        assert off not in ip, off
+    assert ip.count("<tr class='row'>") == 2                                      # each bill ONCE, never the invoice segments
+    ipi = stub_html([dict(sj, invoices=True)], columns_for("internal"))           # asked for: the invoices on top
+    for needle in ("Client invoice", "34457", "05/20/2026", "May Draw 2026", "34458", "Total paid on this check"):
+        assert needle in ipi, needle
+    assert ipi.index("May Draw 2026") < ipi.index("Total paid on this check")
     vp = stub_html([dict(sj, kind="vendor")])                                      # the vendor stub: no client, no invoices
-    assert "Joint check" not in vp and "partial payment" not in vp and "New balance" in vp and "INTERNAL" not in vp
+    assert "Joint check" in vp and "partial payment" not in vp and "New balance" in vp and "INTERNAL" not in vp
     assert "Client invoice" not in vp
     sn = apply_internal(dict(build_stub(bp, getj, vendor), kind="internal"), None, getj, lambda d: invs["i2"] if d == "34458" else None,
                         lambda c: "", {"b1": {"invoice_no": "34458", "clients": ["GC ONE"]}})

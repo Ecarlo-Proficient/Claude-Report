@@ -172,6 +172,8 @@ def render(page: dict, blocks: list, thread: list) -> dict:
                               lead.index(d["name"]) if d["name"] in lead else 0, d["name"].lower()))
     return {"ok": True, "title": title, "url": page.get("url"), "properties": plist, "blocks": blocks,
             "comments": thread, "last_edited": (page.get("last_edited_time") or "")[:16].replace("T", " "),
+            "created": (page.get("created_time") or "")[:16].replace("T", " "),          # the tracker page's own birth (Audit, 2026-10-11)
+            "archived": bool(page.get("archived") or page.get("in_trash")),             # invoice-sync archives the page of a deleted invoice
             "fetched_at": dt.datetime.now().isoformat(timespec="seconds")}
 
 

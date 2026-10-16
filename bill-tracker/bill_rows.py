@@ -8,7 +8,7 @@ to any destination here — just QBO fetch + line-level row assembly.
 Row dict shape (keys consumed by downstream sinks):
     key, bill_id, line_id, bill_date, vendor, bill_doc, po_num,
     bill_total, bill_balance, division, project_num, bill_type, account,
-    cost_code, line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
+    cost_code, line_amount, line_desc, bill_memo, inv_doc, inv_id, inv_date, inv_total,
     inv_balance, payment_date, auto_status, approved
     (cost_code = raw QBO Item name; audit-only, never shown on display sheets)
 
@@ -83,8 +83,11 @@ def is_approved(bill: dict) -> bool:
 # live in shared/bill_approval.py (shared with the statement reconciler, 10/08/2026).
 APPROVAL_WORKFLOW_START = bill_approval.APPROVAL_WORKFLOW_START
 APPROVAL_NO = bill_approval.APPROVAL_NO
+APPROVAL_PENDING = bill_approval.APPROVAL_PENDING
+APPROVAL_REQUIRES = bill_approval.APPROVAL_REQUIRES
 APPROVAL_CHECK = bill_approval.APPROVAL_CHECK
 APPROVAL_YES = bill_approval.APPROVAL_YES
+UNAPPROVED_STATES = bill_approval.UNAPPROVED_STATES
 
 
 def bill_created(bill: dict) -> Optional[dt.date]:
@@ -93,26 +96,19 @@ def bill_created(bill: dict) -> Optional[dt.date]:
 
 
 def approval_state(bill: dict) -> str:
-    """Three states for the Bill List's Approved column - see shared/bill_approval."""
-    return bill_approval.approval_state(bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"))
+    """The Bill List's Approved column - see shared/bill_approval. Since 10/13/2026 the
+    QuickBooks approval-queue report (read once per run, `bill_approval.current()`)
+    answers for bills entered under the workflow: pending / requires approval when the
+    bill is on it, approved when a fresh report does not list it, check QBO when the
+    report is missing, stale, or older than the bill."""
+    v_ref = bill.get("VendorRef") or {}
+    return bill_approval.approval_state(
+        bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"),
+        report=bill_approval.current(), vendor=v_ref.get("name"), docnum=bill.get("DocNumber"),
+        txn_date=bill.get("TxnDate"), amount=bill.get("TotalAmt"))
 
 
-def revised_reason(memo: str, allow_first_line: bool = False) -> str:
-    """The reason off a `REVISED - <reason>` memo line, or "" when there is none.
-    The PM writes it on the SECOND memo line (line 1 stays AP's project line), so
-    line 1 is skipped by default: in the paper era AP itself opened line 1 with
-    REVISED followed by the project line (`REVISED - CP861 - 4231 STATE HWY 161`),
-    which is not a reason and not a vendor follow-up - 16 such bills sit in the
-    2026 population. Pass allow_first_line=True for a bill entered under the QBO
-    workflow, where a first-line REVISED can only be a PM who typed it in the wrong
-    place. A bare REVISED returns "(no reason given)" so the bill still gets chased."""
-    lines = (memo or "").splitlines()
-    for line in (lines if allow_first_line else lines[1:]):
-        t = line.strip()
-        if t.upper().startswith("REVISED"):
-            rest = t[len("REVISED"):].lstrip(" -:\u2013").strip()
-            return rest or "(no reason given)"
-    return ""
+revised_reason = bill_approval.revised_reason   # moved to shared/bill_approval 10/12/2026 (the statement reconciler reads it too)
 
 
 # ─────────────────────── invoice → payment date map ───────────────────────
@@ -305,7 +301,7 @@ def build_rows(
         po_num = get_po_number(bill, po_map)
         v_ref = bill.get("VendorRef") or {}
         vendor_name = vendor_map.get(v_ref.get("value", ""), v_ref.get("name", "?"))
-        approved = is_approved(bill)
+        approved = approval_state(bill) not in UNAPPROVED_STATES   # pending / requires approval chase like NOT APPROVED
 
         for line in (bill.get("Line") or []):
             dt_type = line.get("DetailType", "")
@@ -611,7 +607,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
     Aggregation rules:
         * line_amount → SUM across the collapsed group
         * bill-level fields (vendor, bill_doc, bill_date, bill_balance,
-          bill_total, auto_status, approved, gc_name, customer_name) →
+          bill_total, bill_memo, auto_status, approved, gc_name, customer_name) →
           take from the first line; these are identical across lines of a bill
         * invoice fields → first line in the group (a (bill, project) chunk
           maps to a single matched invoice)
@@ -727,6 +723,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "account": account,
             "line_amount": chunk_line_sum,
             "line_desc": _collapse_line_desc(lines),
+            "bill_memo": first.get("bill_memo", ""),   # bill-level: the same on every line
             "inv_doc": first.get("inv_doc", ""),
             "inv_id": first.get("inv_id", ""),
             "inv_memo": first.get("inv_memo", ""),
@@ -735,6 +732,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "inv_balance": first.get("inv_balance"),
             "payment_date": first.get("payment_date"),
             "approved": first.get("approved", False),
+            "approval": first.get("approval", ""),      # bill-level state word (the Approved icon)
             "gc_name": first.get("gc_name", ""),
             "customer_name": first.get("customer_name", ""),
             "class_name": class_name,

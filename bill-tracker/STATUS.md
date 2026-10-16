@@ -4,6 +4,40 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 10/14/2026 · **RP stage-invoice match** (owner: on a job billed in stages a July bill must not land on
+  the bigger later invoice). `qbo_bill_tracker.find_matching_invoice_ex` RP branch gains a STAGE pass before the
+  cover pass: when `shared/rp_invoicing` says the job is billed in stages, the bill matches the FIRST stage invoice
+  dated on/after it that covers it (`MATCH_BASIS_STAGE`); other RP jobs keep the largest-cover rule. Case: RP7597
+  K783197 (08/19) skipped the paid Piers invoice 34620 (09/01) for Foundation 34683 (09/17) and read Awaiting
+  Payment - 7 RCI bills, $25,993 on the 10/14 report. `tests/test_rp_stage_match.py`.
+- 10/14/2026 · **Bill Memo column on Bills + Inventory** (owner: "bill tracker, add memo of the bill"). A `Bill Memo`
+  column sits right after Line Description on both display sheets - the bill's PrivateNote, one line (memo lines joined
+  with ` / `), the same on every line of a bill; `collapse_rows` now carries `bill_memo` to the bill-grain row (it was
+  dropped before, so the Bills sheet could never have shown it). The Bill List already had it. Column widths are keyed by
+  header name (`COL_WIDTHS_BY_NAME`) so an inserted column never shifts another's width. Multi-project bills unchanged:
+  one `(multiple)` row on Bills linking to the per-line rows on Inventory. `tests/test_bill_tracker_memo.py`.
+- 10/14/2026 · **Approved is one icon on Bills + Inventory** (owner: "make it a icon check with green or x with red,
+  to make the column smaller"). The cell is a green check (approved), a red cross (not approved / pending / requires
+  approval) or an amber `?` (check QBO - the sheet used to print those as approved); width 6. The icons and the word
+  behind each live in `shared/bill_approval` (`state_icon` / `icon_state`); `ledger/load_bill_tracker.py` maps the icon
+  back to the state word, so the ledger's filters and pages keep reading `approved` / `not approved` / `check QBO`.
+  The Bill List keeps the words. Tests in `tests/test_bill_tracker_memo.py`.
+- 10/13/2026 · **Approved column reads QuickBooks' approval report** (owner: "add new process to check bills, check this
+  excel while also keeping in mind the last time it synced from qbo"). QuickBooks' custom report "Bill Approval Status ALL"
+  (the approval queue) is synced into the Accounts Payable channel files; `shared/bill_approval.current()` reads it once per
+  run (`paths.bill_approval_xlsx()` / `ACB_BILL_APPROVAL_XLSX`). `bill_rows.approval_state` now returns five states:
+  not approved (memo) · **pending approval** (on the report, with the approver) · **requires approval** (on the report, not
+  routed yet) · check QBO (the report cannot vouch: missing, older than 36 h, or older than the bill) · approved (incl. a
+  workflow bill a fresh report does not list). Bill List: the three unapproved states are red, check QBO amber; the run
+  prints the report's sync time; `approved` (the stale-approval audit) is false for the queued bills too. On the office
+  server the report needs a Cloud Sync copy (docker/README 2c) - until then the server's Bill Tracker keeps saying check QBO.
+  Tests: `tests/test_bill_approval.py` (the report's shape, the five states, stale, missing).
+- 10/12/2026 · **REVISED-bill follow-up (AP-13): built here first, then moved to the statement reconciler the same
+  day** (owner: "the revised bill sheet needs to be in the same statement Excel, not a mix"). What stays in this tool:
+  `bill_rows.revised_reason` is now `shared/bill_approval.revised_reason` (re-exported; the reconciler reads the
+  REVISED memo line too) and `Audit - Bills` › Issue = Revised remains the short list. The Revised Bills sheet, the
+  clerk's Stage / dates and the history live in each vendor's `Reconciliation - <Vendor> - as of <date>.xlsx`
+  (statement-reconciler/STATUS). First FLOW.md for this tool in the same commit.
 - 10/08/2026 · **Open-in-Excel guard.** `excel_bill_sync` writes nothing while the tracker is open in Excel (`~$Bill
   Tracker.xlsx`, or the 2-character-short lock name, beside it): checked before the Lien/Notes read and again right
   before the save (opened mid-build). Skip = exit 0 (the next run catches up); a lock over `STALE_LOCK_HOURS` (12) =

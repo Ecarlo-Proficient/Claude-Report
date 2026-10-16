@@ -26,7 +26,12 @@ QBO has no payment-method field on a bill payment (only check vs card), so the r
 record of how it went out. QBO cuts a reference at 21 characters (the owner hit it with
 "25783-123456831813153", dash included) - REF_MAX, enforced here and in the page.
 
-Vendor credits go on only when the owner ticked them. Every write carries a QBO `requestid`
+Vendor credits go on only when the owner ticked them. A payment may be MORE than its bills (owner
+2026-10-13: a joint check paying a bill we had already paid): the owner types the check amount on the
+review; the difference is QuickBooks' "Amount to Credit" - TotalAmt above the lines, no extra line -
+which QuickBooks holds as a credit with the vendor, and the stub prints under the bills. From the vendor
+page the ticked bills may all be paid already: the vendor still gets a band (`paid_bills`), the amount
+typed is the whole payment and the whole of it becomes the credit. Every write carries a QBO `requestid`
 derived from the payment's own content (vendor, date, account, ref, bills + amounts, credits), so a
 double click, a retry or a second review of the same payment gets QBO's first payment back, never a
 second one; and every write is a `pay_attempt` row before it is sent, so a payment QBO never answered
@@ -46,6 +51,7 @@ import datetime as dt
 import getpass
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -69,6 +75,8 @@ LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "pay-bills"
 TOKEN_TTL = 20 * 60               # a review is good for 20 minutes, once
 FUTURE_DAYS = 30                  # a payment date may run this far ahead of today, no further
 ACCOUNT_DAYS = 365                # only accounts that paid bills in this window are offered
+DEFAULT_ACCOUNT = "Frost Bank Vendor"   # offered first = the review's default (owner 2026-10-12)
+HIDE_ACCOUNT_RE = re.compile(r"^\s*OLD\b", re.I)   # an account the owner renamed "OLD ..." is retired: never offered (owner 2026-10-12)
 
 
 # ───────────────────────── guardrails (owner 2026-09-28: "level 3 high access only") ─────────────────────────
@@ -309,8 +317,8 @@ def accounts() -> list:
         con.close()
     out = [{"id": str(a["Id"]), "name": a.get("FullyQualifiedName") or a.get("Name") or "",
             "type": "card" if a.get("AccountType") == "Credit Card" else "bank", "uses": uses.get(str(a["Id"]), 0)}
-           for a in accts if uses.get(str(a["Id"]))]
-    out.sort(key=lambda a: (-a["uses"], a["name"].lower()))
+           for a in accts if uses.get(str(a["Id"])) and not HIDE_ACCOUNT_RE.match(a.get("Name") or "")]
+    out.sort(key=lambda a: (0 if a["name"].lower().startswith(DEFAULT_ACCOUNT.lower()) else 1, -a["uses"], a["name"].lower()))
     return out
 
 
@@ -336,9 +344,12 @@ def _credits(access: str, cid: str, vendor_id: str) -> list:
             for r in rows if _r2(r.get("Balance")) > EPS]
 
 
-def _plan_live(access: str, cid: str) -> dict:
-    """The saved pay run against QBO right now: {vendor_id: {...}} + skipped rows."""
-    marks = bill_marks.read_pay_marks()
+def _plan_live(access: str, cid: str, marks: Optional[dict] = None) -> dict:
+    """The saved pay run (or the bills handed in - the vendor page's ticks) against QBO right now:
+    {vendor_id: {...}} + skipped rows."""
+    scoped = marks is not None                      # the vendor page's ticks: a paid bill keeps its vendor on the review
+    if marks is None:
+        marks = bill_marks.read_pay_marks()
     bills = _live_ids(access, cid, "Bill", marks) if marks else {}
     held = _held(access, cid) if marks else {}
     vendors, skipped = {}, []
@@ -358,11 +369,16 @@ def _plan_live(access: str, cid: str) -> dict:
                "memo": (b.get("PrivateNote") or "").split("\n")[0][:80],
                "check_approval": str((b.get("MetaData") or {}).get("CreateTime") or "")[:10] >= APPROVAL_SINCE}
         vid, vname = _ref(b.get("VendorRef")), (b.get("VendorRef") or {}).get("name") or ""
-        if "NOT APPROVED" in (b.get("PrivateNote") or "").upper():
-            skipped.append({**row, "vendor": vname, "why": "its memo says NOT APPROVED - approve it in QuickBooks first"})
-            continue
+        # a NOT APPROVED memo no longer takes the bill off the run (owner 2026-10-12: "i want it to warn me but not
+        # remove it") - the row is flagged, the review says so loudly and paints the row, the owner decides
+        row["not_approved"] = "NOT APPROVED" in (b.get("PrivateNote") or "").upper()
         if bal <= EPS:
-            skipped.append({**row, "vendor": vname, "why": "already paid in QuickBooks"})
+            if scoped:                              # a joint check on a bill already paid: the payment becomes a credit
+                v = vendors.setdefault(vid, {"vendor_id": vid, "vendor": vname, "bills": [], "paid_bills": []})
+                v.setdefault("paid_bills", []).append({"bill_id": bid, "doc": row["doc"], "date": row["date"], "memo": row["memo"],
+                                                       "total": _r2(b.get("TotalAmt"))})
+            else:
+                skipped.append({**row, "vendor": vname, "why": "already paid in QuickBooks"})
             continue
         if want <= EPS:
             skipped.append({**row, "vendor": vname, "why": "pay amount is 0"})
@@ -370,7 +386,7 @@ def _plan_live(access: str, cid: str) -> dict:
         if want > bal + EPS:
             skipped.append({**row, "vendor": vname, "why": f"open balance is {bal:,.2f} now, less than the {want:,.2f} on the run"})
             continue
-        v = vendors.setdefault(vid, {"vendor_id": vid, "vendor": vname, "bills": []})
+        v = vendors.setdefault(vid, {"vendor_id": vid, "vendor": vname, "bills": [], "paid_bills": []})
         v["bills"].append(row)
     for v in vendors.values():
         v["bills"].sort(key=lambda r: (str(r["date"] or ""), r["doc"]))
@@ -378,10 +394,18 @@ def _plan_live(access: str, cid: str) -> dict:
     return {"vendors": vendors, "skipped": skipped}
 
 
-def plan() -> dict:
-    """Dry run for the saved pay run. Writes nothing. The run_token keys the write's idempotency."""
+def marks_for(bill_ids) -> dict:
+    """The vendor page's ticks as pay marks: each bill in full (amount None = its open balance)."""
+    return {str(b).strip(): {"amount": None} for b in bill_ids or [] if str(b).strip()}
+
+
+def plan(bills: Optional[list] = None) -> dict:
+    """Dry run for the saved pay run - or, with `bills`, for just those bills (the vendor page: "pay bills in the
+    vendor center", owner 2026-10-13 - the same review and the same write, scoped to the ticked bills, the saved
+    run untouched). Writes nothing. The run_token keys the write's idempotency and remembers which bills it covers."""
     access, cid = _login()
-    p = _plan_live(access, cid)
+    marks = marks_for(bills) if bills is not None else None
+    p = _plan_live(access, cid, marks)
     for v in p["vendors"].values():
         v["credits"] = _credits(access, cid, v["vendor_id"])
     vs = sorted(p["vendors"].values(), key=lambda v: v["vendor"].lower())
@@ -392,9 +416,9 @@ def plan() -> dict:
         _TOKENS.pop(t, None)
     _TOKENS[token] = {"at": now, "vendors": {v["vendor_id"]: {b["bill_id"]: b["amount"] for b in v["bills"]} for v in vs},
                       "credits": {v["vendor_id"]: {c["id"]: c["balance"] for c in v["credits"]} for v in vs},
-                      "names": {v["vendor_id"]: v["vendor"] for v in vs}}
+                      "names": {v["vendor_id"]: v["vendor"] for v in vs}, "marks": marks}
     today = dt.date.today()
-    return {"ok": True, "run_token": token, "ref_max": REF_MAX, "accounts": accounts(), "can_pay": can, "why_not": why,
+    return {"ok": True, "run_token": token, "scope": "bills" if marks is not None else "run", "ref_max": REF_MAX, "accounts": accounts(), "can_pay": can, "why_not": why,
             "today": today.isoformat(), "min_date": _close_date(access, cid),
             "max_date": (today + dt.timedelta(days=FUTURE_DAYS)).isoformat(), "vendors": vs, "skipped": p["skipped"],
             "total": _r2(sum(v["total"] for v in vs)), "bills": sum(len(v["bills"]) for v in vs)}
@@ -473,7 +497,7 @@ def clean_ref(method: str, ref) -> str:
 def _find_posted(access: str, cid: str, pay: dict) -> Optional[dict]:
     """QBO never answered: did it create the payment anyway? The vendor's payment on that date that links
     exactly these bills and amounts - then it is ours (a resend with the same requestid would return it too)."""
-    want = {(lt["TxnType"], str(lt["TxnId"])): _r2(ln["Amount"]) for ln in pay["Line"] for lt in ln["LinkedTxn"][:1]}
+    want = {(lt["TxnType"], str(lt["TxnId"])): _r2(ln["Amount"]) for ln in pay.get("Line") or [] for lt in ln["LinkedTxn"][:1]}
     try:
         rows = _live(access, cid, "BillPayment", f"VendorRef = '{pay['VendorRef']['value']}' AND TxnDate = '{pay['TxnDate']}'")
     except Exception:                               # noqa: BLE001
@@ -529,6 +553,12 @@ def commit(body: dict) -> dict:
         if shown is None or want != shown or not {str(c) for c in v.get("credits") or []} <= set(t["credits"].get(vid, {})):
             _audit("pay", "refused", f"vendor {vid} is not what the review showed")
             return {"ok": False, "error": "the payment asked for is not what the review showed - run Pay in QuickBooks again"}
+        if v.get("amount") is not None:
+            try:
+                float(v["amount"])
+            except (TypeError, ValueError):
+                _audit("pay", "refused", f"vendor {vid}: amount is not a number")
+                return {"ok": False, "error": "a payment amount is not a number - run Pay in QuickBooks again"}
     try:
         with _Locked():
             return _commit(body, t)
@@ -559,7 +589,8 @@ def approval_text(lines: list, acct: str, how: str) -> str:
 
 def _commit(body: dict, t: Optional[dict] = None) -> dict:
     """body = {run_token, account_id, date, method, vendors: [{vendor_id, ref, bills: [{bill_id, amount}],
-    credits: [credit ids ticked]}]}. Each vendor's payment is re-checked live against QBO and written
+    credits: [credit ids ticked], amount: the check amount when typed (>= bills - credits; the excess = a credit with the
+    vendor)}]}. Each vendor's payment is re-checked live against QBO and written
     only if it still matches the saved pay run exactly; one vendor failing never blocks the others."""
     token = str(body.get("run_token") or "")
     method = body.get("method")
@@ -588,7 +619,7 @@ def _commit(body: dict, t: Optional[dict] = None) -> dict:
     closed = _close_date(access, cid)
     if closed and date <= closed:
         return {"ok": False, "error": f"the books are closed through {closed} - pick a later payment date"}
-    live = _plan_live(access, cid)["vendors"]
+    live = _plan_live(access, cid, (t or {}).get("marks"))["vendors"]   # the same bills the review read
 
     # Touch ID, naming exactly what leaves: macOS' own dialog, which a web page cannot draw or click
     import presence                                 # noqa: PLC0415  (ledger-local)
@@ -598,6 +629,7 @@ def _commit(body: dict, t: Optional[dict] = None) -> dict:
         vid = str(v.get("vendor_id") or "")
         net = _r2(sum(_r2(b["amount"]) for b in v.get("bills") or [])
                   - sum((t or {}).get("credits", {}).get(vid, {}).get(str(c), 0) for c in v.get("credits") or []))
+        net = _r2(v["amount"]) if v.get("amount") is not None else net   # the check amount typed (its excess = a credit)
         ref = "to print" if method == "print" else (("check #" if method == "check" else f"{how} ") + refs[vid]).strip()
         plines.append(((live.get(vid) or {}).get("vendor") or (t or {}).get("names", {}).get(vid) or vid, net, date, ref))
     ok, why = presence.confirm(approval_text(plines, acct["name"], how))
@@ -643,7 +675,8 @@ def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[di
     """One vendor's payment: re-read live, build, attempt row, send, record. Sets res; raises only AuthError."""
     want = {str(b["bill_id"]): _r2(b["amount"]) for b in v.get("bills") or []}
     have = {r["bill_id"]: r["amount"] for r in (lv or {}).get("bills", [])}
-    if not want or want != have:
+    credit_only = not want and bool((lv or {}).get("paid_bills"))    # the ticked bills are all paid: the payment IS a credit
+    if (not want and not credit_only) or want != have:
         res["error"] = "the bills or amounts changed since the review (paid elsewhere, or the run was edited) - review again"
         return
     # re-read THIS vendor's bills right before its write (review 2026-09-29, finding 2): the Touch ID dialog and
@@ -671,9 +704,22 @@ def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[di
         credits = [open_c[str(c)] for c in v["credits"]]
     bills_amt = _r2(sum(want.values()))
     cred_amt = _r2(sum(c["balance"] for c in credits))
-    if cred_amt > bills_amt - EPS:      # a credit bigger than the payment: use only what the bills absorb
+    if credits and cred_amt > bills_amt - EPS:      # a credit bigger than the payment: use only what the bills absorb
         res["error"] = f"the ticked credits ({cred_amt:,.2f}) cover the whole {bills_amt:,.2f} - apply those in QuickBooks"
         return
+    net = _r2(bills_amt - cred_amt)
+    try:
+        amount = net if v.get("amount") is None else _r2(v["amount"])
+    except (TypeError, ValueError):
+        res["error"] = "the payment amount is not a number - review again"
+        return
+    if amount < net - EPS:
+        res["error"] = f"the amount typed ({amount:,.2f}) is less than the bills on the payment ({net:,.2f}) - take a bill off or pay it in part"
+        return
+    if amount <= EPS:
+        res["error"] = "the payment amount is 0 - type the check amount (the ticked bills are already paid, so all of it becomes a credit)"
+        return
+    credit_new = _r2(amount - net)                  # QuickBooks' "Amount to Credit": held with the vendor, printed on the stub
     if method == "check":                           # a typed check # already used on this account (finding 6)
         d = _number_taken(refs[vid], acct_id)
         if d:
@@ -683,8 +729,9 @@ def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[di
     lines = [{"Amount": a, "LinkedTxn": [{"TxnId": bid, "TxnType": "Bill"}]} for bid, a in sorted(want.items())]
     lines += [{"Amount": c["balance"], "LinkedTxn": [{"TxnId": c["id"], "TxnType": "VendorCredit"}]}
               for c in sorted(credits, key=lambda c: c["id"])]
-    pay = {"VendorRef": {"value": vid}, "TxnDate": date, "TotalAmt": _r2(bills_amt - cred_amt),
-           "DocNumber": refs[vid], "Line": lines}
+    pay = {"VendorRef": {"value": vid}, "TxnDate": date, "TotalAmt": amount, "DocNumber": refs[vid]}
+    if lines:                                       # all-credit payment: no lines at all (QuickBooks keeps the whole amount)
+        pay["Line"] = lines
     if method == "card":
         pay["PayType"] = "CreditCard"
         pay["CreditCardPayment"] = {"CCAccountRef": {"value": acct_id}}
@@ -699,8 +746,8 @@ def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[di
     rid = hashlib.sha1(json.dumps(pay, sort_keys=True).encode()).hexdigest()[:36]
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     (LOG_DIR / f"{stamp}-{vid}.json").write_text(json.dumps(
-        {"request_id": rid, "payment": pay, "account": acct, "method": method, "credits": credits,
-         "bills_live": (lv or {}).get("bills")}, indent=1, default=str))
+        {"request_id": rid, "payment": pay, "account": acct, "method": method, "credits": credits, "credit_new": credit_new,
+         "bills_live": (lv or {}).get("bills"), "paid_bills": (lv or {}).get("paid_bills")}, indent=1, default=str))
     _attempt(rid, "sent", vendor_id=vid, vendor=res["vendor"], bills=want, body=pay)   # held from here until resolved
     try:
         done = _post(cid, pay, rid)
@@ -719,8 +766,12 @@ def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[di
     _attempt(rid, "written", payment_id=pid)
     _audit("pay", "written", {"vendor": vid, "payment_id": pid, "total": _r2(done.get("TotalAmt")), "request_id": rid,
                               "ref": done.get("DocNumber"), "bills": list(want), "credits": [c["id"] for c in credits]})
-    res.update({"ok": True, "payment_id": pid, "ref": done.get("DocNumber") or "", "total": _r2(done.get("TotalAmt")),
-                "bills": len(want), "credits": len(credits), "to_print": method == "print"})
+    got = _r2(done.get("TotalAmt"))
+    res.update({"ok": True, "payment_id": pid, "ref": done.get("DocNumber") or "", "total": got,
+                "bills": len(want), "credits": len(credits), "to_print": method == "print",
+                "credit": _r2(got - net)})          # what QuickBooks actually kept as the credit
+    if abs(got - amount) > EPS:                     # QuickBooks trimmed the amount: say so, the payment is still real
+        res["warn"] = f"QuickBooks wrote {got:,.2f}, not the {amount:,.2f} asked - check the credit on this vendor"
     try:                                            # the payment IS in QBO from here: nothing below may lose it
         _after_post(res, done, want, lv, credits, method, acct, date, access, cid)
     except Exception as e:                          # noqa: BLE001
@@ -1026,7 +1077,7 @@ def main() -> int:
             print(f"{v['vendor']}  {len(v['bills'])} bills  {v['total']:,.2f}  ({len(v['credits'])} open credits)")
             for b in v["bills"]:
                 print(f"    {b['doc']:<16} {b['date']}  {b['amount']:>12,.2f}{'  partial' if b['partial'] else ''}"
-                      f"{'  check approval in QBO' if b['check_approval'] else ''}")
+                      f"{'  check approval in QBO' if b['check_approval'] else ''}{'  NOT APPROVED' if b.get('not_approved') else ''}")
         for s in p["skipped"]:
             print(f"  SKIP {s.get('vendor', '')} {s.get('doc', s['bill_id'])}: {s['why']}")
         print(f"total {p['total']:,.2f} on {p['bills']} bills - dry run, nothing written")

@@ -2,8 +2,9 @@
 """
 wip_contracts.py - the ONE lookup for a job's CONTRACT and ETC, with its SOURCE.
 
-Overhead is charged at a percentage of the CONTRACT, not of what has been
-billed (the owner 2026-09-03: "it's contract 10%"). A LIVE job carries its
+A PROJECTION charges overhead as a percentage of the CONTRACT (the owner
+2026-09-03: "it's contract 10%"); every to-date figure charges it on gross
+billed instead (the owner 2026-10-02 / 2026-10-14). A LIVE job carries its
 contract on the WIP master. A FINISHED job is off the master entirely, so the
 only record is the WIP reports - and those must be quoted, never guessed: the
 owner 2026-09-04, "sources sources sources always sources so i can see what

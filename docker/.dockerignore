@@ -6,6 +6,7 @@
 !bill-tracker/
 !invoice-sync/
 !ledger/refresh_mirror.py
+!project-pnl/
 !docker/scheduler.py
 # never ship local config, state, logs or caches from a clone
 **/.env

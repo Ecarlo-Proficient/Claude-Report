@@ -228,7 +228,8 @@ function raw(col, v) {
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], liens: [], by_project: {}, bills: [] };
-let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
+let BILLS = [];   // the bills (ONE row per bill; a multi-job bill carries `projects` / `clients` / `divisions`)
+const billJobs = b => (b.projects && b.projects.length) ? b.projects : (b.project_no && b.project_no !== "(multiple)" ? [b.project_no] : []);   // the jobs on a bill
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
@@ -261,27 +262,37 @@ const WAIVERS_ENABLED = false;
 
 // ── Nav (owner 2026-09-23: "remove Vendors and Customers from Company and reinstate them as their own"):
 // Projects = the WIP as the page · Vendors = Bill Tracker / Vendor Center · Customers = Invoice Tracker / Customer
-// Center / Payments received / Sales pipeline · Company = Money / the audits / Processes · a tools group only the gear reaches.
+// Center / Payments received / Sales pipeline · Audit = every audit, in categories (owner 2026-10-11: "the audit into an
+// audit and then to categories, AP, AR" - AP: Checks QBO changed first, then bills changed / deleted, Bills to fix, Uncleared;
+// AR: invoices changed after saved, invoices deleted or voided; Company: duplicate customers, the other QBO changes) ·
+// Company = Money / Reclassify / Processes · a tools group only the gear reaches.
 // Every old tab name is an alias that lands on its page (and scrolls to its section where it became one), so every
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
-  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
+  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills", "revised"] },   // Revised bills: the AP-13 follow-up board (owner 2026-10-12)   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers", "reclassify", "processes"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30); Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
+  { id: "audit",     label: "Audit",     tabs: ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared", "qboar", "qboardel", "dupcustomers", "qboother"],
+    cats: [["AP", ["checkdrift", "qboap", "qboapdel", "billaudit", "uncleared"]], ["AR", ["qboar", "qboardel"]], ["Company", ["dupcustomers", "qboother"]]] },   // the sub-tab row shows each category's name before its pages
+  { id: "company",   label: "Company",   tabs: ["money", "reclassify", "processes"] },   // Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
-  projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
+  projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", revised: "Revised bills", invoices: "Invoice Tracker", customercenter: "Customer Center",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
+  qboap: "Bills changed", qboapdel: "Bills deleted", qboar: "Invoices changed", qboardel: "Invoices deleted", qboother: "Other changes",   // short on the tab; the page title says it in full
   wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
 };
+// ONE page serves several tabs: the QBO changes page is scoped by the Audit tab that opened it (QA_SCOPES), so every
+// scoped tab shows the `qboaudit` tab-page.
+const PAGE_OF = { qboap: "qboaudit", qboapdel: "qboaudit", qboar: "qboaudit", qboardel: "qboaudit", qboother: "qboaudit" };
 const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
 // old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
                     clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "billaudit",
                     health: "money", subloc: "money", costs: "money", graph: "processes", systems: "processes",
-                    rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
+                    rpreview: "review",     // the RP review became the per-division WIP review (2026-09-15)
+                    qboaudit: "qboap" };    // the one QBO changes page became the Audit categories (2026-10-11)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
 function buildGroupBar() {
@@ -297,12 +308,22 @@ function buildSubTabs(g, active) {
   const bar = $("#subtabbar"); if (!bar) return;
   if (!g || g.tabs.length <= 1) { bar.hidden = true; bar.innerHTML = ""; return; }   // single-page group: no second row
   bar.hidden = false; bar.innerHTML = "";
-  for (const t of g.tabs) {
-    const b = document.createElement("button"); b.className = "subtab" + (t === active ? " active" : "");
-    b.textContent = TAB_LABELS[t] || t; b.onclick = () => setTab(t);
-    bar.appendChild(b);
-  }
+  const add = t => { const b = document.createElement("button"); b.className = "subtab" + (t === active ? " active" : "");
+    b.textContent = TAB_LABELS[t] || t; b.onclick = () => setTab(t); bar.appendChild(b); };
+  if (g.cats) {                              // categories (Audit: AP · AR · Company): the name, then its pages
+    for (const [label, tabs] of g.cats) { const c = document.createElement("span"); c.className = "subcat"; c.textContent = label; bar.appendChild(c); tabs.forEach(add); }
+  } else g.tabs.forEach(add);
 }
+// A small box that scrolls inside the page (a capped table, a menu, a list) glows softly while the wheel is scrolling
+// IT, so it is clear the page is not moving (owner 2026-10-11: "when scrolling in little menus make the menu outline
+// subtle glow to show the scroll is scrolling inside that box until you are out"). The glow drops half a second after
+// the last scroll - which is also when the box reached its end and the page took over.
+document.addEventListener("scroll", (e) => {
+  const el = e.target; if (!(el instanceof Element) || el === document.documentElement || el === document.body) return;
+  if (el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1) return;
+  if (el.clientHeight > 560) return;                      // a page-sized panel is not a little box
+  el.classList.add("scroll-in"); clearTimeout(el._glow); el._glow = setTimeout(() => el.classList.remove("scroll-in"), 500);
+}, true);
 let activeTab = "projects";
 function setTab(t) {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;   // an unsaved pay run on the project page: Save or Discard first
@@ -312,7 +333,7 @@ function setTab(t) {
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
   { const rv = $("#recordView"); if (rv) { if (!rv.hidden) _recSave(null); rv.hidden = true; } }   // leaving a record view when a tab is picked (a refresh no longer reopens it)
-  $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
+  { const page = PAGE_OF[t] || t; $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== page; }); }
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
@@ -321,8 +342,9 @@ function setTab(t) {
   if (t === "customercenter") renderCustomers();
   if (t === "payments") renderPayments();
   if (t === "billaudit") loadAccounting();
-  if (t === "qboaudit") loadQboAudit();
+  if (PAGE_OF[t] === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
+  if (t === "revised") loadRevised();
   if (t === "uncleared") loadUncleared();
   if (t === "dupcustomers") loadDupCustomers();
   if (t === "reclassify") loadReclassify();
@@ -730,10 +752,14 @@ function renderSyncPill() {
   for (const [n, w] of feeds) { if (!w) { stale.push(n + " never"); continue; } const t = Date.parse(w.length <= 16 ? w + ":00" : w); if (isNaN(t)) continue;
     if (!newest || t > newest) newest = t; if (businessHoursSince(t, Date.now()) > STALE_BUSINESS_H) stale.push(`${n} ${timeAgo(w)}`); }
   if (typeof syncing !== "undefined" && syncing) { pill.className = "sync-pill busy"; txt.textContent = "Syncing…"; pill.title = "A sync is running - see the progress on Overview"; return; }
-  pill.className = "sync-pill " + (stale.length ? "stale" : "ok");
+  const srvBad = SERVER && SERVER.present && (SERVER.health === "down" || SERVER.health === "failing");
+  const srvWarn = SERVER && SERVER.present && (SERVER.health === "late" || SERVER.health === "standing down");
+  pill.className = "sync-pill " + (srvBad ? "bad" : (stale.length || srvWarn) ? "stale" : "ok");
   txt.textContent = newest ? `Synced ${fmtDate(new Date(newest - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}` : "Not synced";
   if (stale.length) txt.textContent += ` · ${stale.length} stale`;
+  if (srvBad || srvWarn) txt.textContent += ` · server ${(SRV_WORD[SERVER.health] || SERVER.health).toLowerCase()}`;
   pill.title = feeds.map(([n, w]) => `${n}: ${w ? fmtDate(w, true) + " (" + timeAgo(w) + ")" : "never"}`).join("\n") + (stale.length ? "\n\nStale (over 48 business hours): " + stale.join(", ") : "\n\nEvery feed is within 48 business hours");
+  if (SERVER && SERVER.present) pill.title += `\n\nOffice server: ${SRV_WORD[SERVER.health] || SERVER.health} - ${SERVER.reason || ""}`;
 }
 // The ONE place load / sync times live (owner 2026-09-23: "remove ALL loads/sync data in the actual ledger and simply keep
 // that status where it belongs in the top, break it out, show qbo status"). Grouped by system, a dot per feed
@@ -760,6 +786,10 @@ function toggleSyncPop() {
   for (const [sys, feeds] of SYNC_GROUPS) {
     if (sys === "Office server" && !fr.server_mode) continue;   // share not mounted / no server: no block
     html += `<div class="sp-sys">${_ge(sys === "Office server" && fr.server_mode === "test" ? sys + " (test - practice copies)" : sys)}</div>`;
+    if (sys === "Office server" && SERVER && SERVER.present) {   // the monitor's judgement first (owner 2026-10-09)
+      const h = SERVER.health, cls = h === "ok" ? "ok" : (h === "down" || h === "failing") ? "bad" : "stale";
+      html += `<div class="sp-row sp-srv"><span class="sp-dot ${cls}"></span><span class="sp-l"><b>${_ge(SRV_WORD[h] || h)}</b> · ${_ge(SERVER.reason || "")}</span><span class="sp-t"></span><span class="sp-ago">${SERVER.written ? _ge(timeAgo(SERVER.written)) : ""}</span></div>`;
+    }
     for (const [lbl, kind, key] of feeds) {
       const w = (kind === "S" ? S : L)[key], t = at(w);
       const cls = !t ? "none" : businessHoursSince(t, Date.now()) > STALE_BUSINESS_H ? "stale" : "ok";
@@ -988,6 +1018,123 @@ async function _bvRender() {
       + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1&view=FitH" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
   list.hidden = files.length < 2;
+}
+// The INVOICE viewer (owner 2026-10-11: "invoice # not clickable i want that to open just like attachment and see the
+// invoice load from qbo ... also see the line items as is so you don't have to leave the ledger"). Left: the invoice as
+// QuickBooks holds it (header, every line as typed, what is open, every payment - a joint check names its supplier);
+// right: QuickBooks' own printed copy of it, plus any file attached. A draw billed on SEVERAL invoices (MFD192, three
+// contracts: "a multi contract draw that is an odd ball") opens with a strip across the top: every invoice of the draw,
+// the ones counted so far filled in and the running total counting up to the draw total as ← → move the focus.
+let _iv = null;
+function openInvoiceViewer(nos, index, ctx) {
+  nos = (nos || []).map(String).filter(Boolean); if (!nos.length) return;
+  _iv = { nos, i: Math.max(0, Math.min(index || 0, nos.length - 1)), ctx: ctx || {}, data: null, shown: 0 };
+  let ov = $("#attViewer");
+  if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) _ivClose(); }; }
+  if (!window.__ivKeys) { window.__ivKeys = true; document.addEventListener("keydown", (e) => { if (!_iv || !$("#attViewer")) return;
+    if (e.key === "ArrowRight") _ivGo(1); else if (e.key === "ArrowLeft") _ivGo(-1);
+    else if (e.key === "Escape") { const dl = document.querySelector("#attViewer .xdlg.att-full"); if (dl) { dl.classList.remove("att-full"); _attFullSync(dl); } else _ivClose(); }
+    else return; e.preventDefault(); e.stopImmediatePropagation(); }, true); }
+  ov.innerHTML = `<div class="xdlg att-dlg bv-dlg iv-dlg" role="dialog"><div class="att-head"><h3>Invoice ${_ge(nos.join(", "))}</h3><span class="dim">loading…</span><button class="btn small" id="attClose">Close</button></div><div class="tr-note">Reading the invoice${nos.length > 1 ? "s" : ""} from QuickBooks…</div></div>`;
+  $("#attClose").onclick = _ivClose;
+  fetch(`/api/invoice/view?nos=${encodeURIComponent(nos.join(","))}&project=${encodeURIComponent(_iv.ctx.project || "")}`).then(r => r.json()).then(d => {
+    if (!_iv) return; _iv.data = d; _ivRender();
+  }).catch(e => { if (_iv) { _iv.data = { ok: false, error: String(e) }; _ivRender(); } });
+}
+function _ivClose() { const ov = $("#attViewer"); if (ov) ov.remove(); _iv = null; }
+function _ivGo(step) { if (!_iv || !_iv.data) return; const n = _iv.i + step; if (n < 0 || n >= _iv.nos.length) return; _iv.i = n; _ivRender(); }
+function _ivCount(el, from, to) {   // the running total counts up (or down) to its new value
+  const t0 = performance.now(), dur = 450;
+  const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = money(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function _ivRender() {
+  const ov = $("#attViewer"); if (!ov || !_iv) return;
+  const d = _iv.data || {}, many = _iv.nos.length > 1;
+  if (!d.ok) { ov.querySelector(".xdlg").innerHTML = `<div class="att-head"><h3>Invoice ${_ge(_iv.nos.join(", "))}</h3><button class="btn small" id="attClose">Close</button></div><div class="tr-note">${_ge(d.error || "could not read the invoice")}</div>`; $("#attClose").onclick = _ivClose; return; }
+  const invs = d.invoices || [], inv = invs[_iv.i] || {};
+  const title = `Invoice ${inv.doc_number || _iv.nos[_iv.i]}${_iv.ctx.title ? " · " + _iv.ctx.title : ""}`;
+  ov.innerHTML = `<div class="xdlg att-dlg bv-dlg iv-dlg" role="dialog">
+    <div class="att-head">${many ? `<button class="btn small" id="ivPrev" ${_iv.i === 0 ? "disabled" : ""} title="Previous invoice (←)">←</button><span class="bv-pos">${_iv.i + 1} of ${_iv.nos.length}</span><button class="btn small" id="ivNext" ${_iv.i >= _iv.nos.length - 1 ? "disabled" : ""} title="Next invoice (→)">→</button>` : ""}
+      <h3>${_ge(title)}</h3><span class="dim" id="attStatus"></span><button class="btn small" id="attClose">Close</button></div>
+    ${many ? `<div class="iv-draw" id="ivDraw"></div>` : ""}
+    <div class="bv-body"><div class="bv-info" id="ivInfo"></div><div class="bv-scan"><div class="att-list" id="attList"></div><div class="att-view" id="attView"></div></div></div></div>`;
+  $("#attClose").onclick = _ivClose;
+  if (many) { $("#ivPrev").onclick = () => _ivGo(-1); $("#ivNext").onclick = () => _ivGo(1); _ivDrawStrip(invs); }
+  _ivInfo(inv);
+  _ivScan(inv);
+}
+// the draw strip: 34417 + 34418 + 34419 = the draw; the ones up to the focus are counted, the focus is ringed
+function _ivDrawStrip(invs) {
+  const host = $("#ivDraw"); if (!host) return;
+  const total = num(_iv.data.total), run = invs.slice(0, _iv.i + 1).reduce((s, x) => s + num(x.total), 0);
+  const chips = document.createElement("div"); chips.className = "iv-chips";
+  invs.forEach((x, k) => {
+    if (k) { const p = document.createElement("span"); p.className = "iv-plus"; p.textContent = "+"; chips.appendChild(p); }
+    const c = document.createElement("button"); c.type = "button"; c.className = "iv-chip" + (k < _iv.i ? " counted" : "") + (k === _iv.i ? " on" : "");
+    c.innerHTML = `<span class="iv-chip-no">${_ge(x.doc_number)}</span><span class="iv-chip-amt">${_ge(x.missing ? "not in QuickBooks" : money(x.total))}</span>`;
+    c.title = x.missing ? "" : (x.lines || []).map(l => l.description || l.item).filter(Boolean).slice(0, 3).join(" · ");
+    c.onclick = () => { _iv.i = k; _ivRender(); }; chips.appendChild(c);
+  });
+  const eq = document.createElement("span"); eq.className = "iv-plus"; eq.textContent = "="; chips.appendChild(eq);
+  const tot = document.createElement("span"); tot.className = "iv-chip iv-total"; tot.innerHTML = `<span class="iv-chip-no">Draw total</span><span class="iv-chip-amt">${_ge(money(total))}</span>`; chips.appendChild(tot);
+  host.appendChild(chips);
+  const bar = document.createElement("div"); bar.className = "iv-bar"; const fill = document.createElement("div"); fill.className = "iv-fill"; bar.appendChild(fill);
+  // one segment per invoice, so you can see each one's share of the draw
+  invs.forEach((x, k) => { const sg = document.createElement("div"); sg.className = "iv-seg" + (k <= _iv.i ? " in" : "") + (k === _iv.i ? " on" : ""); sg.style.flexBasis = (total ? num(x.total) / total * 100 : 0) + "%"; fill.appendChild(sg); });
+  host.appendChild(bar);
+  const lab = document.createElement("div"); lab.className = "iv-run";
+  lab.innerHTML = `<b class="iv-run-amt"></b> of ${_ge(money(total))} · ${_iv.i + 1} of ${invs.length} invoices counted${num(_iv.data.open) > 0.005 ? ` · <span class="neg">${_ge(money(_iv.data.open))} open on the draw</span>` : ` · <span class="pos">draw paid</span>`}`;
+  host.appendChild(lab);
+  _ivCount(lab.querySelector(".iv-run-amt"), _iv.shown || 0, run); _iv.shown = run;
+}
+function _ivInfo(inv) {
+  const host = $("#ivInfo"); if (!host) return; host.innerHTML = "";
+  if (inv.missing) { host.innerHTML = `<div class="tr-note">Invoice ${_ge(inv.doc_number)} is not in the QuickBooks copy - Resync</div>`; return; }
+  const kv = document.createElement("table"); kv.className = "bv-kv";
+  const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("tr"); const a = document.createElement("th"); a.textContent = k; const c = document.createElement("td"); if (cls) c.className = cls; if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
+  add("Customer", inv.customer); add("Invoice #", inv.doc_number); add("Date", inv.date ? fmtDate(inv.date) : null);
+  add("Due", inv.due ? fmtDate(inv.due) + (inv.terms ? " · " + inv.terms : "") : null);
+  const paidAmt = num(inv.total) - num(inv.balance);
+  if (num(inv.balance) <= 0.005) add("Status", "Paid", "pos");
+  else if (paidAmt > 0.005) add("Status", `Short · ${moneyC(paidAmt)} paid · ${moneyC(inv.balance)} open`, "neg");
+  else add("Status", `Unpaid · ${moneyC(inv.balance)} open`, "neg");
+  if (inv.memo) { const m = document.createElement("div"); m.className = "bv-memo"; m.textContent = inv.memo; add("Memo", m); }
+  host.appendChild(kv);
+  // the lines as typed in QuickBooks
+  const t = document.createElement("table"); t.className = "grid iv-lines";
+  t.innerHTML = `<thead><tr><th class='left'>Product / service</th><th class='left'>Description</th><th class='right'>Qty</th><th class='right'>Rate</th><th class='right'>Amount</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const ln of inv.lines || []) { const tr = document.createElement("tr"); if (num(ln.amount) < 0) tr.className = "iv-neg";
+    tr.appendChild(leftText(ln.item || "–")); { const td = leftText(ln.description || "–"); td.classList.add("iv-desc"); tr.appendChild(td); }
+    tr.appendChild(rightText(ln.qty == null ? "" : String(ln.qty))); tr.appendChild(rightText(ln.rate == null ? "" : moneyC(ln.rate))); tr.appendChild(rightText(moneyC(ln.amount))); tb.appendChild(tr); }
+  const row = (lab, v, cls) => { const tr = document.createElement("tr"); tr.className = cls; tr.innerHTML = `<td class="left" colspan="4">${_ge(lab)}</td><td class="right">${_ge(v)}</td>`; tb.appendChild(tr); };
+  row("Total", moneyC(inv.total), "bv-tot");
+  for (const p of inv.payments || []) {
+    const who = p.kind === "joint" ? `joint check · ${p.to}${p.how === "amount only" ? " (amount only)" : ""}` : p.kind === "open" ? `joint check · not paid out yet${p.memo ? " · " + p.memo : ""}` : "to us";
+    row(`Payment ${fmtDate(p.date)}${p.ref ? " · check " + p.ref : ""} · ${who}`, "(" + moneyC(p.applied) + ")", "iv-pay iv-pay-" + p.kind);
+  }
+  row("Balance due", moneyC(inv.balance), "iv-due" + (num(inv.balance) > 0.005 ? " neg" : ""));
+  t.appendChild(tb); host.appendChild(t);
+  const a = document.createElement("a"); a.className = "btn small"; a.href = qboUrl("invoice", inv.id); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; host.appendChild(a);
+}
+// right side: QuickBooks' printed invoice first, then any file attached to it (a pay app), fetched fresh
+async function _ivScan(inv) {
+  const list = $("#attList"), view = $("#attView"), st = $("#attStatus"); if (!list || inv.missing) return;
+  const mine = _iv.i;
+  const pdfUrl = `/api/invoice/pdf?id=${encodeURIComponent(inv.id)}&sync=${encodeURIComponent(inv.sync || "0")}`;
+  const files = [{ name: `Invoice ${inv.doc_number} (QuickBooks)`, url: pdfUrl, pdf: true }];
+  const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
+    const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || "");
+    view.innerHTML = `<div class="att-tools"><b>${_ge(f.name)}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a></div>`
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}#toolbar=1&view=FitH" title="invoice"></iframe>`); _attZoomable(view); };
+  const paint = () => { list.innerHTML = ""; files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name; b.onclick = () => show(f, b); list.appendChild(b); if (k === 0 && !view.firstChild) show(f, b); else if (k === 0) b.classList.add("on"); }); list.hidden = files.length < 2; };
+  paint();
+  st.textContent = "";
+  let r; try { r = await (await fetch(`/api/attachment?id=${encodeURIComponent(inv.id)}&type=Invoice`)).json(); } catch (e) { r = null; }
+  if (!_iv || _iv.i !== mine || !r || !r.ok) return;
+  for (const f of r.files || []) files.push(f);
+  if (files.length > 1) { paint(); st.textContent = `${files.length - 1} file${files.length === 2 ? "" : "s"} attached`; }
 }
 async function openAttachmentViewer(type, id, title, expected) {
   let ov = $("#attViewer");
@@ -1336,9 +1483,9 @@ const LIEN_SHORT = {
 const lienMSel = {};   // { id: Set }
 let _lienMSelSig = null;   // data signature; the msels rebuild only when it changes (not on a toggle)
 const LIEN_MSEL = [
-  { id: "lfClient", all: "All clients",     get: r => r.client || "",         search: true, lbl: v => v || "(no client)" },
+  { id: "lfClient", all: "All clients",     get: r => r.client || "",         vals: r => r.clients,   search: true, lbl: v => v || "(no client)" },
   { id: "lfVendor", all: "All vendors",     get: r => r.vendor || "",         search: true, lbl: v => v || "(none)" },
-  { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        lbl: v => v || "(none)" },
+  { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        vals: r => r.divisions, lbl: v => v || "(none)" },
   { id: "lfPay",    all: "Any inv. status", get: r => r.inv_ar_status || "",   lbl: v => v || "(no invoice)" },
 ];
 function _lienLabelUpdate(cfg) {
@@ -1383,7 +1530,7 @@ function buildLienMSel(cfg, watch) {
   }
   _lienLabelUpdate(cfg);
 }
-function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(r))) return false; } return true; }
+function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !mselHit(cfg, s, r)) return false; } return true; }
 function renderLiens() {
   // This page is ONLY what's actually been SENT or FILED (owner 2026-08-20) - not the deadline clock.
   const watch = AP.liens || [];
@@ -1536,7 +1683,7 @@ function renderVendors() {
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${moneyC(totalOpen)} open)`
     : "(no cost data - run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Statement", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included   // Statement = the reconciler's standing (owner 2026-10-09)
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
@@ -1555,6 +1702,7 @@ function renderVendors() {
     const ty = document.createElement("td"); ty.className = "left";
     ty.classList.add("vtype-cell"); const ts = _vtypesOf(v); if (ts.length) ts.forEach(t => ty.appendChild(_vtypePill(t))); else ty.textContent = "–";
     tr.appendChild(ty);
+    { const sc = document.createElement("td"); sc.className = "left stmt-cell"; sc.appendChild(stmtBubble(v.vendor, true)); tr.appendChild(sc); }
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
@@ -1814,15 +1962,15 @@ function statusCell(node) { const td = document.createElement("td"); td.classNam
 // component. Vendor + Month are bespoke (pump default / month cascade); Day stays a single drill.
 const billMSel = {};   // { id: Set(selected raw values) }
 const BILL_MSEL = [
-  { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        search: true, lbl: v => v || "(no client)" },
-  { id: "bfProject",  all: "All projects",   get: b => b.project_no || "",    search: true, lbl: v => v || "(no project #)" },
-  { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       lbl: v => v || "(no division)" },
+  { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        vals: b => b.clients,   search: true, lbl: v => v || "(no client)" },
+  { id: "bfProject",  all: "All projects",   get: b => b.project_no || "",    vals: b => b.projects,  search: true, lbl: v => v || "(no project #)" },
+  { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       vals: b => b.divisions, lbl: v => v || "(no division)" },
   { id: "bfPay",      all: "Any pay status", get: b => b.pay_status || "",     lbl: v => v || "(none)" },
   { id: "bfInv",      all: "Any invoice",    get: b => b.invoice_status || "", lbl: v => v || "(none)" },
   { id: "bfAppr",     all: "Any approval",   get: b => b.approved || "",       lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "bfLien",     all: "Any lien",       get: b => b.lien_status || "",    lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
-function _billMSelVals(cfg) { return [...new Set((BILLS || []).map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+function _billMSelVals(cfg) { return _mselVals(BILLS || [], cfg); }   // every value, a multi-job bill's jobs included
 // Toggle updates the label IN PLACE (no rebuild) so an active search survives (owner 2026-08-21).
 function toggleBillMSel(id, val, checked) {
   const s = billMSel[id] || (billMSel[id] = new Set());
@@ -1878,7 +2026,7 @@ function buildBillMSel(cfg) {
   _mselLabelUpdate(cfg);
 }
 function billMSelPasses(b) {
-  for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(b))) return false; }
+  for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !mselHit(cfg, s, b)) return false; }
   return true;
 }
 function buildBillFilters() {
@@ -2236,6 +2384,7 @@ function billRow(b) {
   if (b.project_no) {
     const chip = document.createElement("span"); const dc = divClass(b.division);
     chip.className = "divchip" + (dc ? " " + dc : ""); chip.textContent = b.project_no; ptd.appendChild(chip);
+    if (b.project_no === "(multiple)" && b.projects && b.projects.length) { chip.textContent = `${b.projects[0]} +${b.projects.length - 1}`; chip.title = "One bill across " + b.projects.join(", "); }   // one row per bill: the jobs it spans
     const nm = nameOf(b.project_no); const disp = b.client || nm;
     if (disp) { const s = document.createElement("span"); s.className = "bill-name" + (b.client ? " lnk" : ""); s.textContent = disp;
       s.title = (b.client ? (nm ? `${b.client} · ${nm}` : b.client) : nm) + (b.client ? " - open this client's page" : "");
@@ -2383,7 +2532,7 @@ function _vpSelColumn(table, rows) {
 function _vpSelBar(rows) {
   let bar = $("#vpSelBar");
   if (!bar) { bar = document.createElement("div"); bar.id = "vpSelBar"; bar.className = "sumbar vp-selbar"; bar.hidden = true;
-    bar.innerHTML = '<span class="sb-label">✓</span><span class="sb-sum"></span><span class="sb-meta"></span><button class="sb-copy" title="Copy the ticked bills as a table - paste into Excel or an email">Copy table</button><button class="sb-x" title="Untick all">✕</button>';
+    bar.innerHTML = '<span class="sb-label">✓</span><span class="sb-sum"></span><span class="sb-meta"></span><button class="sb-copy" title="Copy the ticked bills as a table - paste into Excel or an email">Copy table</button><button class="sb-pay primary" title="Pay the ticked unpaid bills in QuickBooks - the same review and write as Pay bills, for this vendor only">Pay in QuickBooks…</button><button class="sb-x" title="Untick all">✕</button>';
     document.body.appendChild(bar); }
   const picked = rows.filter(b => _vpSel.has(_vpKey(b)));
   const showing = !!(_vendorData && _vendorView === "bills" && $("#recordView") && !$("#recordView").hidden);
@@ -2392,6 +2541,12 @@ function _vpSelBar(rows) {
   bar.querySelector(".sb-meta").textContent = `${picked.length} bill${picked.length === 1 ? "" : "s"} · ${moneyC(picked.reduce((t, b) => t + num(b.line_amount), 0))} billed`;
   bar.querySelector(".sb-x").onclick = () => { _vpSel.clear(); renderVendorPage(); };
   bar.querySelector(".sb-copy").onclick = () => _vpCopyTable(picked);
+  // Pay in QuickBooks on the ticked bills (owner 2026-10-13). A paid bill ticked goes too (later the same day: a joint
+  // check paying a bill we had already paid) - the review keeps it as "already paid" and the amount typed becomes a credit
+  const ticked = picked.filter(b => b.bill_id), payable = ticked.filter(b => bOpen(b) > 0);
+  const pay = bar.querySelector(".sb-pay"); pay.hidden = !ticked.length;
+  pay.textContent = payable.length ? `Pay in QuickBooks · ${payable.length} bill${payable.length === 1 ? "" : "s"}…` : "Pay in QuickBooks · a credit on paid bills…";
+  pay.onclick = () => openPayQbo({ bills: ticked.map(b => String(b.bill_id)), vendor: _vendorData.vendor });
 }
 async function _vpCopyTable(picked) {
   const heads = [...document.querySelectorAll(".vp-grid thead th")].filter(th => !th.classList.contains("vp-ck")).map(th => th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.textContent : th.textContent.trim());
@@ -2449,6 +2604,7 @@ async function openVendorPage(vendor) {
   const body = $("#recordBody");
   _vendorData = null; _vendorType = "open"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear(); _vpSel.clear();   // Unpaid by default (owner 2026-09-28)
   hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
+  if (PQ && PQ.vendor) closePayQbo();   // ... nor a Pay in QuickBooks review opened on another vendor's page
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
   catch (e) { body.innerHTML = ""; body.textContent = "could not load this vendor"; return; }
@@ -2466,17 +2622,24 @@ function renderVendorPage() {
   // remember which menus were open before the body is rebuilt and reopen them after
   const _dateMenuWasOpen = !!($("#vpDateMenu") && !$("#vpDateMenu").hidden);
   const body = $("#recordBody"); body.innerHTML = "";
+  if (PQ && PQ.vendor === d.vendor && PQ.widget) body.appendChild(PQ.widget);   // the Pay in QuickBooks review opened on this page stays on top
   // Bills | Payments view toggle
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
-  for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`]]) {
+  for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`], ["statement", "Statement"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorView === k ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _vendorView = k; _recSave({ k: "vendor", id: d.vendor, view: k }); renderVendorPage(); }; vseg.appendChild(b);
+  }
+  vseg.appendChild(stmtBubble(d.vendor, true));   // the statement standing, on every view (owner 2026-10-09)
+  if (_vendorView === "statement") {   // the statement + its legend - no bill filters on this view
+    { const sb = $("#vpSelBar"); if (sb) sb.hidden = true; }
+    body.appendChild(vseg);
+    return _renderVendorStatement(d, body, seq);
   }
   { const wrap = document.createElement("span"); wrap.className = "vp-projwrap";
     const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
     // this vendor's projects (bills + payments), the list the box suggests from
     const projs = new Map();
-    for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) if (b.project_no) projs.set(b.project_no, b.client || nameOf(b.project_no) || "");
+    for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) for (const pn of billJobs(b)) projs.set(pn, b.clients && b.clients.length === 1 ? b.clients[0] : (nameOf(pn) || ""));
     for (const p of (d.payments || [])) for (const no of (p.projects || [])) if (!projs.has(no)) projs.set(no, nameOf(no) || "");
     const matches = () => { const t = _vendorProj.trim(); return [...projs].filter(([no, nm]) => !t || _vq(t, [no, nm, nameOf(no)])).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).slice(0, 12); };
     const refocus = () => { const n = $("#vpProj"); if (n) { n.focus(); const pos = n.value.length; try { n.setSelectionRange(pos, pos); } catch {} } };
@@ -2550,7 +2713,7 @@ function renderVendorPage() {
   let rows = rowsAll.filter(b => _vendorType === "all" || (_vendorType === "paid" ? isPaid(b) : !isPaid(b)));
   if (_vendorInv !== "any") rows = rows.filter(b => invState(b) === _vendorInv);
   if (_vendorDate && _vendorDate.active()) rows = rows.filter(b => _vendorDate.passes(b.bill_date));   // Month | Date (from / to)
-  if (_vendorProj.trim()) rows = rows.filter(b => _vq(_vendorProj, [b.project_no, nameOf(b.project_no)]));   // the standalone Project box
+  if (_vendorProj.trim()) rows = rows.filter(b => billJobs(b).some(pn => _vq(_vendorProj, [pn, nameOf(pn)])));   // the standalone Project box - any job on the bill
   if (_vendorQ.trim()) rows = rows.filter(b => refHit(_vendorQ, [b.bill_ref, b.invoice_no]));   // ref # only
   rows.sort((a, b) => _isoDay(a.bill_date).localeCompare(_isoDay(b.bill_date)) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));   // oldest to newest (owner 2026-09-28)
   const baseRows = rows;                                   // before the header filters - what each funnel lists
@@ -2650,17 +2813,286 @@ function _vendorLines(b) {
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
 }
+
+// ── Vendor statements: the reconciler's record copy (owner 2026-10-09: "have a record copy of vendor statements so
+// it can show, when paying, reconciled as of ... a Notion-style bubble in the Vendor Center; when opened we see the
+// vendor statement and the highlighted ones with the legend floating as you scroll") ───────────────────────────────
+// statement-reconciler writes <Vendor>/.statement-record.json + the marked pages (shared/statement_record); the ledger
+// shows that record and never reads a statement itself. /api/statements = every vendor's standing (the bubble);
+// /api/statement?v= = one vendor in full (pages + every line with its band). Vendor names meet on a folded key.
+let STMT = { loaded: false, mounted: null, vendors: {} };
+function stmtKey(name) { return String(name || "").toUpperCase().replace(/[^A-Z0-9]+/g, ""); }   // = shared/statement_record.key(): letters + digits only
+function stmtOf(vendor) { return STMT.vendors[stmtKey(vendor)] || null; }
+async function loadStatements(fresh) {
+  try { const j = await (await fetch("/api/statements" + (fresh ? "?fresh=1" : ""))).json(); STMT = { loaded: true, mounted: !!j.mounted, vendors: j.vendors || {} }; }
+  catch { STMT = { loaded: true, mounted: false, vendors: {} }; }
+  document.querySelectorAll(".stmt-pill[data-vendor]").forEach(el => el.replaceWith(stmtBubble(el.dataset.vendor, el.dataset.compact === "1")));   // every bubble on the page catches up
+}
+const STMT_CLASS = { "All entered": "ok", "Not entered": "bad", "Unreadable": "odd", "No statement": "none", "No record": "dim" };
+// the bubble: one look everywhere (Vendor Center, vendor page, pay run) - colour = the Notion board's Status
+function stmtBubble(vendor, compact) {
+  const s = stmtOf(vendor);
+  const el = document.createElement("span"); el.className = "stmt-pill"; el.dataset.vendor = vendor || ""; if (compact) el.dataset.compact = "1";
+  const dot = document.createElement("span"); dot.className = "stmt-dot"; el.appendChild(dot);
+  const txt = document.createElement("span"); el.appendChild(txt);
+  let cls = "dim", text = "", title = "";
+  if (!STMT.loaded) { text = "…"; title = "Loading the statement records"; }
+  else if (!STMT.mounted) { text = "Share off"; title = "The Accounting share is not mounted on this Mac - the statement records live there"; }
+  else if (!s) { text = "No statement folder"; title = `No folder for ${vendor} under Vendor Statements on the Accounting share - drop a statement in the Inbox and run the reconciler`; }
+  else {
+    cls = STMT_CLASS[s.status] || "dim";
+    const asOf = s.as_of ? fmtDateShort(s.as_of) : "";
+    if (s.status === "All entered") text = compact ? `All entered · ${asOf}` : `All entered as of ${asOf}`;
+    else if (s.status === "Not entered") { const n = (s.open_items || {})["To enter (missing in QBO)"] || (s.counts || {}).enter || 0; text = `${n} not entered${asOf ? " · " + asOf : ""}`; }
+    else if (s.status === "Unreadable") text = `Unreadable${asOf ? " · " + asOf : ""}`;
+    else if (s.status === "No statement") text = `No statement${asOf ? " since " + asOf : ""}`;
+    else text = s.status || "No record";
+    title = (s.standing || "") + (s.checked ? `\nChecked ${s.checked}` : "") + "\nClick: the statement with every line highlighted";
+  }
+  el.classList.add(cls); txt.textContent = text; el.title = title;
+  el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (vendor) openVendorStatement(vendor); };
+  return el;
+}
+async function openVendorStatement(vendor) {
+  if (!(_vendorData && _vendorData.vendor === vendor && _vendorPageShowing(_vendorData))) await openVendorPage(vendor);
+  if (_vendorData && _vendorData.vendor === vendor) { _vendorView = "statement"; _recSave({ k: "vendor", id: vendor, view: "statement" }); renderVendorPage(); }
+}
+// the legend's buckets, in the order the clerk works them: problems first, then what matched
+const STMT_BUCKETS = [["enter", "Not in QBO - enter it", [229, 57, 53]], ["unread", "On the statement, not read - check by hand", [198, 40, 40]],
+  ["mismatch", "Amount differs from QBO", [255, 152, 0]], ["tax", "Sales tax added", [255, 112, 67]], ["approve", "Matched, NOT APPROVED - chase the PM", [205, 220, 57]],
+  ["checkqbo", "Matched, approval is in QBO - check there", [0, 172, 193]], ["lag", "Paid in QBO, vendor still shows it open", [66, 165, 245]],
+  ["unlisted", "Open in QBO, not on the statement", [121, 85, 72]], ["matched", "Matched - in QBO, same amount", [76, 175, 80]],
+  ["other", "Payment / credit / balance forward", [149, 117, 205]], ["skipped", "Another customer's line - left out", [158, 158, 158]]];
+const STMT_OPEN_BY_DEFAULT = new Set(["enter", "unread", "mismatch", "tax", "approve", "checkqbo", "lag", "unlisted"]);
+let _stmtOpen = null;   // bucket -> open? (per page visit)
+async function _renderVendorStatement(d, body, seq) {
+  $("#recordSub").textContent = "Vendor statement, as the reconciler last checked it against QuickBooks";
+  const host = document.createElement("div"); host.className = "stmt-wrap"; body.appendChild(host); skeletonInto(host, 4);
+  if (!REV) { try { REV = await (await fetch("/api/revisions")).json(); } catch { REV = { ok: false, rows: [] }; } }   // the revised-bill stages, for the legend
+  let j; try { j = await (await fetch("/api/statement?v=" + encodeURIComponent(d.vendor))).json(); } catch { j = { ok: false, error: "could not load the statement record" }; }
+  if (seq !== _vpSeq || _vendorView !== "statement" || !_vendorPageShowing(d)) return;
+  host.innerHTML = "";
+  if (!j || !j.ok) { host.classList.add("stmt-empty"); const p = document.createElement("div"); p.className = "bills-cap";
+    p.textContent = j && j.mounted === false ? "The Accounting share is not mounted on this Mac - the statement records live there."
+      : `No statement record for ${d.vendor} yet. Drop the vendor's statement in the Vendor Statements Inbox and run the reconciler; the record and the marked pages appear here.`;
+    host.appendChild(p); return; }
+  const r = j.record, pages = r.pages || [], lines = (r.lines || []).map((ln, i) => ({ ...ln, k: i }));
+  const unread = (r.unread || []).map((u, i) => ({ k: "u" + i, bucket: "unread", ref: u.text, page: u.page, top: u.top, bottom: u.bottom, amount: null, date: "" }));
+  if (!_stmtOpen) _stmtOpen = new Map();
+  const rgb = Object.fromEntries(STMT_BUCKETS.map(([k, , c]) => [k, `rgb(${c.join(",")})`])), label = Object.fromEntries(STMT_BUCKETS.map(([k, l]) => [k, l]));
+  const vq = encodeURIComponent(d.vendor);
+  // ── the pages, every band a click target (the colour is already painted into the picture) ──
+  const pg = document.createElement("div"); pg.className = "stmt-pages";
+  if (!pages.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No page pictures in this record (an Excel statement, or the markup could not run) - the legend still lists every line."; pg.appendChild(p); }
+  pages.forEach((meta, i) => {
+    const cap = document.createElement("div"); cap.className = "stmt-pagecap"; cap.textContent = `${meta.source || "statement"} · page ${i + 1} of ${pages.length}`; pg.appendChild(cap);
+    const wrap = document.createElement("div"); wrap.className = "stmt-page"; wrap.dataset.i = i;
+    const img = document.createElement("img"); img.src = `/api/statement/page?v=${vq}&n=${i}`; img.alt = `page ${i + 1}`; img.loading = i ? "lazy" : "eager"; wrap.appendChild(img);
+    const H = meta.height || 1;
+    for (const ln of [...lines, ...unread].filter(x => x.page === i && x.top != null && x.bottom != null)) {
+      const b = document.createElement("div"); b.className = "stmt-band"; b.dataset.k = ln.k;
+      b.style.top = (ln.top / H * 100) + "%"; b.style.height = (Math.max(ln.bottom - ln.top, 6) / H * 100) + "%";
+      b.title = `${ln.ref || "(no ref)"}${ln.amount != null ? " · " + moneyC(ln.amount) : ""} · ${label[ln.bucket] || ln.bucket}\nClick: show in the legend · ⌘-click: where it is`;
+      b.onclick = (e) => { e.stopPropagation(); if (e.metaKey || e.ctrlKey) return _stmtWhere(ln, r, d.vendor); _stmtFocus(ln.k, host, "legend"); };
+      wrap.appendChild(b);
+    }
+    pg.appendChild(wrap);
+  });
+  // ── the legend: floats beside the pages as you scroll ──
+  const leg = document.createElement("aside"); leg.className = "stmt-legend";
+  { const h = document.createElement("div"); h.className = "stmt-lhead"; h.appendChild(stmtBubble(d.vendor, false)); leg.appendChild(h);
+    const st = document.createElement("div"); st.className = "stmt-standing"; st.textContent = r.standing || r.status || ""; leg.appendChild(st);
+    const m = document.createElement("div"); m.className = "stmt-meta";
+    m.textContent = [r.as_of ? `Statement as of ${fmtDateShort(r.as_of)}` : "", r.checked ? `checked ${r.checked}` : ""].filter(Boolean).join(" · "); leg.appendChild(m);
+    const amts = document.createElement("div"); amts.className = "stmt-meta";
+    const bits = []; if (r.amount_due != null) bits.push(`Statement due ${moneyC(r.amount_due)}`); if (r.merged_total != null && Math.abs(num(r.merged_total) - num(r.amount_due)) > 0.5) bits.push(`lines add to ${moneyC(r.merged_total)}`);
+    if (r.gap) bits.push(`statements disagree by ${moneyC(Math.abs(r.gap))}`); amts.textContent = bits.join(" · "); if (bits.length) leg.appendChild(amts);
+    const found = document.createElement("div"); const miss = (r.not_found || []).length + unread.length;
+    found.className = "stmt-found" + (miss ? " warn" : ""); found.textContent = r.total ? `${r.located} of ${r.total} lines found on the pages` + (miss ? ` · ${miss} to check by hand` : " · all accounted for") : `${lines.length} lines`;
+    found.title = "Did it get everything: every line the tool read, found on its page and banded - rows it could not place are listed below"; leg.appendChild(found);
+    const links = document.createElement("div"); links.className = "stmt-links";
+    (r.files || []).forEach((f, i) => { const a = document.createElement("a"); a.className = "btn tiny"; a.href = `/api/statement/file?v=${vq}&i=${i}`; a.target = "_blank"; a.rel = "noopener"; a.textContent = `Statement ${(r.files.length > 1 ? i + 1 + " " : "")}↗`; a.title = String(f).split("/").pop(); links.appendChild(a); });
+    if (r.excel) { const a = document.createElement("a"); a.className = "btn tiny"; a.href = `/api/statement/file?v=${vq}&which=excel`; a.textContent = "Excel ↓"; a.title = "The vendor's reconciliation workbook (the filed evidence)"; a.setAttribute("download", ""); links.appendChild(a); }
+    if (r.notion_url) { const a = document.createElement("a"); a.className = "btn tiny"; a.href = r.notion_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Notion ↗"; a.title = "The clerk's page on the Vendor Statements board - to-dos, notes, Re-check"; links.appendChild(a); }
+    { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = "Process"; b.title = "Where this sits in the company's processes: Vendor statement reconciliation"; b.onclick = () => openProcessRow("statement reconciliation"); links.appendChild(b); }
+    leg.appendChild(links); }
+  const all = [...lines, ...unread];
+  for (const [key, lbl] of STMT_BUCKETS) {
+    const rows = all.filter(x => (x.bucket || "other") === key); if (!rows.length) continue;
+    const g = document.createElement("div"); g.className = "stmt-group"; g.dataset.b = key;
+    const open = _stmtOpen.has(key) ? _stmtOpen.get(key) : STMT_OPEN_BY_DEFAULT.has(key);
+    const gh = document.createElement("div"); gh.className = "stmt-ghead"; gh.title = open ? "Click to collapse" : "Click to expand";
+    const sw = document.createElement("span"); sw.className = "stmt-sw"; sw.style.background = rgb[key]; gh.appendChild(sw);
+    const t = document.createElement("span"); t.textContent = lbl; gh.appendChild(t);
+    const n = document.createElement("span"); n.className = "n"; n.textContent = String(rows.length); gh.appendChild(n);
+    const sum = document.createElement("span"); sum.className = "sum"; const tot = rows.reduce((a, x) => a + (num(x.amount) || 0), 0); sum.textContent = key === "unread" ? "" : moneyC(tot); gh.appendChild(sum);
+    const list = document.createElement("div"); list.className = "stmt-lines"; list.hidden = !open;
+    gh.onclick = () => { list.hidden = !list.hidden; _stmtOpen.set(key, !list.hidden); gh.title = list.hidden ? "Click to expand" : "Click to collapse"; };
+    for (const ln of rows) {
+      const row = document.createElement("div"); row.className = "stmt-line" + (ln.page == null ? " nopage" : ""); row.dataset.k = ln.k;
+      row.title = (ln.page != null ? "Click: find it on the statement" : "Not on any page (" + (key === "unlisted" ? "QuickBooks only" : "read, not located") + ")") + " · ⌘-click: where it is in the process";
+      const a = document.createElement("span"); const b = document.createElement("b"); b.textContent = ln.ref || (key === "other" ? "balance / payment" : "(no ref)"); a.appendChild(b);
+      if (ln.date) { const dt = document.createElement("span"); dt.className = "dim"; dt.textContent = " · " + fmtDateShort(ln.date); a.appendChild(dt); }
+      row.appendChild(a);
+      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = ln.amount != null ? moneyC(ln.amount) : ""; row.appendChild(amt);
+      const sub = []; if (ln.job) sub.push(ln.job); if (key === "mismatch" && ln.qbo_amount != null) sub.push(`QBO ${moneyC(ln.qbo_amount)}`); if (ln.note) sub.push("“" + ln.note + "”");
+      { const rv = ln.ref ? revFor(d.vendor, ln.ref) : null; if (rv) sub.push(`revised bill: ${rv.stage || "To send"} - ${rv.standing.text}`); }
+      if (sub.length) { const s2 = document.createElement("span"); s2.className = "sub"; s2.textContent = sub.join(" · "); s2.title = sub.join(" · "); row.appendChild(s2); }
+      row.onclick = (e) => { if (e.metaKey || e.ctrlKey) return _stmtWhere(ln, r, d.vendor); _stmtFocus(ln.k, host, "page"); };
+      list.appendChild(row);
+    }
+    g.appendChild(gh); g.appendChild(list); leg.appendChild(g);
+  }
+  if ((r.not_found || []).length) { const g = document.createElement("div"); g.className = "stmt-group"; const gh = document.createElement("div"); gh.className = "stmt-ghead";
+    const sw = document.createElement("span"); sw.className = "stmt-sw"; sw.style.background = "transparent"; sw.style.border = "1px dashed var(--text-dim)"; gh.appendChild(sw);
+    const t = document.createElement("span"); t.textContent = "Read, not found on the page"; gh.appendChild(t); const n = document.createElement("span"); n.className = "n"; n.textContent = String(r.not_found.length); gh.appendChild(n); gh.appendChild(document.createElement("span"));
+    const list = document.createElement("div"); list.className = "stmt-lines"; for (const t2 of r.not_found) { const row = document.createElement("div"); row.className = "stmt-line nopage"; const s = document.createElement("span"); s.textContent = t2; row.appendChild(s); list.appendChild(row); }
+    gh.onclick = () => { list.hidden = !list.hidden; }; g.appendChild(gh); g.appendChild(list); leg.appendChild(g); }
+  host.appendChild(pg); host.appendChild(leg);
+}
+// a click finds the SAME line on the other side: the legend row scrolls the page to its band and flashes it; a band scrolls the legend to its row
+function _stmtFocus(k, host, where) {
+  host.querySelectorAll(".stmt-band.on, .stmt-line.on").forEach(x => x.classList.remove("on"));
+  const band = host.querySelector(`.stmt-band[data-k="${k}"]`), row = host.querySelector(`.stmt-line[data-k="${k}"]`);
+  if (row) { row.classList.add("on"); const list = row.closest(".stmt-lines"); if (list && list.hidden) { list.hidden = false; } }
+  if (band) { band.classList.add("on"); band.classList.remove("flash"); void band.offsetWidth; band.classList.add("flash"); }
+  const target = where === "page" ? band : row;
+  if (target) target.scrollIntoView({ block: "center", behavior: "smooth" });
+  else if (where === "page") toast("This line is not on any page of the statement");
+}
+// ⌘ / Ctrl-click: where the line is in the process. A bill QuickBooks has -> the bill viewer (its lines, pay status, approval,
+// the scan); a bill to enter / a row to read by hand -> the clerk's Notion page (her to-do list), else the statement itself.
+function _stmtWhere(ln, r, vendor) {
+  if (ln.bill_id) return openBillViewer([{ type: "Bill", id: String(ln.bill_id), n: 0, title: `${vendor} · bill ${ln.ref || ln.qbo_ref || ln.bill_id}` }], 0);
+  if (r.notion_url) return window.open(r.notion_url, "_blank", "noopener");
+  if ((r.files || []).length) return window.open(`/api/statement/file?v=${encodeURIComponent(vendor)}&i=0`, "_blank", "noopener");
+  openProcessRow("statement reconciliation");
+}
+// Company -> Processes, scrolled to the row that names the process (plain words, no registry codes)
+async function openProcessRow(text) {
+  closeRecord(); setTab("processes");
+  const want = String(text || "").toLowerCase();
+  for (let i = 0; i < 40; i++) {
+    const hit = [...document.querySelectorAll('[data-tab="processes"] table tbody tr')].find(tr => tr.textContent.toLowerCase().includes(want));
+    if (hit) { hit.scrollIntoView({ block: "center" }); hit.classList.remove("flash-row"); void hit.offsetWidth; hit.classList.add("flash-row"); return; }
+    await new Promise(res => setTimeout(res, 100));
+  }
+}
+
+
+// ── Revised bills: the AP-13 follow-up as a process (owner 2026-10-12: "did the clerk send the bill to get revised? when?
+// have they responded? with the new revised bill? is the new revised bill uploaded to qbo?"). bill-tracker/revised_bills.py
+// the statement reconciler keeps a Revised Bills sheet in every vendor's statement workbook (the bills the vendor must
+// re-issue: tax added, amount differs, a PM's REVISED memo; the clerk types the Stage and the four dates there - owner
+// 2026-10-12: "in the same statement Excel, not a mix"); the ledger reads the rows from each vendor's statement record
+// (/api/revisions) and says where each one stands and for how long.
+let REV = null;
+const REV_STAGE_CLS = { "To send": "bad", "Sent to vendor": "warn", "Vendor replied": "warn", "Revised bill received": "info", "Entered in QBO": "ok", "Done - statement agrees": "ok", "Dropped": "none" };
+function revPill(stage) { const s = document.createElement("span"); s.className = "stmt-pill rev-pill " + (REV_STAGE_CLS[stage] || "dim"); const d = document.createElement("span"); d.className = "stmt-dot"; s.appendChild(d); s.appendChild(document.createTextNode(stage || "–")); return s; }
+async function loadRevised(force) {
+  const table = $("#revTable"); if (!table) return;
+  if (REV && REV.ok && !force) { renderRevised(); return; }
+  const note = $("#revNote"); if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 5);
+  try { REV = await (await fetch("/api/revisions" + (force ? "?fresh=1" : ""))).json(); } catch (e) { REV = { ok: false, error: String(e), rows: [] }; }
+  renderRevised();
+}
+let _revStage = "open";   // open (default) | all | a stage name
+function renderRevised() {
+  const table = $("#revTable"), note = $("#revNote"), chips = $("#revChips"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody"); thead.innerHTML = ""; tbody.innerHTML = ""; chips.innerHTML = "";
+  if (!REV || !REV.ok) { if (note) note.textContent = ""; tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((REV && REV.error) || "could not read the Revised Bills sheet")}</td></tr>`; return; }
+  const all = REV.rows || [];
+  const openRows = all.filter(r => !r.standing.final);
+  if (note) note.textContent = `(${openRows.length} open · ${all.length} on the sheets · statements last checked ${REV.read_at ? fmtDate(REV.read_at, true) : "–"})`;
+  const stages = ["To send", "Sent to vendor", "Vendor replied", "Revised bill received", "Entered in QBO", "Done - statement agrees", "Dropped"];
+  const chip = (key, label, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (_revStage === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`; b.onclick = () => { _revStage = key; renderRevised(); }; chips.appendChild(b); };
+  chip("open", "Open", openRows.length);
+  for (const st of stages) { const n = all.filter(r => (r.stage || "To send") === st).length; if (n) chip(st, st, n); }
+  chip("all", "All", all.length);
+  let rows = _revStage === "open" ? openRows : _revStage === "all" ? all : all.filter(r => (r.stage || "To send") === _revStage);
+  const cols = [["Vendor", "left"], ["Invoice #", "left"], ["Invoice date", "left"], ["Amount billed", "right"], ["Corrected amount", "right"], ["Reason", "left"],
+                ["Stage", "left"], ["Where it stands", "left"], ["Sent", "left"], ["Replied", "left"], ["Received", "left"], ["Entered", "left"], ["Notes", "left"]];
+  const htr = document.createElement("tr"); for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
+  if (!rows.length) { tbody.innerHTML = `<tr><td class="left" colspan="${cols.length}" style="padding:14px;color:var(--text-dim)">Nothing here.</td></tr>`; return; }
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page (the Statement view shows this bill on the page)"; a.onclick = (e) => { e.preventDefault(); openVendorStatement(r.vendor); }; td.appendChild(a); tr.appendChild(td); }
+    tr.appendChild(qboLinkCell(r.invoice || "–", r.key ? qboUrl("bill", r.key) : "", "Open this bill in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.invoice_date)));
+    { const td = document.createElement("td"); if (r.amount_billed != null) td.appendChild(moneyCellC(r.amount_billed)); else { td.textContent = "–"; td.classList.add("dim"); } tr.appendChild(td); }
+    { const td = document.createElement("td"); if (r.corrected_amount != null) td.appendChild(moneyCellC(r.corrected_amount)); else td.textContent = "–"; tr.appendChild(td); }
+    { const td = leftText(r.reason || "–"); td.title = r.reason || ""; td.className += " inv-memo"; tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; td.appendChild(revPill(r.stage || "To send")); tr.appendChild(td); }
+    { const td = leftText(r.standing.text || ""); if (!r.standing.final && (r.standing.days || 0) > 14) td.classList.add("rev-late"); tr.appendChild(td); }
+    for (const k of ["sent_on", "replied_on", "received_on", "entered_on"]) { const td = leftText(r[k] ? fmtDateShort(r[k]) : "–"); if (!r[k]) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(r.notes || "–"); td.title = r.notes || ""; if (!r.notes) td.classList.add("dim"); td.className += " inv-memo"; tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+}
+// the revised-bill standing for one bill, used by the vendor page's Statement legend (vendor + bill # folded the same way)
+function revFor(vendor, ref) {
+  if (!REV || !REV.ok) return null;
+  const vk = stmtKey(vendor), rk = stmtKey(ref);   // the record's vendor + the sheet's Invoice #
+  return (REV.rows || []).find(r => stmtKey(r.vendor) === vk && stmtKey(r.invoice) === rk) || null;
+}
+
+// ── The office server monitor (owner 2026-10-09, the day the Synology went live: "make sure we can monitor action") ──
+// /api/server = server-status.json + writer.json judged by ledger/server_status.py: ok · late · down · failing ·
+// standing down · off. Shown in the gear (every job: last run, result, took, last good, its output when it failed),
+// in the Data status pop-up, and on the top pill, which turns red when the server is down or a job failed.
+let SERVER = null;
+async function loadServer() {
+  try { SERVER = await (await fetch("/api/server")).json(); } catch { SERVER = null; }
+  renderServerBox(); renderSyncPill();
+}
+const SRV_WORD = { ok: "Running", late: "Late", down: "Down", failing: "Failing", "standing down": "Standing down", off: "Off" };
+function _srvCls(h) { return { ok: "ok", late: "late", down: "down", failing: "failing", "standing down": "standing" }[h] || "none"; }
+function renderServerBox() {
+  const box = $("#serverBox"); if (!box) return; box.innerHTML = "";
+  const s = SERVER;
+  if (!s || !s.present) { const p = document.createElement("div"); p.className = "srv-meta"; p.textContent = (s && s.reason) || "No word from the office server (is the Accounting share mounted?)"; box.appendChild(p); return; }
+  const head = document.createElement("div"); head.className = "srv-head";
+  const dot = document.createElement("span"); dot.className = "srv-dot " + _srvCls(s.health); head.appendChild(dot);
+  const w = document.createElement("span"); w.className = "srv-word"; w.textContent = SRV_WORD[s.health] || s.health; head.appendChild(w);
+  const why = document.createElement("span"); why.className = "srv-meta"; why.textContent = s.reason || ""; head.appendChild(why);
+  box.appendChild(head);
+  const meta = document.createElement("div"); meta.className = "srv-meta";
+  meta.textContent = [s.host ? `host ${s.host}` : "", s.mode ? `mode ${s.mode}` : "", `writer: ${s.writer || "none"}`, s.written ? `last word ${fmtDate(s.written, true)} (${timeAgo(s.written)})` : ""].filter(Boolean).join(" · ");
+  box.appendChild(meta);
+  const t = document.createElement("table"); t.className = "srv-table";
+  t.innerHTML = "<thead><tr><th>Job</th><th>Last run</th><th>Result</th><th>Took</th><th>Last good</th></tr></thead>"; const tb = document.createElement("tbody");
+  for (const j of s.jobs || []) {
+    const tr = document.createElement("tr");
+    const c1 = document.createElement("td"); c1.textContent = j.label || j.job; tr.appendChild(c1);
+    const c2 = document.createElement("td"); c2.textContent = j.last_run ? `${fmtDate(j.last_run, true)} (${timeAgo(j.last_run)})` : "never"; tr.appendChild(c2);
+    const c3 = document.createElement("td");
+    if (j.skipped && j.job === "apar") { c3.textContent = "skipped - " + String(j.skipped).split(" ", 1).concat([String(j.skipped).slice(String(j.skipped).indexOf(" ") + 1)])[1]; c3.className = "warn"; }
+    else if (j.ok === true) { c3.textContent = "ok"; c3.className = "good"; }
+    else if (j.ok === false) { c3.textContent = `FAILED exit ${j.exit}`; c3.className = "bad"; }
+    else c3.textContent = "–";
+    tr.appendChild(c3);
+    const c4 = document.createElement("td"); c4.textContent = j.seconds != null ? `${j.seconds}s` : "–"; tr.appendChild(c4);
+    const c5 = document.createElement("td"); c5.textContent = j.last_ok ? `${fmtDate(j.last_ok, true)} (${timeAgo(j.last_ok)})` : "never"; tr.appendChild(c5);
+    tb.appendChild(tr);
+    if (j.ok === false && (j.tail || []).length) { const tr2 = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 5;
+      const det = document.createElement("details"); const sm = document.createElement("summary"); sm.textContent = "What it said"; det.appendChild(sm);
+      const pre = document.createElement("div"); pre.className = "srv-tail"; pre.textContent = j.tail.join("\n"); det.appendChild(pre); td.appendChild(det); tr2.appendChild(td); tb.appendChild(tr2); }
+  }
+  t.appendChild(tb); box.appendChild(t);
+  const foot = document.createElement("div"); foot.className = "set-actions";
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "Check now"; b.onclick = () => { b.disabled = true; loadServer().finally(() => { b.disabled = false; }); }; foot.appendChild(b);
+  box.appendChild(foot);
+}
+
 // Vendor payments view: the QBO BillPayments (money out) this year, from the local bill_payment table.
 // + the bill payment STUB (owner 2026-09-22): "Print stub" per payment -> the PDF in the vendor's folder on the
 // Accounting share, one file per payment; a column picker (QBO's six on by default); and the print HISTORY -
 // every stub as printed, judged against QBO now (current / changed / voided / deleted), so a payment
 // QuickBooks no longer shows keeps its stubs. History + registry come from /api/bill-payment/stubs.
-const STUB_COLS_LS = "ledger.stubColumns";
-// a pick saved before the stub read Open balance - Paid = New balance (owner 2026-10-07) gets Open balance added once
-let _stubCols = (() => { try { const c = JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null;
-  if (c && !localStorage.getItem(STUB_COLS_LS + ".v2")) { if (c.includes("amount") && !c.includes("balance_before")) c.splice(c.indexOf("amount"), 0, "balance_before");
-    localStorage.setItem(STUB_COLS_LS, JSON.stringify(c)); localStorage.setItem(STUB_COLS_LS + ".v2", "1"); }
-  return c; } catch { return null; } })();
+const STUB_COLS_LS = "ledger.stubColumns.v3";   // v3 (2026-10-15): the external stub's default = Date · Reference · Bill total · Open balance · Paid · New balance - an older saved pick no longer applies
+let _stubCols = (() => { try { return JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null; } catch { return null; } })();
+let _stubInvoices = false;   // internal stub: the client invoices on top - off unless ticked in the print menu (owner 2026-10-15), never remembered
 let _stubHist = { vendor: null, prints: [], columns: [] };
 async function _loadStubHistory(vendor) {
   try { const j = await (await fetch("/api/bill-payment/stubs?vendor=" + encodeURIComponent(vendor))).json();
@@ -2692,52 +3124,59 @@ function openStubViewer(histId, title) {
 function _stubLink(h) {   // one printed stub: opens the PDF as it went out, in the ledger's viewer
   const a = document.createElement("a"); a.className = "stub-link";
   a.href = "/api/bill-payment/stub/file?id=" + encodeURIComponent(h.id);
-  a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openStubViewer(h.id, `${h.kind === "internal" ? "Internal stub" : "Stub"} printed ${fmtDate(h.printed_at, true)}`); };
+  a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openStubViewer(h.id, `${h.kind === "internal" ? "Internal stub" : "External stub"} printed ${fmtDate(h.printed_at, true)}`); };
   a.textContent = fmtDate(h.printed_at, true) + (h.kind === "internal" ? " · internal" : ""); a.title = h.file_path || "";
   if (h.file_exists === false) { a.classList.add("dim"); a.title = "PDF not on disk (Accounting share unmounted?) - " + (h.file_path || ""); }
   return a;
 }
-// kind = "vendor" (mailed with the check) or "internal" (owner 2026-10-07: "a vendor stub and a internal stub that shows
-// the inv it is tied to") - the internal one adds each bill's client invoice + paid state and files under <vendor>/Internal/.
+// kind = "vendor" (the EXTERNAL stub, mailed with the check on the envelope template: Date · Reference · Bill total · Open
+// balance · Paid · New balance) or "internal" (the office copy, the original header: Project · Memo · the same money; the
+// client invoices on top only when ticked) - owner 2026-10-15: "we need a internal and external stub". Internal files
+// under <vendor>/Internal/.
 async function _printStub(paymentId, btn, kind = "vendor") {
   const was = btn.textContent; btn.disabled = true; btn.textContent = "Printing…";
   try {
     const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payment_id: paymentId, columns: _stubCols || undefined, kind }) });
+      body: JSON.stringify({ payment_id: paymentId, columns: _stubCols || undefined, kind, invoices: kind === "internal" && _stubInvoices }) });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || "print failed");
-    toast((kind === "internal" ? "Internal stub printed - " : "Stub printed - ") + (j.file || "").split("/").pop());
-    openStubViewer(j.id, (kind === "internal" ? "Internal stub - " : "Bill payment stub - ") + (j.file || "").split("/").pop());   // in the ledger, not a new tab
+    toast((kind === "internal" ? "Internal stub printed - " : "External stub printed - ") + (j.file || "").split("/").pop());
+    openStubViewer(j.id, (kind === "internal" ? "Internal stub - " : "External stub - ") + (j.file || "").split("/").pop());   // in the ledger, not a new tab
     const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();   // never paint over a page the owner opened meanwhile
   } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
 }
 // Pick the columns AT PRINT TIME (owner 2026-09-25: "filter out the columns i don't want before making it a pdf ...
 // sometimes i don't want to show the memo"). Every Print button opens this checklist first; the choice sticks
-// (localStorage) and comes back ticked next time. Print runs the stub(s) with exactly the ticked columns.
+// (localStorage) and comes back ticked next time. The ticks shape the EXTERNAL stub (default: Date · Reference · Bill
+// total · Open balance · Paid · New balance); the internal stub always prints Project · Memo · the money, and its one
+// option here is the client invoices on top (owner 2026-10-15, off by default).
 function _stubPrintMenu(btn, what, onPrint) {
   document.querySelectorAll(".stub-print-menu").forEach(m => m.remove());
   const cols = _stubHist.columns; if (!cols.length) return onPrint("vendor");   // no registry (older server): print as before
   let pick = new Set(_stubCols || cols.filter(c => c.default).map(c => c.key));
   const menu = document.createElement("div"); menu.className = "msel-menu stub-print-menu"; menu.hidden = false;
-  const h = document.createElement("div"); h.className = "spm-h"; h.textContent = "Columns on the stub"; menu.appendChild(h);
+  const h = document.createElement("div"); h.className = "spm-h"; h.textContent = "Columns on the external stub"; menu.appendChild(h);
   const boxes = [];
   for (const c of cols) {
     const lab = document.createElement("label"); lab.className = "spm-opt"; const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = pick.has(c.key); cb.onchange = () => { if (cb.checked) pick.add(c.key); else pick.delete(c.key); go.disabled = goInt.disabled = !pick.size; };
+    cb.checked = pick.has(c.key); cb.onchange = () => { if (cb.checked) pick.add(c.key); else pick.delete(c.key); go.disabled = !pick.size; };
     boxes.push([c, cb]); lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label)); menu.appendChild(lab);
   }
+  const h2 = document.createElement("div"); h2.className = "spm-h"; h2.textContent = "Internal stub"; menu.appendChild(h2);
+  const labInv = document.createElement("label"); labInv.className = "spm-opt"; const cbInv = document.createElement("input"); cbInv.type = "checkbox";
+  cbInv.checked = _stubInvoices; labInv.appendChild(cbInv); labInv.appendChild(document.createTextNode(" Client invoices on top")); menu.appendChild(labInv);
   const foot = document.createElement("div"); foot.className = "spm-foot";
-  const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn tiny subtle"; reset.textContent = "QuickBooks default";
-  reset.onclick = () => { pick = new Set(cols.filter(c => c.default).map(c => c.key)); for (const [c, cb] of boxes) cb.checked = pick.has(c.key); go.disabled = goInt.disabled = false; };
+  const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn tiny subtle"; reset.textContent = "Default";
+  reset.onclick = () => { pick = new Set(cols.filter(c => c.default).map(c => c.key)); for (const [c, cb] of boxes) cb.checked = pick.has(c.key); cbInv.checked = false; go.disabled = false; };
   const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn tiny subtle"; cancel.textContent = "Cancel";
-  const go = document.createElement("button"); go.type = "button"; go.className = "btn tiny"; go.textContent = "Vendor stub"; go.title = what + " - the one mailed with the check";
+  const go = document.createElement("button"); go.type = "button"; go.className = "btn tiny"; go.textContent = "External stub"; go.title = what + " - mailed with the check, on the envelope template";
   const goInt = document.createElement("button"); goInt.type = "button"; goInt.className = "btn tiny"; goInt.textContent = "Internal stub";
-  goInt.title = what + " - adds the project, client and the client invoice each bill is paid from (not for the vendor)";
+  goInt.title = what + " - the office copy: Project · Memo · Bill total · Open balance · Paid · New balance";
   const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", esc, true); };
   const outside = (e) => { if (!menu.contains(e.target) && e.target !== btn) close(); };
   const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   cancel.onclick = close;
-  const run = (kind) => { _stubCols = cols.map(c => c.key).filter(k => pick.has(k)); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} close(); onPrint(kind); };
+  const run = (kind) => { _stubCols = cols.map(c => c.key).filter(k => pick.has(k)); _stubInvoices = cbInv.checked; try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} close(); onPrint(kind); };
   go.onclick = () => run("vendor"); goInt.onclick = () => run("internal");
   foot.appendChild(reset); foot.appendChild(cancel); foot.appendChild(go); foot.appendChild(goInt); menu.appendChild(foot);
   document.body.appendChild(menu); _placeMenu(btn, menu);
@@ -2752,7 +3191,7 @@ async function _printStubsSelected(btn, kind = "vendor") {
     btn.textContent = `Printing ${done + 1} of ${ids.length}…`;
     try {
       const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_id: pid, columns: _stubCols || undefined, kind, refresh: done + failed.length === 0 }) });   // QuickBooks pulled once, on the first
+        body: JSON.stringify({ payment_id: pid, columns: _stubCols || undefined, kind, invoices: kind === "internal" && _stubInvoices, refresh: done + failed.length === 0 }) });   // QuickBooks pulled once, on the first
       const j = await res.json(); if (!j.ok) throw new Error(j.error || "print failed");
       done++;
     } catch (e) { failed.push(pid + ": " + e.message); }
@@ -2785,7 +3224,7 @@ const _vpRefresh = (() => {
   };
   const attach = (host, parent) => {   // host = where the button goes, parent = where the progress bar goes
     btn.title = _vendorView === "payments"
-      ? "Pull the bill payments from QuickBooks now (the mirror + this year's payments) - no sync-all"
+      ? "Pull the bill payments from QuickBooks now (the mirror + this year's payments + the bank match for the Cleared column) - no sync-all"
       : "Pull the bills from QuickBooks now (the mirror, Bill Tracker.xlsx, the ledger, open AP; ~20 s) - no sync-all. Close Bill Tracker.xlsx in Excel first.";
     host.appendChild(btn); parent.appendChild(prog);
   };
@@ -2803,7 +3242,8 @@ async function _renderVendorPayments(d, body, seq) {
   const bar = document.createElement("div"); bar.className = "stub-bar";
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
-  selLabel(); selBtn.onclick = () => _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind));
+  selLabel(); selBtn.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind)); };   // stop the click: the page's menu closer would hide it at once
+  { const rc = document.createElement("button"); rc.type = "button"; rc.className = "btn small"; rc.textContent = "Reset column order"; rc.title = "Put the columns back in their standard order"; rc.hidden = !colOrderSaved("vendorPays"); rc.onclick = () => { colOrderReset("vendorPays"); renderVendorPage(); }; bar.appendChild(rc); }
   { const right = document.createElement("span"); right.className = "stub-bar-right"; _vpRefresh.attach(right, body); right.appendChild(selBtn); bar.appendChild(right); }
   body.insertBefore(bar, _vpRefresh.prog);
   if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
@@ -2816,8 +3256,11 @@ async function _renderVendorPayments(d, body, seq) {
     const printable = pays.filter(p => !p.voided).map(p => String(p.qbo_txn_id));
     all.checked = printable.length > 0 && printable.every(id => _stubSel.has(id));
     all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else printable.forEach(id => _stubSel.delete(id)); renderVendorPage(); };
-    th.appendChild(all); htr.appendChild(th); }
-  for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Client invoice", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    th.appendChild(all); htr._ck = th; }
+  const pulled = (d.payments || []).map(p => p.cleared_as_of).filter(Boolean).sort().pop();
+  for (const [c, al] of VP_PAY_COLS) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c;
+    if (c === "Cleared") th.title = "QuickBooks' bank-feed match: Cleared = matched at the bank; Outstanding = still out there" + (pulled ? ` (as of ${fmtDateShort(pulled)})` : " - Refresh from QuickBooks to pull it");
+    htr.appendChild(th); }
   thead.appendChild(htr);
   for (const p of pays) {
     const pid = String(p.qbo_txn_id);
@@ -2825,7 +3268,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const td = document.createElement("td"); td.className = "left vp-ck"; const cb = document.createElement("input"); cb.type = "checkbox";
       cb.checked = _stubSel.has(pid); cb.disabled = !!p.voided; cb.title = p.voided ? "Voided - nothing to print" : "Select for a multi-print";
       cb.onchange = () => { if (cb.checked) _stubSel.add(pid); else _stubSel.delete(pid); selLabel(); const all = thead.querySelector("input"); if (all) all.checked = pays.filter(x => !x.voided).every(x => _stubSel.has(String(x.qbo_txn_id))); };
-      td.appendChild(cb); tr.appendChild(td); }
+      td.appendChild(cb); tr._ck = td; }
     { const rc = document.createElement("td"); rc.className = "left"; const key = document.createElement("span"); key.className = "bg-key"; key.textContent = p.ref_no || "–"; rc.appendChild(key);   // the caret lands inside .bg-key
       if (p.voided) { const v = document.createElement("span"); v.className = "stub-pill voided vp-voidpill"; v.textContent = "VOIDED"; v.title = p.memo || "Voided in QuickBooks"; rc.appendChild(v); }
       if (p.att) { const ab = attBtn("BillPayment", p.qbo_txn_id, p.att, `payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); }
@@ -2836,6 +3279,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
     tr.appendChild(_vpInvTally(p.bills || [], p.txn_date));
     { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCellC(p.total_amt)); tr.appendChild(amt); }
+    tr.appendChild(_vpClearedCell(p));
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
         b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
@@ -2847,10 +3291,9 @@ async function _renderVendorPayments(d, body, seq) {
     tbody.appendChild(tr);
     // the expansion: one row per bill this payment paid (bill # -> QuickBooks, its project, its client, the amount applied)
     const bl = p.bills || [];
-    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = 8; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
+    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = VP_PAY_COLS.length + 1; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
     for (const b of bl) {
       const br = document.createElement("tr"); br.className = "vp-bill";
-      br.appendChild(document.createElement("td"));
       { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a);
         { const items = bl.map(y => ({ type: "Bill", id: String(y.bill_id), n: y.att || 0, title: `${d.vendor} · bill ${y.bill_ref || y.bill_id}` }));   // ← → flips through this payment's bills
           const ab = attBtn("Bill", b.bill_id, b.att || 0, `${d.vendor} · bill ${b.bill_ref || ""}`, { items, index: bl.indexOf(b) }); ab.style.marginLeft = "6px"; td.appendChild(ab); }
@@ -2861,11 +3304,47 @@ async function _renderVendorPayments(d, body, seq) {
       br.appendChild(_vpInvCell(b, p.txn_date));
       { const td = document.createElement("td"); td.appendChild(moneyCellC(b.amount)); br.appendChild(td); }
       br.appendChild(document.createElement("td"));
+      br.appendChild(document.createElement("td"));
       tbody.appendChild(br);
     }
   }
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+  table.appendChild(thead); table.appendChild(tbody);
+  // drag a header to move the column, remembered on this Mac (owner 2026-10-15: "reorder the payments screen ... by
+  // dragging"); the tick column is put in FRONT afterwards, so it never moves and is never a drop target
+  colOrderable(table, "vendorPays", VP_PAY_COLS.map(c => c[0]), renderVendorPage, VP_PAY_ORDER);
+  htr.insertBefore(htr._ck, htr.firstChild);
+  for (const tr of tbody.rows) { if (tr.cells.length === 1 && tr.cells[0].colSpan > 1) continue;
+    const td = tr._ck || document.createElement("td"); if (!tr._ck) td.className = "vp-ck"; tr.insertBefore(td, tr.firstChild); }
+  scroll.appendChild(table); body.appendChild(scroll);
   _renderStubOrphans(body, d.payments || [], byPay);   // "no longer in the list" = not in the vendor's payments at all, never "filtered out"
+}
+// The payments table's columns (header, alignment) and the standard order Reset goes back to.
+const VP_PAY_COLS = [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Client invoice", "left"], ["Amount", "right"], ["Cleared", "left"], ["Stub", "left"]];
+const VP_PAY_ORDER = VP_PAY_COLS.map(c => c[0]);
+// Cashed or still out there (owner 2026-10-15: "need to see when it's been cashed, using bank transaction match i need to
+// know if it's cleared or still out there"). From QuickBooks' bank-feed match (the uncleared list): Cleared = matched at the
+// bank (QuickBooks never says the bank date; "by <date>" is the refresh that first found it cleared); Outstanding = still
+// on the uncleared list, with its days out - red once it is older than the newest transaction matched on that account
+// (not cashed, or cashed and never matched); a joint check sits on an account QuickBooks never matches; a card payment has
+// nothing to clear; a check entered after the last pull waits for the next Refresh.
+function _vpClearedCell(p) {
+  const td = document.createElement("td"); td.className = "left vp-clr";
+  const pill = (cls, text, tip) => { const s = document.createElement("span"); s.className = "stub-pill " + cls; s.textContent = text; s.title = tip; td.appendChild(s); };
+  const asOf = p.cleared_as_of ? ` (as of ${fmtDateShort(p.cleared_as_of)})` : "";
+  if (!p.cleared) { td.classList.add("dim"); td.textContent = p.voided ? "" : "–"; return td; }
+  if (p.cleared === "card") { td.classList.add("dim"); td.textContent = "Card"; td.title = "A card payment - nothing to clear at the bank"; return td; }
+  if (p.cleared === "unknown") { td.classList.add("dim"); td.textContent = "not pulled yet"; td.title = "Newer than the last bank-match pull - Refresh from QuickBooks"; return td; }
+  if (p.cleared === "joint") { pill("vp-clr-joint", "Joint check", `${p.bank_account || "The Joint Checks account"} is never matched to a bank feed in QuickBooks, so it can't say whether this one was cashed`); return td; }
+  if (p.cleared === "outstanding") {
+    const days = p.days_out == null ? "" : ` · ${p.days_out} day${p.days_out === 1 ? "" : "s"}`;
+    if (p.past_match) pill("vp-clr-late", "Not matched" + days, `Older than the newest transaction QuickBooks matched on ${p.bank_account || "this account"}: not cashed, or cashed and never matched${asOf}`);
+    else pill("vp-clr-out", "Outstanding" + days, `Still on QuickBooks' uncleared list - not matched at the bank yet${asOf}`);
+    return td;
+  }
+  pill("vp-clr-ok", "Cleared" + (p.cleared_seen ? ` by ${fmtDateShort(p.cleared_seen)}` : ""),
+    p.cleared_seen ? `Matched at the bank between ${p.cleared_after ? fmtDateShort(p.cleared_after) : "the pull before"} and ${fmtDateShort(p.cleared_seen)} (QuickBooks never gives the bank date - this is when the ledger first found it cleared)`
+      : `Matched at the bank in QuickBooks${asOf}`);
+  return td;
 }
 // The client invoice a bill is billed through and whether the client paid it (owner 2026-09-23: "also show the
 // invoice paid status"). Live from QuickBooks' invoice when the ledger has it, else the Bill Tracker's paid date.
@@ -3024,7 +3503,12 @@ function payDirtyCount() {
 // the search box survives). The caller owns a `store` ({id -> Set}) and passes an onChange
 // render callback. cfg: { id, all, get, lbl, search }. DOM: `${id}Btn` pill + `${id}Menu` panel.
 // (Pay Bills uses this; the older Bills/Liens builders predate it and stay as they are.)
-function _mselVals(items, cfg) { return [...new Set(items.map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+// A bill is ONE row since 10/12/2026 ("one row per bill"); a bill spanning jobs carries `projects` / `clients` /
+// `divisions` lists, so a filter config may give `vals: b => [...]` - the option list is every value, and a row
+// passes when ANY of its values is ticked. `get` alone = the single value, as before.
+function mselValsOf(cfg, b) { if (cfg.vals) { const v = cfg.vals(b); return v && v.length ? v : [cfg.get(b)]; } return [cfg.get(b)]; }
+function mselHit(cfg, s, b) { return mselValsOf(cfg, b).some(v => s.has(v)); }
+function _mselVals(items, cfg) { return [...new Set(items.flatMap(b => mselValsOf(cfg, b)))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
 function mselLabelUpdate(cfg, store) {
   const btn = $("#" + cfg.id + "Btn"), menu = $("#" + cfg.id + "Menu"); if (!btn) return;
   const s = store[cfg.id] || new Set();
@@ -3068,7 +3552,7 @@ function buildMSel(cfg, items, store, onChange) {
   mselLabelUpdate(cfg, store);
 }
 function mselPasses(item, cfgs, store) {
-  for (const cfg of cfgs) { const s = store[cfg.id]; if (s && s.size && !s.has(cfg.get(item))) return false; }
+  for (const cfg of cfgs) { const s = store[cfg.id]; if (s && s.size && !mselHit(cfg, s, item)) return false; }
   return true;
 }
 
@@ -3077,22 +3561,34 @@ function mselPasses(item, cfgs, store) {
 const payMSel = {};
 let _payMSelSig = null;
 const PAY_MSEL = [
-  { id: "pfClient", all: "All clients",   get: b => b.client || "",      search: true, lbl: v => v || "(no client)" },
+  { id: "pfClient", all: "All clients",   get: b => b.client || "",      vals: b => b.clients,   search: true, lbl: v => v || "(no client)" },
   { id: "pfVendor", all: "All vendors",   get: b => b.vendor || "",      search: true, lbl: v => v || "(none)" },
-  { id: "pfProj",   all: "All projects",  get: b => b.project_no || "",  search: true, lbl: v => v || "(no project #)" },
-  { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     lbl: v => v || "(none)" },
+  { id: "pfProj",   all: "All projects",  get: b => b.project_no || "",  vals: b => b.projects,  search: true, lbl: v => v || "(no project #)" },
+  { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     vals: b => b.divisions, lbl: v => v || "(none)" },
   { id: "pfAppr",   all: "Any approval",  get: b => b.approved || "",     lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "pfLien",   all: "Any lien",      get: b => b.lien_status || "",  lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
-function buildPayFilters() { for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills); }
+// The Date filter is the Bill Tracker's (Month | Date from-to, every month ticked by default) on the bill date,
+// so a check run can be one month's bills (owner 2026-10-12: "filter by months when paying bills"); "Select all shown"
+// then ticks only that month. Its month list is ONLY the months of the bills on the screen - the other filters applied,
+// the date filter itself not (owner 2026-10-12: "only show me the months min and max that is being shown"), so a paid
+// bill's month or a month no open bill sits in never appears; the list follows every other filter on each render.
+let payRunDate = null;
+function _payMonthsShown() { return _payMarkable().filter(b => _payFilterPass(b, true)).map(b => b.bill_date); }
+function buildPayFilters() {
+  for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills);
+  if (!payRunDate) payRunDate = dateFilter("pfDate", _payMonthsShown, renderPayBills);
+  payRunDate.build();
+}
 
 const payFunded = b => (b.inv_ar_status === "Paid") || (b.invoice_status === "Invoice paid");
-function _payFilterPass(b) {
+function _payFilterPass(b, skipDate) {   // skipDate: every filter but the Date one (what months are on the screen)
   const st = payState(b);
   const show = $("#pfShow") ? $("#pfShow").value : "open";
   if (show === "run") { if (!st.selected) return false; }
   else if (num(b.open_balance) <= 0 && !st.selected) return false;   // "Open bills" (default): still owed
   if (!refHit($("#pfSearch") ? $("#pfSearch").value : "", [b.bill_ref])) return false;   // ref # only; project is its own filter
+  if (!skipDate && payRunDate && !payRunDate.passes(b.bill_date)) return false;                 // Month | Date (from / to) on the bill date
   if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
   if (!mselPasses(b, PAY_MSEL, payMSel)) return false;              // Client / Vendor / Division / Approved / Lien
   return true;
@@ -3137,7 +3633,8 @@ function renderPayBills() {
   if (paySig !== _payMSelSig || !($("#pfClientMenu") && $("#pfClientMenu").querySelector(".msel-opt"))) {
     _payMSelSig = paySig; buildPayFilters();
   }
-  let rows = _payMarkable().filter(_payFilterPass);
+  else if (payRunDate) payRunDate.build();   // the month list follows the other filters (only the months on the screen)
+  let rows = _payMarkable().filter(b => _payFilterPass(b));
   rows.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
   // the amounts sit right after the bill (owner 2026-09-29: short pay "doesn't allow" - Pay $ was past the right edge)
   const cols = ["Pay", "Vendor", "Bill #", "Date", "Open bal", "Pay $", "Project #", "Client", "GC draw", "Invoice #", "Lien"];
@@ -3145,6 +3642,14 @@ function renderPayBills() {
   const htr = document.createElement("tr");
   cols.forEach((c, i) => { const th = document.createElement("th");
     if (![0, 4, 5].includes(i)) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  // Select all at the top of the Pay column (owner 2026-10-12: "need a select all as well"): one tick puts every
+  // payable bill on the screen on the run, a second tick takes them all off; half-ticked when only some are on.
+  { const payable = rows.filter(b => num(b.open_balance) > 0);
+    const all = document.createElement("input"); all.type = "checkbox"; all.className = "pay-all"; all.title = "Tick every bill shown - tick again to clear them";
+    all.checked = payable.length > 0 && payable.every(b => payState(b).selected);
+    all.indeterminate = !all.checked && payable.some(b => payState(b).selected);
+    all.onchange = () => { if (all.checked) paySelectAllShown(); else payDeselectAllShown(); };
+    htr.firstChild.textContent = ""; htr.firstChild.style.textAlign = "center"; htr.firstChild.appendChild(all); }
   thead.appendChild(htr);
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
@@ -3163,6 +3668,7 @@ function renderPayBills() {
     const cV = document.createElement("td"); cV.className = "left"; const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; cV.appendChild(vs); tr.appendChild(cV);
     const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)";
     const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–";
+    if (b.project_no === "(multiple)" && b.projects && b.projects.length) { cP.textContent = `${b.projects[0]} +${b.projects.length - 1}`; cP.title = "One bill across " + b.projects.join(", "); }
     tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
     const cD = document.createElement("td"); cD.className = "left"; cD.textContent = fmtDateShort(b.bill_date); tr.appendChild(cD);
     // Open balance
@@ -3201,9 +3707,12 @@ function renderPaySaveBar() {
   const n = payDirtyCount();
   const bar = $("#paySaveBar"); if (bar) bar.classList.toggle("dirty", n > 0);
   const txt = $("#paySaveText");
+  // bills on the run the filters hide are said so (owner 2026-10-13: the run read 10 bills over a 7-bill screen)
+  const hid = sel.filter(b => !_payFilterPass(b)).length;
+  const off = hid ? ` · ${hid} not shown by the filters` : "";
   if (txt) txt.textContent = n
-    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${moneyC(total)}`
-    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(total)}` : "No bills in the pay run");
+    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${moneyC(total)}${off}`
+    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(total)}${off}` : "No bills in the pay run");
   { const s = $("#btnSavePayRun"); if (s) s.disabled = n === 0; }
   { const d = $("#btnDiscardPayRun"); if (d) d.hidden = n === 0; }
   { const qs = $("#payQuickStat"); if (qs) qs.textContent = sel.length ? `${sel.length} selected · ${moneyC(total)} to pay` : ""; }
@@ -3232,6 +3741,7 @@ function renderPayList() {
     const gtd = document.createElement("td"); gtd.colSpan = cols.length;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v;
+    key.appendChild(stmtBubble(v, true));   // reconciled as of - before the check goes out (owner 2026-10-09)
     cell.appendChild(key);
     bandMetrics(cell, [[list.length, "bills"], [moneyC(sub), "total"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
@@ -3281,8 +3791,13 @@ async function clearPayRun() {
   } catch (e) { toast("Clear failed: " + e.message); }
 }
 function paySelectAllShown() {
-  const rows = _payMarkable().filter(_payFilterPass).filter(b => num(b.open_balance) > 0);
+  const rows = _payMarkable().filter(b => _payFilterPass(b)).filter(b => num(b.open_balance) > 0);
   for (const b of rows) { const cur = payState(b); if (!cur.selected) payDraft.set(b.bill_id, { selected: true, amount: cur.amount }); }
+  renderPayBills();
+}
+function payDeselectAllShown() {   // the header tick's second click: every bill on the screen off the run (unsaved - Save to keep)
+  const rows = _payMarkable().filter(b => _payFilterPass(b));
+  for (const b of rows) if (payState(b).selected) payDraft.set(b.bill_id, { selected: false, amount: null });
   renderPayBills();
 }
 function exportPayList() {
@@ -3300,37 +3815,71 @@ function exportPayList() {
 }
 // ── Pay in QuickBooks (owner 2026-09-28): the SAVED pay run -> one QBO bill payment per vendor (ledger/pay_bills.py).
 // Step 1 reads the run live from QuickBooks (/api/pay-bills/plan, no write): per vendor the bills, the amounts, the
-// vendor's open credits (applied only when ticked) and what was skipped. The owner picks the account, the date and
+// vendor's open credits (applied only when ticked) and what was skipped. A vendor's band carries the CHECK AMOUNT
+// (owner 2026-10-13: "create a bill payment to a certain amount and ... show the credit it made"): it defaults to the
+// bills less the ticked credits; typed higher, the excess is QuickBooks' "Amount to Credit" - a credit held with the
+// vendor, named on the band, in Are you sure?, in the result and under the bills on the stub. From the vendor page a
+// ticked bill already paid (a joint check on a bill we paid) keeps its vendor on the review with no bills: the amount
+// typed is the whole payment and all of it becomes the credit. The owner picks the account, the date and
 // how it goes out: check to print later ("To print"), check already written (its #), ACH / wire (the reference as
 // typed, 21 characters at most - QuickBooks' own limit), or card when a card account is picked. Step 2 writes only
 // after "Are you sure?", and the server re-checks every bill live before each payment. Each payment files its stub in
 // the vendor's folder; a "To print" check files it when its number is saved under Checks to print.
 let PQ = null;
 const PQ_METHODS = [["check", "Check"], ["ach", "ACH / wire"]];   // a check asks "print later?" (on by default = "print")
-async function openPayQbo() {
-  if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
-  if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
-  const w = $("#payQboWidget"), body = $("#payQboBody"); w.hidden = false; body.innerHTML = "";
-  const wait = document.createElement("div"); wait.className = "cd-ra-line"; wait.textContent = "Reading the pay run live from QuickBooks…"; body.appendChild(wait);
+// Also from the vendor page (owner 2026-10-13: "let me pay bills in the vendor center when opening up their unpaid
+// bills. it's the same thing as pay bills"): opts = { bills: [bill ids ticked], vendor } - the SAME review and the
+// same write, scoped to those bills (?bills= on the plan; the server remembers them in the review token), the saved
+// pay run untouched; the widget is built on the vendor page itself and survives its re-renders.
+async function openPayQbo(opts) {
+  const o = opts && Array.isArray(opts.bills) ? opts : null;
+  if (!o) {
+    if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
+    if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
+  } else if (!o.bills.length) { toast("Tick the unpaid bills to pay first"); return; }
+  closePayQbo();
+  let w, body, note;
+  if (o) {
+    w = document.createElement("section"); w.className = "widget pq-vendor"; w.id = "payQboVendor";
+    w.innerHTML = '<div class="widget-head"><h2>Pay in QuickBooks <span class="count"></span></h2><button type="button" class="btn small">Close</button></div><div class="pq-body"></div>';
+    w.querySelector("button").onclick = closePayQbo; body = w.querySelector(".pq-body"); note = w.querySelector(".count");
+    const host = $("#recordBody"); host.insertBefore(w, host.firstChild);
+  } else { w = $("#payQboWidget"); body = $("#payQboBody"); note = $("#payQboNote"); }
+  w.hidden = false; body.innerHTML = "";
+  PQ = { d: null, body, note, widget: w, vendor: o ? o.vendor : null };
+  const wait = document.createElement("div"); wait.className = "cd-ra-line"; wait.textContent = o ? `Reading ${o.bills.length} bill${o.bills.length !== 1 ? "s" : ""} live from QuickBooks…` : "Reading the pay run live from QuickBooks…"; body.appendChild(wait);
   w.scrollIntoView({ behavior: "smooth", block: "start" });
-  let d; try { d = await (await fetch("/api/pay-bills/plan")).json(); } catch (e) { d = { ok: false, error: String(e) }; }
+  let d; try { d = await (await fetch("/api/pay-bills/plan" + (o ? "?bills=" + encodeURIComponent(o.bills.join(",")) : ""))).json(); } catch (e) { d = { ok: false, error: String(e) }; }
+  if (!PQ || PQ.widget !== w) return;   // closed or replaced while QuickBooks answered
   if (!d.ok) { wait.className = "cd-ra-line neg"; wait.textContent = "Could not read QuickBooks: " + (d.error || "failed"); return; }
   const acct = (d.accounts || []).find(a => a.type === "bank") || (d.accounts || [])[0];
-  PQ = { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map() };
+  Object.assign(PQ, { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map(), amounts: new Map() });
   renderPayQbo();
 }
 function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
-function _pqNet(v) {
+function _pqNotApproved() { return PQ ? PQ.d.vendors.flatMap(v => v.bills.filter(b => b.not_approved).map(b => ({ ...b, vendor: v.vendor }))) : []; }
+// "VENDOR · 1, 2; OTHER VENDOR · 3" - the vendor once, its bill #s after it (owner 2026-10-12: "if same vendor why are you keeping the name?")
+function _pqByVendor(rows) { const by = new Map(); for (const x of rows) (by.get(x.vendor) || by.set(x.vendor, []).get(x.vendor)).push(x.doc || x.bill_id);
+  return [...by].map(([v, docs]) => `${v} · ${docs.join(", ")}`).join("; "); }
+function _pqNet(v) {   // the bills less the ticked credits = the least the check can be
   const ids = PQ.credits.get(v.vendor_id) || new Set();
   return Math.round((v.total - (v.credits || []).filter(c => ids.has(c.id)).reduce((t, c) => t + c.balance, 0)) * 100) / 100;
 }
+function _pqTyped(v) { const t = (PQ.amounts.get(v.vendor_id) || "").trim(); if (t === "") return null; const n = Number(t.replace(/[$,\s]/g, "")); return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN; }
+function _pqAmount(v) { const t = _pqTyped(v); return t == null || Number.isNaN(t) ? _pqNet(v) : t; }   // the check amount: typed, else the bills
+function _pqCredit(v) { return Math.max(0, Math.round((_pqAmount(v) - _pqNet(v)) * 100) / 100); }      // QuickBooks' "Amount to Credit"
+function _pqCreditOnly(v) { return !v.bills.length && (v.paid_bills || []).length > 0; }
 function _pqProblems() {
   const out = [];
   for (const v of PQ.d.vendors) {
     const ref = (PQ.refs.get(v.vendor_id) || "").trim();
     if ((PQ.method === "check" || PQ.method === "ach") && !ref) out.push(`${v.vendor}: needs its ${PQ.method === "ach" ? "ACH reference" : "check #"}`);
     if (ref.length > PQ.d.ref_max) out.push(`${v.vendor}: reference is ${ref.length} characters (${PQ.d.ref_max} max)`);
-    if (_pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
+    if (v.bills.length && _pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
+    const typed = _pqTyped(v);
+    if (Number.isNaN(typed)) out.push(`${v.vendor}: the amount is not a number`);
+    else if (typed != null && typed < _pqNet(v) - 0.005) out.push(`${v.vendor}: the amount typed is less than the bills on it (${qaCents(_pqNet(v))}) - take a bill off or pay it in part on the run`);
+    else if (_pqCreditOnly(v) && _pqAmount(v) <= 0.005) out.push(`${v.vendor}: type the check amount - the bills ticked are already paid, so all of it becomes a credit`);
   }
   if (!PQ.d.can_pay) out.push(PQ.d.why_not || "payments are locked on this Mac");
   if (!PQ.acct) out.push("Pick the account to pay from");
@@ -3340,8 +3889,8 @@ function _pqProblems() {
   return out;
 }
 function renderPayQbo() {
-  const body = $("#payQboBody"); body.innerHTML = ""; const d = PQ.d;
-  const note = $("#payQboNote"); if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
+  const body = PQ.body; body.innerHTML = ""; const d = PQ.d;
+  const note = PQ.note; if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
   const line = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; body.appendChild(x); return x; };
   line("Review, live from QuickBooks - nothing is written until you confirm here AND with Touch ID on this Mac. One bill payment per vendor, like QuickBooks' Pay Bills.");
   if (!d.can_pay) line(`Payments are locked: ${d.why_not}. The review still works; paying needs the authorized Mac.`, "neg");
@@ -3372,7 +3921,14 @@ function renderPayQbo() {
   const flagged = d.vendors.reduce((t, v) => t + v.bills.filter(b => b.check_approval).length, 0);
   if (flagged) line(`${flagged} bill${flagged !== 1 ? "s were" : " was"} entered since 09/16 - QuickBooks does not tell us whether ${flagged !== 1 ? "they are" : "it is"} approved. Check the approval in QuickBooks first.`, "warn");
   for (const s of d.skipped || []) line(`Left out: ${s.vendor ? s.vendor + " · " : ""}bill ${s.doc || s.bill_id} - ${s.why}`, "warn");
-  if (!d.vendors.length) { line("Nothing left to pay in the saved run.", "neg"); return; }
+  // NOT APPROVED bills stay on the run (owner 2026-10-12: "warn me but not remove it ... make it easy to see"): one
+  // loud box naming them, and their rows painted yellow below
+  const na = _pqNotApproved();
+  if (na.length) { const box = document.createElement("div"); box.className = "pq-na-box";
+    const h = document.createElement("b"); h.textContent = `Paying ${na.length} Not Approved bill${na.length !== 1 ? "s" : ""}: `; box.appendChild(h);
+    box.appendChild(document.createTextNode(_pqByVendor(na) + " - the memo in QuickBooks says NOT APPROVED. The yellow rows below are these."));
+    body.appendChild(box); }
+  if (!d.vendors.length) { line(PQ.vendor ? "Nothing left to pay in the ticked bills - QuickBooks already shows them paid; refresh from QuickBooks to catch this page up." : "Nothing left to pay in the saved run.", "neg"); return; }
   // one band per vendor: the reference, the bills, the credits (unticked)
   const t = document.createElement("table"); t.className = "grid pay-list-grid pq-grid";
   t.innerHTML = `<thead><tr><th class="left"></th><th class="left">Bill #</th><th class="left">Date</th><th class="left">Memo</th><th class="left"></th><th class="right">Pays</th></tr></thead>`;
@@ -3380,8 +3936,9 @@ function renderPayQbo() {
   for (const v of d.vendors) {
     const gtr = document.createElement("tr"); gtr.className = "bill-group pq-band"; const gtd = document.createElement("td"); gtd.colSpan = 6;
     const cell = document.createElement("div"); cell.className = "bg-cell";
-    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; cell.appendChild(key);
-    bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqNet(v)), "payment"]]);
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; key.appendChild(stmtBubble(v.vendor, true)); cell.appendChild(key);   // the statement standing beside the vendor being paid (owner 2026-10-09)
+    const credit = _pqCredit(v);
+    bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqAmount(v)), "payment"], ...(credit > 0.005 ? [[qaCents(credit), "credit it creates"]] : [])]);
     const rf = document.createElement("span"); rf.className = "pq-ref";
     if (PQ.method === "print") { rf.textContent = "check # when printed"; rf.classList.add("dim"); }
     else {
@@ -3393,13 +3950,32 @@ function renderPayQbo() {
       inp.oninput = () => { PQ.refs.set(v.vendor_id, inp.value); upd(); _pqFoot(); }; upd();
       rf.appendChild(inp); rf.appendChild(cnt);
     }
-    cell.appendChild(rf); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
-    for (const b of v.bills) {
-      const tr = document.createElement("tr"); tr.className = "pay-row";
+    cell.appendChild(rf);
+    // the check amount: the bills less the ticked credits unless typed higher - the excess is a credit with the vendor
+    const am = document.createElement("span"); am.className = "pq-ref pq-amt";
+    const al = document.createElement("span"); al.className = "pq-amt-l"; al.textContent = "Amount"; am.appendChild(al);
+    const ai = document.createElement("input"); ai.type = "text"; ai.inputMode = "decimal"; ai.spellcheck = false;
+    ai.placeholder = qaCents(_pqNet(v)); ai.value = PQ.amounts.get(v.vendor_id) || ""; ai.title = "The check amount. More than the bills = a credit QuickBooks holds with this vendor";
+    ai.oninput = () => { PQ.amounts.set(v.vendor_id, ai.value); _pqBandCredit(v, cn); _pqFoot(); };
+    ai.onchange = () => renderPayQbo();   // the band's payment / credit figures catch up
+    am.appendChild(ai);
+    const cn = document.createElement("span"); cn.className = "pq-credit-note"; am.appendChild(cn); _pqBandCredit(v, cn);
+    cell.appendChild(am); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    for (const b of v.paid_bills || []) {   // ticked on the vendor page but already paid: the payment on them is all credit
+      const tr = document.createElement("tr"); tr.className = "pay-row pq-paid"; tr.title = "Already paid in QuickBooks - nothing applies to it; the amount typed becomes a credit with the vendor";
       tr.appendChild(leftText(""));
       tr.appendChild(qboLinkCell(b.doc || b.bill_id, qboUrl("bill", b.bill_id), "Open this bill in QuickBooks"));
       tr.appendChild(leftText(fmtDateShort(b.date))); tr.appendChild(leftText(b.memo || ""));
-      tr.appendChild(leftText([b.partial ? `part of ${qaCents(b.balance)}` : "", b.check_approval ? "check approval in QuickBooks" : ""].filter(Boolean).join(" · ")));
+      tr.appendChild(leftText(`already paid in QuickBooks (${qaCents(b.total)}) - this payment becomes a credit`));
+      const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(0); tr.appendChild(c); tb.appendChild(tr);
+    }
+    for (const b of v.bills) {
+      const tr = document.createElement("tr"); tr.className = "pay-row" + (b.not_approved ? " pq-na" : "");   // yellow = NOT APPROVED in QuickBooks
+      if (b.not_approved) tr.title = "This bill's memo says NOT APPROVED in QuickBooks - you are paying it anyway";
+      tr.appendChild(leftText(""));
+      tr.appendChild(qboLinkCell(b.doc || b.bill_id, qboUrl("bill", b.bill_id), "Open this bill in QuickBooks"));
+      tr.appendChild(leftText(fmtDateShort(b.date))); tr.appendChild(leftText(b.memo || ""));
+      tr.appendChild(leftText([b.not_approved ? "NOT APPROVED" : "", b.partial ? `part of ${qaCents(b.balance)}` : "", b.check_approval ? "check approval in QuickBooks" : ""].filter(Boolean).join(" · ")));
       const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(b.amount); tr.appendChild(c); tb.appendChild(tr);
     }
     for (const cr of v.credits || []) {
@@ -3418,9 +3994,15 @@ function renderPayQbo() {
   const act = document.createElement("div"); act.className = "qa-repair-act pq-act"; act.id = "pqAct"; body.appendChild(act);
   _pqFoot();
 }
+function _pqBandCredit(v, el) {   // beside the amount box: what the typed amount does
+  const typed = _pqTyped(v), credit = _pqCredit(v);
+  el.classList.toggle("neg", Number.isNaN(typed) || (typed != null && typed < _pqNet(v) - 0.005));
+  el.textContent = Number.isNaN(typed) ? "not a number" : typed != null && typed < _pqNet(v) - 0.005 ? `less than the bills (${qaCents(_pqNet(v))})`
+    : credit > 0.005 ? `creates a credit of ${qaCents(credit)} with ${v.vendor}` : _pqCreditOnly(v) ? "type the check amount - all of it becomes a credit" : "";
+}
 function _pqFoot() {
-  const act = $("#pqAct"); if (!act || !PQ) return; act.innerHTML = "";
-  const total = PQ.d.vendors.reduce((t, v) => t + _pqNet(v), 0), probs = _pqProblems();
+  const act = PQ && PQ.body.querySelector("#pqAct"); if (!act) return; act.innerHTML = "";
+  const total = PQ.d.vendors.reduce((t, v) => t + _pqAmount(v), 0), probs = _pqProblems();
   const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small primary";
   btn.textContent = `Pay ${PQ.d.vendors.length} vendor${PQ.d.vendors.length !== 1 ? "s" : ""} · ${qaCents(total)} in QuickBooks…`;
   btn.disabled = probs.length > 0; btn.onclick = () => payQboWrite(btn);
@@ -3429,18 +4011,24 @@ function _pqFoot() {
 }
 async function payQboWrite(btn) {
   const d = PQ.d, a = _pqAcct() || {}, how = { print: "Check · print later in QuickBooks", check: "Check · already written", ach: "ACH / wire", card: "Credit card" }[PQ.method];
-  const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqNet(v))}`
+  const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqAmount(v))}`
+    + (_pqCredit(v) > 0.005 ? ` · credit ${qaCents(_pqCredit(v))}` : "")
     + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
-  const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
+  const total = d.vendors.reduce((t, v) => t + _pqAmount(v), 0);
+  const na = _pqNotApproved();
+  const naLine = na.length ? `\n\nPAYING ${na.length} NOT APPROVED BILL${na.length !== 1 ? "S" : ""}: ${_pqByVendor(na)}` : "";
+  const cr = d.vendors.filter(v => _pqCredit(v) > 0.005);
+  const crLine = cr.length ? `\n\nCREATES A CREDIT WITH ${cr.length !== 1 ? "THESE VENDORS" : "THE VENDOR"} (paid beyond the bills): ${cr.map(v => `${v.vendor} · ${qaCents(_pqCredit(v))}`).join("; ")}` : "";
   if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
-    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
+    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}${naLine}${crLine}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
   btn.disabled = true; btn.textContent = "Confirm with Touch ID on this Mac…";
   const payload = { confirm: true, run_token: d.run_token, account_id: PQ.acct, date: PQ.date, method: PQ.method,
     vendors: d.vendors.map(v => ({ vendor_id: v.vendor_id, ref: (PQ.refs.get(v.vendor_id) || "").trim(),
-      bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])] })) };
+      bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])],
+      amount: _pqAmount(v) })) };
   let res; try { res = await (await fetch("/api/pay-bills/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).json(); }
   catch (e) { res = { ok: false, error: String(e) + " - check QuickBooks before trying again" }; }
-  const act = $("#pqAct"); act.innerHTML = "";
+  const act = PQ.body.querySelector("#pqAct"); act.innerHTML = "";
   const say = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; act.appendChild(x); };
   if (!res.results) { say("Nothing written: " + (res.error || "failed"), "neg"); btn.disabled = false; act.appendChild(btn); btn.textContent = "Try again…"; return; }
   say(`${res.posted} payment${res.posted !== 1 ? "s" : ""} written to QuickBooks, ${qaCents(res.total)}${res.failed ? ` · ${res.failed} not written` : ""}.`, res.failed ? "warn" : "ok");
@@ -3448,7 +4036,8 @@ async function payQboWrite(btn) {
     if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
     const st = r.stub || {};
     if (r.after_error) say(`${r.vendor}: ${r.after_error} - it is in QuickBooks; refresh before paying again`, "warn");
-    say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
+    if (r.warn) say(`${r.vendor}: ${r.warn}`, "warn");
+    say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)}${(r.credit || 0) > 0.005 ? ` · ${qaCents(r.credit)} held as a credit with the vendor` : ""} · `
       + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
   }
   // the paid bills leave the run now. Only the ledger's own QuickBooks read runs here (mirror + bill payments + open
@@ -3457,12 +4046,20 @@ async function payQboWrite(btn) {
   const prog = document.createElement("div"); prog.className = "sync-progress"; const bar = document.createElement("div"); bar.className = "sync-bar";
   const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill); const step = document.createElement("div"); step.className = "sync-step";
   prog.appendChild(bar); prog.appendChild(step); act.appendChild(prog);
-  await load(true); renderPayBills(); loadPayQueued();
+  const vendor = PQ.vendor;   // paid from the vendor page: that page catches up too (its bills, Paid, the payment)
+  await load(true); renderPayBills(); loadPayQueued(); if (vendor) _vpAfterPay(vendor);
   runPipeline("billpay", null, { prog, fill, step, after: async (ok) => {
     if (!ok) step.textContent += " - the payments are in QuickBooks; refresh from QuickBooks to see them here.";
-    await load(true); renderPayBills(); loadPayQueued(); } });
+    await load(true); renderPayBills(); loadPayQueued(); if (vendor) _vpAfterPay(vendor); } });
 }
-function closePayQbo() { const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
+async function _vpAfterPay(vendor) {   // re-read the vendor page after a payment written from it; the review stays on top with its result
+  if (!_vendorData || _vendorData.vendor !== vendor) return;
+  const was = _vendorData; let data;
+  try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); } catch { return; }
+  if (!data || !data.ok || !_vendorPageShowing(was)) return;
+  _vpSel.clear(); _vendorData = data; renderVendorPage();
+}
+function closePayQbo() { if (PQ && PQ.vendor && PQ.widget) PQ.widget.remove(); const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
 // ── Pushed payments (owner 2026-09-28): every payment pushed from here waits in this queue until it MATCHES - QuickBooks
 // shows its check # (a "To print" check gets it when printed in QuickBooks; the next mirror refresh picks it up) and its
 // stub is filed under that number. The watcher (pay_bills.watch, after every mirror refresh and on every load here) flags
@@ -4340,7 +4937,7 @@ function _ppHeader(pn, r0, d, p) {
   const stats = $("#recordStats"), tools = $("#recordTools"); if (!stats || !tools) return;
   const contract = num(p.contract || r0.total_contract_price), etc = num(r0.estimated_total_costs), billed = num(p.billed_gross), cost = num(p.cost);
   const owes = (d.draws || []).reduce((s0, x) => s0 + num(x.ar_open), 0);
-  const items = [["Contract", money(contract), ""], ["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],
+  const items = [["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],   // no Contract figure up here (owner 2026-10-11: "remove the contract amounts on the top")
     ["Costs", money(cost), etc ? `${Math.round(cost / etc * 100)}% of ETC` : ""],
     ["Net profit", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}%` : "", num(p.net) < 0 ? "neg" : ""],
     ["Owed to us", money(owes), ""]];
@@ -4363,6 +4960,22 @@ function _ppHeader(pn, r0, d, p) {
   const qurl = qboCustomerUrl(cid); if (qurl) btn("QuickBooks ↗", "The project in QuickBooks", null, qurl);
   tools.hidden = false;   // buildPnlGroup adds Job folder (first) and the P&L workbook group (last)
 }
+// An (i) in a cell's top-right corner that opens a small note on click (owner 2026-10-11: "put that info on a i circle
+// top right of cell that you click and see that"). lines = [text | {text, cls}]; one open at a time, any click
+// elsewhere closes it. Reuse for any cell whose detail should not be a row of its own.
+function cellInfo(td, lines, title) {
+  const ls = (lines || []).filter(Boolean); if (!ls.length) return;
+  td.classList.add("has-i");
+  const b = document.createElement("button"); b.type = "button"; b.className = "cell-i"; b.textContent = "ⓘ"; b.title = title || "More on this figure"; b.setAttribute("aria-expanded", "false");
+  const pop = document.createElement("div"); pop.className = "cell-pop"; pop.hidden = true;
+  for (const l of ls) { const d = document.createElement("div"); d.className = "cell-pop-l" + (l.cls ? " " + l.cls : ""); d.textContent = l.text || l; pop.appendChild(d); }
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const open = pop.hidden; for (const o of $$(".cell-pop:not([hidden])")) { o.hidden = true; const ob = o.previousElementSibling; if (ob) { ob.classList.remove("on"); ob.setAttribute("aria-expanded", "false"); } }
+    pop.hidden = !open; b.classList.toggle("on", open); b.setAttribute("aria-expanded", String(open)); };
+  pop.onclick = (e) => e.stopPropagation();
+  td.appendChild(b); td.appendChild(pop);
+}
+if (!window.__cellPopClose) { window.__cellPopClose = true;
+  document.addEventListener("click", () => { for (const o of $$(".cell-pop:not([hidden])")) { o.hidden = true; const ob = o.previousElementSibling; if (ob) { ob.classList.remove("on"); ob.setAttribute("aria-expanded", "false"); } } }); }
 // What we projected (the WIP master: contract, ETC) next to what actually happened (QuickBooks: billed, costs), row by
 // row, the big numbers first (owner 2026-09-16: "remove the big blocks ... make the numbers that are important jump
 // out like billed to date, costs to date, put what we projected and what the actual are side by side").
@@ -4387,7 +5000,8 @@ function _ppProjectedVsActual(p, r0, pn) {
     const tr = document.createElement("tr"); if (opts.cls) tr.className = opts.cls;
     const l = document.createElement("td"); l.className = "left pp-pva-lab"; l.textContent = label; if (opts.sub) l.title = opts.sub; tr.appendChild(l);   // one line a row: the note is the hover (owner 2026-09-23)
     const a = document.createElement("td"); a.className = "right pp-pva-proj"; a.textContent = proj == null ? "" : proj; tr.appendChild(a);
-    const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); } tr.appendChild(b);
+    const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); }
+    if (opts.info) cellInfo(b, opts.info, opts.infoTitle); tr.appendChild(b);
     // the difference as Excel would show it (owner 2026-09-30: "the graphs under it do not help"): the $ (actual -
     // projected) and the % in their own columns, then a few plain words - no bars
     const dv = document.createElement("td"), dp = document.createElement("td"), dn = document.createElement("td");
@@ -4401,14 +5015,22 @@ function _ppProjectedVsActual(p, r0, pn) {
     tr.appendChild(dv); tr.appendChild(dp); tr.appendChild(dn); tb.appendChild(tr);
   };
   const left = contract - billedG;
+  // Retained, net billed and the WIP report's figure sit behind an (i) on the gross billed cell, so ETC · Costs to date
+  // reads right under the billing it compares to (owner 2026-10-11: "make the etc costs to date below the gross to
+  // compare instead of having that gap of retained and net billed ... even the wip report warning")
   row("Contract · Gross billed", money(contract), money(billedG), { v: billedG - contract, base: contract, good: 0, word: left > 0.5 ? `${money(left)} left to bill` : (left < -0.5 ? `billed ${money(-left)} past the contract` : "fully billed") },
-      { sub: "gross billed = every QuickBooks invoice before retainage" + (r0.approved_cos ? ` · contract incl. COs ${money(r0.approved_cos)}` : ""), actSub: billedNote });
-  row("Retained", null, "(" + money(ret) + ")", null, { sub: "retainage the GC is holding - billed, not yet collected" });
-  row("Net billed", null, money(netB), p.billed_gap ? { word: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null, { sub: "gross billed - retained = what the GC pays now" });
+      { sub: "gross billed = every QuickBooks invoice before retainage" + (r0.approved_cos ? ` · contract incl. COs ${money(r0.approved_cos)}` : ""),
+        infoTitle: "Retained · net billed · the WIP report",
+        info: [`Retained (${money(ret)}) - retainage the GC is holding: billed, not yet collected`,
+               `Net billed ${money(netB)} - gross billed less retained, what the GC pays now`,
+               billedNote ? `${billedNote} - the WIP report's gross billed; the invoices run past it` : null,
+               p.billed_gap ? { text: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null] });
   const over = cost - etc;
   row("ETC · Costs to date", money(etc), money(cost), etc ? { v: over, base: etc, good: -1, word: (over > 0.5 ? "Over budget" : "Under budget") + ` - ${(cost / etc * 100).toFixed(0)}% of ETC spent` } : null);
-  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { sub: "projected: contract - ETC · actual: gross billed - costs" });
-  row(`Overhead · ${+(rate * 100).toFixed(2)}% of contract`, "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: /^MFD/i.test(pn) ? "MFD rate" : "company rate" });
+  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, billedG), etc && billedG ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1, word: gpA - gpP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-sub", sub: "projected: contract - ETC · actual: gross billed - costs" });   // a rule above + bold: the subtotal (owner 2026-10-11)
+  // projected overhead = rate x the contract; ACTUAL overhead = rate x gross billed so far, never the full contract
+  // (owner 2026-10-14: "the oh on the actual should be the actual billed NOT the contract price for actuals")
+  row(`Overhead · ${+(rate * 100).toFixed(2)}%`, "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: `projected: ${+(rate * 100).toFixed(2)}% of contract · actual: ${+(rate * 100).toFixed(2)}% of gross billed` + (/^MFD/i.test(pn) ? " (MFD rate)" : "") });
   row("Net profit", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && billedG ? { v: netA - netP, base: Math.abs(netP) || contract, good: 1, word: netA - netP >= 0 ? "Above the projection" : "Below the projection" } : null, { cls: "pp-pva-total", sub: "gross billed - costs - overhead" });
   t.appendChild(tb); wrap.appendChild(t);
   return wrap;
@@ -4557,19 +5179,123 @@ function _ppPaintPayBar() {
 // The draw boxes + the Coverage table sit on top whatever is open; a click on a box or a row opens that draw's
 // details underneath and the boxes stay (owner 2026-09-15). "All draws" = every bill on the job with the draw it
 // sits under. Left / right arrow keys flip between them.
+// One picker instead of a grid of chips (owner 2026-10-11: "instead of this disorder ... a single choice bar that you
+// click and choose"; "adding info more than just the draw info clutters it"): All draws, No draw yet, then every draw
+// newest first by its name alone - the Coverage table below carries the invoice, status and money for each one.
 function _ppTabs(d) {
   const strip = document.createElement("div"); strip.className = "pp-tabs";
-  const mk = (key, lbl, sub, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "pp-tab" + (_pp.view === key ? " on" : "");
-    b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); _ppScrollDetail(); }; return b; };
-  const n = d.draws.filter(x => !x.no_draw).length;
-  strip.appendChild(mk("all", _ppAllLabel(), `${n} ${_ppUnit(n)} · ${_ppAllRows(d.draws).length} bills`, `Every bill on the job, with the ${_pp.isRp ? "scope" : "draw"} it sits under`));
+  const sel = document.createElement("select"); sel.className = "pp-draw-pick"; sel.title = `Pick a ${_pp.isRp ? "scope" : "draw"} - the bills below follow`;
+  const opt = (key, text) => { const o = document.createElement("option"); o.value = key; o.textContent = text; if (_pp.view === key) o.selected = true; sel.appendChild(o); };
+  opt("all", _ppAllLabel());
   for (const dr of d.draws) {
-    const span = _ppSpan(dr);
-    const b = mk(dr.matched_invoice, _ppTitle(dr), dr.no_draw ? `${_ppBillsOf(dr).length} bills` : (dr.scope ? (span || _ppInvLabel(dr)) : _ppInvLabel(dr)), [span ? "Covers " + span : "", _ppStage(dr)].filter(Boolean).join(" · "));
-    strip.appendChild(b);
+    const t = _ppTitle(dr);
+    opt(dr.matched_invoice, t === "Draw" ? `Draw · ${_ppInvLabel(dr)}` : t);   // a draw with no month or number is told apart by its invoice
   }
+  sel.onchange = () => { _pp.view = sel.value; _renderPpDraws(); _ppScrollDetail(); };
+  strip.appendChild(sel);
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
   return strip;
+}
+// ── Draw periods (owner 2026-10-11: "change period draw dates by moving it in a horizontal <> way and it changes the
+// dates as it goes for all, and then a way to edit individual periods themselves without it overlapping the other
+// ones" - "never write" to QuickBooks - "a feature inside the page ... put save but only on the ledger"). The dates
+// are staged on the page, the Draw overview follows, and SAVE keeps them on the ledger (/api/draw-periods/save ->
+// draw_period): from then on the page uses the saved window as the draw's period, with "as invoiced" beside it.
+// QuickBooks (where the period lives, on the invoice memo), the Bill Tracker and Notion are never touched. ‹ › and the
+// slider move EVERY draw by the same days; a draw's own dates are typed in boxes whose limits are its neighbours, so
+// nothing can overlap. Out of the way on purpose (owner, same day: "hide the feature, don't make it an essential feature,
+// it's something just to check things"): no button on the page - the link sits inside the Draw overview's ⓘ help.
+const _isoAdd = (iso, days) => { const [y, m, d] = String(iso).split("-").map(Number); const t = new Date(y, m - 1, d + days); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+const _isoDays = (a, b) => Math.round((new Date(b + "T00:00") - new Date(a + "T00:00")) / 86400000);
+function _pePrime(d) {
+  const rows = d.draws.filter(x => !x.no_draw && x.period_start && x.period_end && (x.invoices || []).some(i => i.qbo_txn_id))
+    .map(x => ({ key: x.matched_invoice, label: _ppTitle(x), inv: _ppInvRange(x.invoice_nos || (x.invoice_no ? [x.invoice_no] : [])),
+                 ids: (x.invoices || []).map(i => i.qbo_txn_id).filter(Boolean),
+                 start0: x.inv_period_start || x.period_start, end0: x.inv_period_end || x.period_end,   // as invoiced
+                 s1: x.period_start, e1: x.period_end,                                                     // as the page holds it now (saved, or the invoice's)
+                 start: x.period_start, end: x.period_end }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+  _pp.pe = { rows, offset: 0, busy: false, msg: "" };
+}
+function _peDraft(dr) {   // the staged span for a draw, "" when it is what the page already holds (saved, or as invoiced)
+  const pe = _pp.pe; if (!pe) return ""; const r = pe.rows.find(x => x.key === dr.matched_invoice); if (!r || (r.start === r.s1 && r.end === r.e1)) return "";
+  return fmtDate(r.start) + " – " + fmtDate(r.end);
+}
+function _peProblem(pe) {   // the first thing that stops a write, in plain words ("" when none)
+  const rs = [...pe.rows].sort((a, b) => a.start.localeCompare(b.start));
+  for (const r of rs) if (r.end < r.start) return `${r.label}: the end is before the start`;
+  for (let i = 1; i < rs.length; i++) if (rs[i].start <= rs[i - 1].end) return `${rs[i].label} overlaps ${rs[i - 1].label}`;
+  return "";
+}
+function _peShift(pe, delta) { if (!delta) return; for (const r of pe.rows) { r.start = _isoAdd(r.start, delta); r.end = _isoAdd(r.end, delta); } pe.offset += delta; }
+function _ppPeriodsPanel(d) {
+  const pe = _pp.pe, box = document.createElement("div"); box.className = "pp-periods";
+  const head = document.createElement("div"); head.className = "pp-pe-head";
+  head.innerHTML = `<b>Draw periods</b><span class="dim">a check, not the books: ‹ › moves every draw · type a date to set one draw (its neighbours are its limits) · Save keeps them on the ledger only - the invoices in QuickBooks stay as they are</span>`;
+  { const x = document.createElement("button"); x.type = "button"; x.className = "btn tiny subtle pp-pe-x"; x.textContent = "close"; x.onclick = () => { _pp.pe = null; _pp.covHelp = false; _renderPpDraws(); }; head.appendChild(x); }
+  box.appendChild(head);
+  // shift row
+  const sh = document.createElement("div"); sh.className = "pp-pe-shift";
+  const mkBtn = (t, delta, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = t; b.title = title; b.onclick = () => { _peShift(pe, delta); _renderPpDraws(); }; return b; };
+  sh.appendChild(mkBtn("‹", -1, "Every period one day earlier"));
+  const range = document.createElement("input"); range.type = "range"; range.min = -45; range.max = 45; range.step = 1; range.value = pe.offset; range.className = "pp-pe-range";
+  range.title = "Drag: every period moves by the same days"; range.oninput = () => { _peShift(pe, Number(range.value) - pe.offset); _rePaintPe(); }; range.onchange = () => _renderPpDraws();
+  sh.appendChild(range);
+  sh.appendChild(mkBtn("›", 1, "Every period one day later"));
+  const lab = document.createElement("span"); lab.className = "pp-pe-off"; lab.id = "ppPeOff"; sh.appendChild(lab);
+  const reset = document.createElement("a"); reset.href = "#"; reset.className = "pp-pe-reset"; reset.textContent = "back to as invoiced"; reset.title = "Every draw back to the window on its invoice (then Save to keep that)";
+  reset.onclick = (e) => { e.preventDefault(); for (const r of pe.rows) { r.start = r.start0; r.end = r.end0; } pe.offset = 0; _renderPpDraws(); }; sh.appendChild(reset);
+  box.appendChild(sh);
+  // one row per draw, oldest first
+  const t = document.createElement("table"); t.className = "grid pp-pe-tbl";
+  t.innerHTML = `<thead><tr><th class="left">Draw</th><th class="left">Invoice</th><th class="left">Start</th><th class="left">End</th><th class="left">Days</th><th class="left">As invoiced</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  const rs = [...pe.rows].sort((a, b) => a.start.localeCompare(b.start));
+  rs.forEach((r, i) => {
+    const tr = document.createElement("tr"); const changed = r.start !== r.start0 || r.end !== r.end0; if (changed) tr.classList.add("pp-pe-changed");
+    tr.appendChild(leftText(r.label)); tr.appendChild(leftText(r.inv || "–"));
+    const prev = rs[i - 1], next = rs[i + 1];
+    const mkDate = (field) => { const td = document.createElement("td"); td.className = "left"; const inp = document.createElement("input"); inp.type = "date"; inp.value = r[field];
+      inp.min = field === "start" ? (prev ? _isoAdd(prev.end, 1) : "") : r.start;                    // a start after the draw before; an end on or after its start
+      inp.max = field === "end" ? (next ? _isoAdd(next.start, -1) : "") : r.end;                      // an end before the draw after; a start on or before its end
+      inp.title = `${field === "start" ? "Start" : "End"}: between ${inp.min ? fmtDate(inp.min) : "any day"} and ${inp.max ? fmtDate(inp.max) : "any day"}`;
+      inp.onchange = () => { let v = inp.value; if (!v) { inp.value = r[field]; return; } if (inp.min && v < inp.min) v = inp.min; if (inp.max && v > inp.max) v = inp.max; r[field] = v; _renderPpDraws(); };
+      td.appendChild(inp); return td; };
+    tr.appendChild(mkDate("start")); tr.appendChild(mkDate("end"));
+    tr.appendChild(leftText(String(_isoDays(r.start, r.end) + 1)));
+    { const td = leftText(changed ? `${fmtDate(r.start0)} – ${fmtDate(r.end0)}` : "same"); if (!changed) td.classList.add("dim"); tr.appendChild(td); }
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t);
+  // Save - on the ledger only
+  const act = document.createElement("div"); act.className = "pp-pe-act";
+  const changed = pe.rows.filter(r => r.start !== r.start0 || r.end !== r.end0), dirty = pe.rows.some(r => r.start !== r.s1 || r.end !== r.e1), problem = _peProblem(pe);
+  const s = document.createElement("span"); s.className = problem ? "pp-pe-bad" : "dim";
+  s.textContent = problem || (dirty ? `${changed.length} draw${changed.length === 1 ? "" : "s"} off the invoice window - not saved yet` : (changed.length ? `${changed.length} draw${changed.length === 1 ? "" : "s"} set on the ledger` : "every draw as invoiced"));
+  act.appendChild(s);
+  const sv = document.createElement("button"); sv.type = "button"; sv.className = "btn small primary"; sv.textContent = pe.busy ? "Saving…" : "Save"; sv.disabled = pe.busy || !!problem || !dirty;
+  sv.title = "Keep these windows on the ledger (this page uses them from now on) - QuickBooks is not touched"; sv.onclick = () => _peSave(); act.appendChild(sv);
+  if (pe.msg) { const m = document.createElement("span"); m.className = /fail|not |refused|overlap/i.test(pe.msg) ? "pp-pe-bad" : "pp-pe-ok"; m.textContent = pe.msg; act.appendChild(m); }
+  box.appendChild(act);
+  _rePaintPe(box);
+  return box;
+}
+async function _peSave() {
+  const pe = _pp.pe; if (!pe || pe.busy) return; pe.busy = true; pe.msg = ""; _renderPpDraws();
+  const periods = []; for (const r of pe.rows) for (const id of r.ids) periods.push({ id, start: r.start, end: r.end, inv_start: r.start0, inv_end: r.end0, label: r.label });
+  let res; try { res = await (await fetch("/api/draw-periods/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: _pp.pn, periods }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  pe.busy = false;
+  if (!res.ok) { pe.msg = "Not saved: " + (res.error || "failed"); _renderPpDraws(); return; }
+  toast(res.saved ? `${res.saved} draw period${res.saved === 1 ? "" : "s"} saved on the ledger` : "Every draw back to as invoiced");
+  await openProjectPage(_pp.pn);           // the page re-reads the job with the saved windows
+  _pePrime(_pp.d); _renderPpDraws();       // the editor stays open on the fresh page
+}
+function _rePaintPe(box) {   // the offset label + the staged spans in the Coverage table, without a full redraw (the slider is live)
+  const pe = _pp.pe; if (!pe) return;
+  const lab = (box || document).querySelector("#ppPeOff") || $("#ppPeOff"); if (lab) lab.textContent = pe.offset ? `${pe.offset > 0 ? "+" : ""}${pe.offset} day${Math.abs(pe.offset) === 1 ? "" : "s"}` : "no shift";
+  for (const td of $$("td.pp-period-cell")) { const r = pe.rows.find(x => x.key === td.dataset.key); if (!r) continue;
+    const draft = r.start !== r.s1 || r.end !== r.e1; td.textContent = _ppShortDates(fmtDate(r.start) + " – " + fmtDate(r.end)); td.classList.toggle("pp-period-draft", draft); }
 }
 function _ppScrollDetail() { /* the page stays put when a draw is picked (owner 2026-09-23: "when i click a draw do not make my screen go down") */ }
 // The Draw overview (owner 2026-09-30: "it's not how we get funded, it's an overview of transactions per draw"):
@@ -4577,13 +5303,14 @@ function _ppScrollDetail() { /* the page stays put when a draw is picked (owner 
 // of it = the actuals (billed gross, costs, gross profit, margin, overhead, net, net margin). Net = gross billed -
 // costs - overhead. A click on a worked-out cell shows its formula in the fx bar above, like Excel.
 function _ppFx(label, formula, value) { _pp.fx = { label, formula, value }; const bar = $("#ppFx"); if (bar) _ppPaintFx(bar); }
-function _ppPaintFx(bar) {
-  const f = _pp.fx; bar.innerHTML = "";
+function _ppPaintFx(bar) {   // shown only once a worked-out cell is clicked; idle it is nothing (owner 2026-10-11: "what is this?")
+  const f = _pp.fx; bar.innerHTML = ""; bar.hidden = !f; if (!f) return;
   const tag = document.createElement("span"); tag.className = "pp-fx-tag"; tag.textContent = "fx"; bar.appendChild(tag);
-  if (!f) { const s = document.createElement("span"); s.className = "dim"; s.textContent = "Click Overhead, Gross profit, Margin, Net or Net margin to see how it is worked out"; bar.appendChild(s); return; }
   const l = document.createElement("span"); l.className = "pp-fx-lab"; l.textContent = f.label; bar.appendChild(l);
   const fm = document.createElement("code"); fm.className = "pp-fx-f"; fm.textContent = f.formula; bar.appendChild(fm);
   const v = document.createElement("b"); v.className = "pp-fx-v"; v.textContent = "= " + f.value; bar.appendChild(v);
+  const x = document.createElement("button"); x.type = "button"; x.className = "btn tiny subtle pp-fx-x"; x.textContent = "×"; x.title = "Hide";
+  x.onclick = (e) => { e.stopPropagation(); _pp.fx = null; _ppPaintFx(bar); for (const c of $$("td.pp-fx-on")) c.classList.remove("pp-fx-on"); }; bar.appendChild(x);
 }
 // The Draw overview shows at most 5 draws (owner 2026-09-30: "max of 5, with scroll wheel and adequate space to
 // scroll"): the box is cut to the header + 5 rows + the total, the rest scrolls; the scroll position survives a redraw.
@@ -4656,10 +5383,20 @@ function _ppCoverage(d) {
     const p = dr.pl || {}; const costs = dr.no_draw ? num(dr.gate_amt) + num(dr.subs_amt) : num(p.costs);
     const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (_pp.view === dr.matched_invoice ? " sel" : "");   // ONE highlight: the draw you picked (owner 2026-09-23)
     tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
-    { const sp0 = _ppShortDates(_ppSpan(dr)); const td = leftText(sp0 || "–"); if (!sp0) td.classList.add("dim"); tr.appendChild(td); }
+    { const draft = _peDraft(dr), sp0 = _ppShortDates(draft || _ppSpan(dr)); const td = leftText(sp0 || "–"); if (!sp0) td.classList.add("dim");
+      td.classList.add("pp-period-cell"); td.dataset.key = dr.matched_invoice;
+      if (draft) { td.classList.add("pp-period-draft"); td.title = "not saved yet"; }
+      else if (dr.period_source === "ledger") { td.classList.add("pp-period-saved"); td.title = `set on the ledger${dr.period_saved_at ? " " + fmtDate(dr.period_saved_at) : ""} · as invoiced ${fmtDate(dr.inv_period_start)} – ${fmtDate(dr.inv_period_end)} · QuickBooks unchanged`; }
+      tr.appendChild(td); }
     tr.appendChild(leftText(_ppTitle(dr)));
     { const td = document.createElement("td"); td.className = "left pp-invst"; const st = _ppInvStatus(dr); const sp = document.createElement("span"); sp.className = st.cls; sp.textContent = st.text; if (st.tip) td.title = st.tip; td.appendChild(sp); tr.appendChild(td); }
-    { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (_ppInvRange(nos) || "–")); if (nos.length > 1) td.title = `${nos.join(", ")} - ${nos.length} invoices dated the same day, one draw`; tr.appendChild(td); }
+    { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (_ppInvRange(nos) || "–"));
+      if (nos.length > 1) td.title = `${nos.join(", ")} - ${nos.length} invoices, one draw`;
+      if (!dr.no_draw && nos.length) { const s0 = td.firstChild; s0.className = "inv-open" + (nos.length > 1 ? " multi" : ""); s0.setAttribute("role", "button"); s0.tabIndex = 0;   // opens the invoice viewer (owner 2026-10-11)
+        if (nos.length > 1) { const k = document.createElement("span"); k.className = "inv-count"; k.textContent = nos.length; s0.appendChild(k); }
+        const go = (e) => { e.stopPropagation(); openInvoiceViewer(nos, 0, { project: _pp.pn, title: _ppTitle(dr) }); };
+        s0.onclick = go; s0.onkeydown = (e) => { if (e.key === "Enter") go(e); }; }
+      tr.appendChild(td); }
     tr.appendChild(leftText(dr.ar_date ? _ppShortDates(fmtDateShort(dr.ar_date)) : "–"));
     if (dr.no_draw) {
       tr.appendChild(rt("–", "dim")); tr.appendChild(rt("–", "dim")); tr.appendChild(rt("–", "dim pp-div")); tr.appendChild(rt(m(costs)));
@@ -4683,6 +5420,13 @@ function _ppCoverage(d) {
   const cap = document.createElement("p"); cap.className = "hint help-pop pp-cov-help"; cap.hidden = true; cap.textContent = _pp.isRp
     ? `An RP job has no draws: each invoice is a scope · Costs dated = the bills (materials we pay + subs) dated after the previous invoice up to this one · Left of the line = the invoice (status, net billed, retained) · Right of the line = how it did: Billed (gross) incl. retainage - Costs = Gross profit; Overhead = ${ohPct} of billed (gross); Net = gross - costs - overhead · click a worked-out cell for its formula, a row to open that scope underneath.`
     : `Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices of the same draw are one draw · Left of the line = the invoice (status, net billed, retained) · Right of the line = how it did: Billed (gross) incl. retainage - Costs = Gross profit; Overhead = ${ohPct} of billed (gross); Net = gross - costs - overhead · click a worked-out cell for its formula, a row to open that draw underneath.`;
+  if (!_pp.isRp && d.draws.some(x => !x.no_draw && x.period_start && x.period_end)) {   // a check, not a feature: behind ⓘ (owner 2026-10-11)
+    cap.appendChild(document.createTextNode(" · "));
+    const a = document.createElement("a"); a.href = "#"; a.className = "pp-pe-link"; a.textContent = _pp.pe ? "close draw periods" : "check draw periods";
+    a.title = "Try a different period schedule - slide every draw or set one; Save keeps it on the ledger only, the invoices in QuickBooks stay as they are";
+    a.onclick = (e) => { e.preventDefault(); if (_pp.pe) _pp.pe = null; else _pePrime(d); _pp.covHelp = !_pp.pe ? false : true; _renderPpDraws(); };
+    cap.appendChild(a); }
+  if (_pp.covHelp) cap.hidden = false;   // the help stays open while the editor is (it is the way back)
   wrap.appendChild(cap);
   return wrap;
 }
@@ -4690,6 +5434,7 @@ if (!window.__ppKeys) { window.__ppKeys = true;   // ← → flip between All dr
   document.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     if (typeof _pp === "undefined" || !_pp || !_pp.d) return;
+    if ($("#attViewer")) return;   // a viewer is open: the arrows flip its pages, not the draws
     const rv = $("#recordView"); if (!rv || rv.hidden || !$("#ppDraws")) return;
     const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     const keys = ["all", ..._pp.d.draws.map(x => x.matched_invoice)];
@@ -4710,6 +5455,7 @@ function _renderPpDraws() {
   _recSave({ k: "project", id: _pp.pn, view: _pp.view });   // the open draw survives a refresh (owner 2026-09-23)
   const cur = _pp.view === "all" ? null : d.draws.find(x => x.matched_invoice === _pp.view);
   host.appendChild(_ppTabs(d));
+  if (_pp.pe) host.appendChild(_ppPeriodsPanel(d));   // Draw periods editor (owner 2026-10-11)
   host.appendChild(_ppCoverage(d)); _ppCovFit();
   const det = document.createElement("div"); det.className = "pp-detail"; det.id = "ppDetail";
   det.appendChild(_ppDrawBar(d, cur));   // pinned under the section title while you scroll the draw's bills (owner 2026-09-30)
@@ -4829,16 +5575,6 @@ function _ppBillsTable(cur) {
         const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); }; }
     sr.appendChild(td); tbody.appendChild(sr);
     sr.classList.add("pp-sect-" + sect);                 // 6: a hue per section (Materials / Labor)
-    if (!flat) {   // 5: the metric labels ONCE, over the vendor rows (owner 2026-09-30: not a caption under every number)
-      const hr = document.createElement("tr"); hr.className = "pp-colhead pp-in-" + sect;
-      if (pay) hr.appendChild(document.createElement("td"));
-      const htd = document.createElement("td"); htd.className = "left"; htd.colSpan = COLS - (pay ? 1 : 0);
-      const labs = ["Total", "Bills", showDraw ? "Draws" : null, "Paid", "To pay"].filter(Boolean);
-      const cell = document.createElement("div"); cell.className = "bg-cell bg-grid"; cell.style.setProperty("--nm", String(labs.length));
-      cell.appendChild(Object.assign(document.createElement("span"), { className: "bg-left", textContent: _pp.sort === "code" ? "Cost code" : "Vendor" }));
-      for (const l of labs) { const m = document.createElement("span"); m.className = "bg-m"; const sm = document.createElement("small"); sm.textContent = l; m.appendChild(sm); cell.appendChild(m); }
-      htd.appendChild(cell); hr.appendChild(htd); tbody.appendChild(hr);
-    }
   };
   const totalRow = (label, xs, grand) => {   // Materials total / Labor total / Total - amount under Amount, what is still to pay beside it, like a real sheet
     const bills = xs.map(x => x.b), paidCt = bills.filter(b => b.paid).length;
@@ -4860,12 +5596,17 @@ function _ppBillsTable(cur) {
       const bills = list.map(x => x.b), paidCt = bills.filter(b => b.paid).length, tot = totOf(list), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor pp-in-" + sect; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
       if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, v)); gtr.appendChild(cbTd); }
-      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - (pay ? 1 : 0);
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
-      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
+      // money adds in ONE column (owner 2026-10-11: "rule: make money add to the same column"): the band's total sits
+      // under Amount, exactly where the bills under it put theirs; the counts are words to its right, not more columns
+      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = iAmt - (pay ? 1 : 0);
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; vt.appendChild(caret); vt.appendChild(k); gtr.appendChild(vt);
+      const at = document.createElement("td"); at.className = "ip-amt pp-band-amt"; at.textContent = moneyC(tot); gtr.appendChild(at);
       const nDraws = new Set(list.map(x => x.dr.matched_invoice)).size;
-      bandMetrics(cell, [[moneyC(tot), "total"], [list.length, "bills"], showDraw ? [nDraws, nDraws === 1 ? "draw" : "draws"] : null, [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? moneyC(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
-      vt.appendChild(cell); gtr.appendChild(vt);
+      const rt2 = document.createElement("td"); rt2.className = "left pp-band-words"; rt2.colSpan = COLS - iAmt - 1;
+      rt2.innerHTML = `<span class="dim">${list.length} bill${list.length === 1 ? "" : "s"}${showDraw ? ` · ${nDraws} draw${nDraws === 1 ? "" : "s"}` : ""} · </span>`
+        + `<span class="${paidCt === list.length ? "ip-paid ok" : "dim"}">${paidCt}/${list.length} paid${paidCt === list.length ? " ✓" : ""}</span>`
+        + (owed > 0.005 ? ` <span class="dim">·</span> <span class="pp-topay">${_ge(moneyC(owed))} to pay</span>` : "");
+      gtr.appendChild(rt2);
       gtr.onclick = (e) => { if (e.target.closest("input")) return;
         if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const x2 of _ppAllRows(cur ? [cur] : d.draws)) _pp.openV.add(`${cur ? cur.matched_invoice : "all"}|${x2.isSub ? "labor" : "materials"}|${_pp.sort}|${keyOf(x2)}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); };
@@ -5172,7 +5913,10 @@ function invNotionSection(body, url, bodyOnly) {
   const draw = (d) => {
     box.innerHTML = "";
     if (!d || !d.ok) { box.textContent = "Could not load the page" + (d && d.error ? ": " + d.error : "") + "."; box.classList.add("dim"); return; }
-    const meta = document.createElement("div"); meta.className = "np-meta"; meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}`; box.appendChild(meta);
+    const meta = document.createElement("div"); meta.className = "np-meta";
+    meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}` + (d.created ? ` · page made ${fmtDate(d.created.replace(" ", "T"), true)}` : "");
+    if (d.archived) { const s = document.createElement("span"); s.className = "st st-bad"; s.style.marginLeft = "8px"; s.textContent = "archived in Notion (in the trash)"; meta.appendChild(s); }
+    box.appendChild(meta);
     const props = bodyOnly ? [] : (d.properties || []).filter(p => p.value !== "" && p.value != null && p.type !== "title");
     if (props.length) {
       const pl = document.createElement("div"); pl.className = "np-props";
@@ -5654,7 +6398,7 @@ function payOpenBillsByDraw() {   // open bills keyed by the DRAW (AR invoice) t
 }
 function payOpenBillsByProject() {   // open bills keyed by project (for RP - see the division rule below)
   const idx = {};
-  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005 && b.project_no) (idx[b.project_no] ||= []).push(b); }
+  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005) for (const pn of billJobs(b)) (idx[pn] ||= []).push(b); }   // a multi-job bill under each of its jobs
   return idx;
 }
 // Division rule (owner 2026-08-25). CP/MFD are STAGED: each draw is its own scope with its own costs
@@ -6441,7 +7185,7 @@ function renderPnl() {
   const pnlSrcOf = l => /gross|retainage/i.test(l) ? [srcText("WIP master", meta.report_date, "report"), "the WIP master's billed-to-date / retainage columns"]
     : /net billed/i.test(l) ? [srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded"), "every QuickBooks invoice on the active jobs, after retainage"]
     : /cost/i.test(l) ? [srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), "QuickBooks cost lines summed by job (line amounts, never bill totals)"]
-    : /overhead/i.test(l) ? ["10% of contract (MFD 9%)", "the owner's overhead rule - a share of the contract, never of billed or cost"]
+    : /overhead/i.test(l) ? ["10% of gross billed (MFD 9%)", "the owner's overhead rule to date - a share of what is billed so far; only a projection uses the contract"]
     : ["net billed - costs - overhead", "actuals, no earned-revenue proration"];
   for (const [l, v, cls] of tiles) {
     const k = el2("div", "kpi" + (cls ? " pnl-kpi-" + cls : ""));
@@ -6782,7 +7526,7 @@ function renderCompanyHead() {
     ["Open AR", money(ar), `${clients} client${clients === 1 ? "" : "s"} · what they owe you`, srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded"), "open balance of the QuickBooks invoices loaded", () => setTab("invoices"), false],
     ["Open AP", money(ap.open_balance), `${ap.open_lines || 0} open bill${ap.open_lines === 1 ? "" : "s"} · what you owe vendors`, srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "open balance of the vendor bills in the Bill Tracker (subs excluded)", () => setTab("bills"), false],
     ["Lien notices", `${pastDue} past · ${dueSoon} soon`, "unpaid bills past the notice deadline, or within 7 days", srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "bills you owe whose vendor lien-notice deadline has passed, or is within 7 days", () => setTab("liens"), pastDue > 0],
-    ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · net billed − costs − 10% of contract` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
+    ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · gross billed − costs − 10% of gross billed (MFD 9%)` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
   ];
   for (const [label, value, sub, src, how, go, bad] of tiles) {
     const el = document.createElement("div"); el.className = "kpi kpi-click" + (bad ? " kpi-neg" : "");
@@ -8865,6 +9609,21 @@ function wrRunProgress(label, onDone) {
 // previous refresh, with QuickBooks' own time and plain-word flags (shared/qbo_mirror.change_flags); the mirror keeps
 // the before record. Born of 2026-09-18, when the audit log blamed the owner for deletions a connected app made.
 let QA = null, qaDays = 30, qaFlag = null, qaShowOk = false;
+// ONE page, scoped by the Audit tab that opened it (owner 2026-10-11: "the audit into an audit and then to categories, AP,
+// AR ... invoices changed after saved ... are the invoices getting deleted as well"). AP = the vendor side, AR = the
+// client side; a deletion or a void is its own page on each side so it is never lost among the edits; everything else
+// (lists, journal entries, deposits, transfers) is Other.
+const QA_AP = new Set(["Bill", "BillPayment", "Purchase", "VendorCredit", "PurchaseOrder"]);
+const QA_AR = new Set(["Invoice", "Payment", "CreditMemo", "SalesReceipt", "RefundReceipt", "Estimate"]);
+const qaGone = c => c.kind === "deleted" || c.flags.includes("voided");
+const QA_SCOPES = {
+  qboap:    { title: "Bills changed after they were saved", empty: "No bill, expense or bill payment changed", pass: c => QA_AP.has(c.entity) && !qaGone(c) },
+  qboapdel: { title: "Bills deleted or voided", empty: "No bill, expense or bill payment deleted or voided", pass: c => QA_AP.has(c.entity) && qaGone(c) },
+  qboar:    { title: "Invoices changed after they were saved", empty: "No invoice, payment or credit memo changed", pass: c => QA_AR.has(c.entity) && !qaGone(c) },
+  qboardel: { title: "Invoices deleted or voided", empty: "No invoice, payment or credit memo deleted or voided", pass: c => QA_AR.has(c.entity) && qaGone(c) },
+  qboother: { title: "Other QuickBooks changes - lists, journal entries, deposits, transfers", empty: "Nothing else changed", pass: c => !QA_AP.has(c.entity) && !QA_AR.has(c.entity) },
+};
+const qaScopeKey = () => QA_SCOPES[activeTab] ? activeTab : "qboap";
 const QA_ENTITY = { Bill: "Bill", BillPayment: "Bill payment", Purchase: "Expense", Invoice: "Invoice", Payment: "Payment received", JournalEntry: "Journal entry",
   VendorCredit: "Vendor credit", CreditMemo: "Credit memo", Deposit: "Deposit", Transfer: "Transfer", PurchaseOrder: "Purchase order", Estimate: "Estimate",
   Customer: "Customer", Vendor: "Vendor", Account: "Account", Item: "Item", Class: "Class", Term: "Term", PaymentMethod: "Payment method" };
@@ -8884,8 +9643,6 @@ async function qaSetOk(c, ok) {   // a ledger write (qbo_change_ok) - never Quic
     if (!r.ok) throw new Error(r.error || "failed");
     c.ok_at = ok ? r.marked_at : null;
     for (const k of (QA.changes || [])) if (k.parent_id === c.id) k.ok_at = c.ok_at;
-    if (ok && c.flags) for (const f of c.flags) if (QA.flag_counts && QA.flag_counts[f]) QA.flag_counts[f] -= 1;
-    if (!ok && c.flags) for (const f of c.flags) if (QA.flag_counts) QA.flag_counts[f] = (QA.flag_counts[f] || 0) + 1;
     const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y);
   } catch (e) { toast ? toast("Could not save: " + e.message) : alert("Could not save: " + e.message); }
 }
@@ -8934,6 +9691,60 @@ function qaMoved(b, a, what) {
   td.append(o, " → ", n); td.title = `${what} changed: ${(b || []).join(", ") || "(none)"} → ${(a || []).join(", ") || "(none)"}`;
   return td;
 }
+// ── An invoice's story under its row (owner 2026-10-11: "the history of invoices and the creation date ... with notion
+// invoice tracker data"): /api/qboaudit/invoice = created in QuickBooks, every logged change oldest first with what moved,
+// the payments applied, on file / deleted, and the Invoice Tracker (the ledger's row, else the page kept in the register
+// - an archived page still opens). Open on click on Invoices changed; open for every row on Invoices deleted.
+const _qaHist = {}, qaHistOpen = new Set();
+function qaHistInto(body, d) {
+  body.innerHTML = "";
+  if (!d || !d.ok) { body.textContent = "Could not read the invoice" + (d && d.error ? ": " + d.error : "") + "."; body.classList.add("dim"); return; }
+  const inv = d.invoice || {}, line = (cls, text) => { const el = document.createElement("div"); el.className = cls; el.textContent = text; body.appendChild(el); return el; };
+  const when = v => v ? fmtDate(v, true) : "–";
+  const head = line("qh-head", `Created in QuickBooks ${when(inv.created)} · last changed ${when(inv.last_updated)}`);
+  { const s = document.createElement("span"); s.className = "st " + (inv.deleted ? "st-bad" : "st-dim"); s.style.marginLeft = "8px";
+    s.textContent = inv.deleted ? `deleted in QuickBooks ${when(inv.deleted_at)}` : "on file"; head.appendChild(s); }
+  line("qh-line", `#${inv.doc_number || "–"} · ${inv.customer || "–"}${inv.project ? " · " + inv.project : ""} · dated ${inv.txn_date ? fmtDateShort(inv.txn_date) : "–"}` +
+    (inv.due_date ? ` · due ${fmtDateShort(inv.due_date)}` : "") + ` · total ${inv.total == null ? "–" : moneyC(inv.total)} · open ${inv.balance == null ? "–" : moneyC(inv.balance)}` + (inv.memo ? ` · ${inv.memo}` : ""));
+  const hist = d.history || [];
+  line("qh-sub", `History on record (${hist.length})` + (inv.logged_since_birth ? "" : " · the log began 09/23/2026, before that only QuickBooks' own audit log has it"));
+  if (!hist.length) line("qh-line dim", "No change logged on this invoice since the log began.");
+  for (const h of hist) {
+    const what = (h.flags && h.flags.length ? h.flags.join(", ") : h.kind);
+    const money = h.kind === "edited" && h.total_before != null && h.total_after != null && Math.abs(h.total_before - h.total_after) > 0.005 ? ` · total ${moneyC(h.total_before)} → ${moneyC(h.total_after)}` : "";
+    line("qh-line", `${when(h.changed_at)} · ${what}${money}`);
+    for (const t of (h.detail || []).slice(0, 8)) line("qh-line qh-detail", t.replace(/ -> /g, " → "));
+    if ((h.detail || []).length > 8) line("qh-line qh-detail dim", `…and ${h.detail.length - 8} more`);
+  }
+  const pays = d.payments || [];
+  line("qh-sub", `Payments applied (${pays.length})`);
+  if (!pays.length) line("qh-line dim", "No payment applied to this invoice.");
+  for (const p of pays) {
+    const el = line("qh-line", `${p.date ? fmtDateShort(p.date) : "–"} · ${p.applied == null ? "–" : moneyC(p.applied)} of a ${p.total == null ? "–" : moneyC(p.total)} payment${p.ref ? " · ref " + p.ref : ""}`);
+    if (p.deleted) { const s = document.createElement("span"); s.className = "st st-bad"; s.style.marginLeft = "8px"; s.textContent = `payment deleted ${when(p.deleted_at)}`; el.appendChild(s); }
+  }
+  const n = d.notion;
+  line("qh-sub", "Notion Invoice Tracker");
+  if (!n) { line("qh-line dim", "Not on the Invoice Tracker - never synced, or paid and aged out of it."); return; }
+  if (n.source === "ledger") {
+    const bits = [["Status", n.status], ["Lien", n.lien_status ? n.lien_status + (n.lien_notice ? " · " + n.lien_notice : "") : null], ["Quick status", n.note],
+      ["Paid", n.paid_date ? fmtDateShort(n.paid_date) : null], ["Last action", n.last_action_date ? fmtDateShort(n.last_action_date) : null],
+      ["Next follow-up", n.next_followup ? fmtDateShort(n.next_followup) : null], ["Aging", n.aging_bucket], ["Litigation", n.litigation ? "yes" : null]].filter(b => b[1]);
+    line("qh-line", bits.map(b => `${b[0]}: ${b[1]}`).join(" · ") || "on the tracker");
+  } else line("qh-line", `The tracker row is gone from the ledger (the sync archives a deleted invoice's page) - the page it had, last seen ${when(n.last_seen)}:`);
+  if (n.url) { const el = line("qh-line", ""); const a = document.createElement("a"); a.href = n.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "open the tracker page ↗"; el.appendChild(a);
+    const np = document.createElement("div"); np.className = "qh-np"; body.appendChild(np); invNotionSection(np, n.url, n.source === "ledger"); }
+}
+function qaHistRow(c, colSpan) {
+  const tr = document.createElement("tr"); tr.className = "qa-detail qa-hist"; tr.dataset.hist = c.rec_id;
+  tr.appendChild(document.createElement("td"));
+  const td = document.createElement("td"); td.className = "left"; td.colSpan = colSpan - 1;
+  const body = document.createElement("div"); body.className = "qh-body"; body.textContent = "Reading the invoice…"; td.appendChild(body); tr.appendChild(td);
+  const draw = d => qaHistInto(body, d);
+  if (_qaHist[c.rec_id]) draw(_qaHist[c.rec_id]);
+  else fetch("/api/qboaudit/invoice?id=" + encodeURIComponent(c.rec_id)).then(r => r.json()).then(d => { if (d && d.ok) _qaHist[c.rec_id] = d; draw(d); }).catch(e => draw({ ok: false, error: String(e) }));
+  return tr;
+}
 function renderQboAudit() {
   const note = $("#qaNote"), stats = $("#qaStats"), filt = $("#qaFilters"), table = $("#qaTable"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
@@ -8944,10 +9755,13 @@ function renderQboAudit() {
     tbody.innerHTML = QA && QA.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(QA.error)}</td></tr>` : "";
     return;
   }
-  const everything = QA.changes || [], fc = QA.flag_counts || {};
+  const sk = qaScopeKey(), scope = QA_SCOPES[sk], everything = (QA.changes || []).filter(c => c.parent_id || scope.pass(c));
+  { const h = $("#qaTitle"); if (h) h.textContent = scope.title; }
   const kids = {}; for (const c of everything) if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);   // bills a check lost, under the check
   const okd = everything.filter(c => !c.parent_id && c.ok_at);   // the owner's "that's OK" - off the list unless asked for
   const all = everything.filter(c => !c.parent_id && (qaShowOk || !c.ok_at)), flagged = all.filter(c => c.flags.length && !c.ok_at);
+  const fc = {}; for (const c of flagged) for (const f of c.flags) fc[f] = (fc[f] || 0) + 1;   // the chips count THIS category
+  if (qaFlag && !fc[qaFlag]) qaFlag = null;                       // a chip picked on another category does not hide this one
   if (note) note.textContent = `refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
   if (stats) stats.innerHTML = "";
   filt.innerHTML = "";
@@ -8961,16 +9775,16 @@ function renderQboAudit() {
   const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
   const base = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
     && refHit(q, [c.doc_number, c.doc_before]));   // ref # only - type / vendor / project / class are the column funnels
-  const rows = hfSorted("qboaudit", base.filter(c => hfPasses("qboaudit", c)));
+  const rows = hfSorted(sk, base.filter(c => hfPasses(sk, c)));   // column funnels + sort remembered per category
   const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left", "qatype"], ["No.", "left"], ["Vendor / client", "left", "qaparty"], ["Project", "left", "qaproj"], ["Class", "left", "qaclass"],
     ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
   thead.innerHTML = "";
   { const tr = document.createElement("tr");
     for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
-      if (hk) hfDecorate(th, "qboaudit", hk, () => base.filter(r => hfPasses("qboaudit", r, hk)), renderQboAudit); tr.appendChild(th); }
+      if (hk) hfDecorate(th, sk, hk, () => base.filter(r => hfPasses(sk, r, hk)), renderQboAudit); tr.appendChild(th); }
     thead.appendChild(tr); }
   tbody.innerHTML = "";
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${_ge(all.length ? "Nothing matches." : `${scope.empty} in this window - widen it (All = since the change log began, 09/23/2026) or refresh from QuickBooks.`)}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
   const qaRow = (c, child) => {
     const tr = document.createElement("tr");
@@ -9016,7 +9830,13 @@ function renderQboAudit() {
     if (what !== null) for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCellC(v)); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = moneyC(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
-      s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
+      s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s);
+      if (!child && c.entity === "Invoice") {   // the invoice's story: created, every change, payments, the tracker page (2026-10-11)
+        const a = document.createElement("a"); a.href = "#"; a.className = "qa-histlink"; a.textContent = qaHistOpen.has(c.rec_id) ? "hide story" : "story";
+        a.title = "When it was created, every change on record, the payments on it and its Notion Invoice Tracker page";
+        a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (qaHistOpen.has(c.rec_id)) qaHistOpen.delete(c.rec_id); else qaHistOpen.add(c.rec_id); const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y); };
+        td.appendChild(a); }
+      tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left qa-okcell";   // the owner's review: OK = seen, fine, off the list next run
       if (!child && c.ok_at) {
         const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = `OK'd ${fmtDateShort(c.ok_at)}`; td.appendChild(s);
@@ -9046,6 +9866,7 @@ function renderQboAudit() {
     for (const c of gr) {
       frag.appendChild(qaRow(c, false));
       { const d = qaDetail(c, false); if (d) frag.appendChild(d); }
+      if (c.entity === "Invoice" && (sk === "qboardel" || qaHistOpen.has(c.rec_id))) frag.appendChild(qaHistRow(c, cols.length));   // every deleted invoice tells its story unasked
       for (const k of kids[c.id] || []) { frag.appendChild(qaRow(k, true)); const d = qaDetail(k, true); if (d) frag.appendChild(d); }
     }
   }
@@ -9485,115 +10306,248 @@ function renderUncleared() {
 let DC = null, dcFilter = "all";
 const DC_BAD = new Set(["Both have invoices", "Money on duplicate"]);
 const DC_KIND = { Bill: "bill", Purchase: "expense", JournalEntry: "journal", VendorCredit: "vendorcredit", Invoice: "invoice" };
-// ── Reclassify transactions (owner 2026-10-07: "add this tool as reclassify transactions in the ledger") ──
-// Cost LINES from one project to another, line level: a multi-job sub bill keeps its other lines. Preview reads the
-// mirror (/api/reclassify/plan, no write); every line is ticked except closed-period ones (closing password - by hand);
-// an optional cost-code swap per code on FROM. The write runs only after "Are you sure?", and the server refuses unless
-// the ticked lines are still exactly the preview; each document is re-read live, backed up, and proven after the write.
-let RC = null, RC_OPT = null, rcTick = new Set();
-const rcKind = e => e === "Purchase" ? "expense" : e === "VendorCredit" ? "vendorcredit" : "bill";
-const rcType = e => e === "Purchase" ? "Expense" : e === "VendorCredit" ? "Vendor credit" : "Bill";
+// ── Reclassify transactions (owner 2026-10-07; full suite 10-09: "you look at it from a P&L, you click the account and
+// select the transactions to move ... for line items ... reclassify all, item or category, memo, class, project ... bulk
+// edit"). Find lines (/api/reclassify/plan, mirror, no write) by date / type / account (+ its sub-accounts) / item / class /
+// project / name / memo / doc #, or open the P&L by account and click one. Tick lines; the change panel offers each field
+// the ticked lines can carry (all -> one value, or Map each current value); every changed cell shows old → new. The
+// write runs only after "Are you sure?" + Touch ID, and the server refuses unless each line is still the preview.
+let RC = null, RC_OPT = null, rcTick = new Set(), rcLook = null;
+let rcChg = null;
+const RC_REF = [["account", "Account", "rcAccounts"], ["item", "Item", "rcItems"], ["class", "Class", "rcClasses"], ["project", "Project", "rcProjects"]];
+const RC_TEXT = [["memo", "Line memo"], ["docmemo", "Document memo"]];
+const RC_KIND = { Bill: "bill", Purchase: "expense", VendorCredit: "vendorcredit", JournalEntry: "journal", Invoice: "invoice", CreditMemo: "creditmemo", SalesReceipt: "salesreceipt" };
+const RC_TYPE = { Bill: "Bill", Purchase: "Expense", VendorCredit: "Vendor credit", JournalEntry: "Journal entry", Invoice: "Invoice", CreditMemo: "Credit memo", SalesReceipt: "Sales receipt" };
+function rcReset() { rcChg = { account: { all: "", each: {}, open: false }, item: { all: "", each: {}, open: false }, class: { all: "", each: {}, open: false },
+  project: { all: "", each: {}, open: false }, memo: { mode: "", find: "", text: "" }, docmemo: { mode: "", find: "", text: "" } }; }
+rcReset();
 async function loadReclassify() {
   if (RC_OPT && RC_OPT.ok) return;
   try { RC_OPT = await (await fetch("/api/reclassify/options")).json(); } catch (e) { RC_OPT = { ok: false, error: String(e) }; }
-  const pl = $("#rcProjects"), cl = $("#rcCodes"); if (!pl || !RC_OPT.ok) return;
-  pl.innerHTML = ""; cl.innerHTML = "";
-  for (const p of RC_OPT.projects) { const o = document.createElement("option"); o.value = p.proj; o.label = p.name; pl.appendChild(o); }
-  for (const c of RC_OPT.codes) { const o = document.createElement("option"); o.value = c; cl.appendChild(o); }
+  if (!RC_OPT.ok) { const m = $("#rcMsg"); if (m) { m.innerHTML = ""; rcLine(m, RC_OPT.error || "failed", "neg"); } return; }
+  const fill = (id, vals, none) => { const dl = $("#" + id); if (!dl) return; dl.innerHTML = "";
+    if (none) { const o = document.createElement("option"); o.value = "(none)"; dl.appendChild(o); }
+    for (const [v, l] of vals) { const o = document.createElement("option"); o.value = v; if (l) o.label = l; dl.appendChild(o); } };
+  const projVals = RC_OPT.projects.map(p => [p.proj || p.name, p.proj ? p.name : ""]);
+  fill("rcAccounts", RC_OPT.accounts.map(a => [a.name, a.type])); fill("rcItems", RC_OPT.items.map(i => [i.name, ""]));
+  fill("rcClasses", RC_OPT.classes.map(c => [c.name, ""])); fill("rcProjects", projVals);
+  fill("rcClassesF", RC_OPT.classes.map(c => [c.name, ""]), true); fill("rcProjectsF", projVals, true);
+  rcLook = {};
+  const add = (f, k, id) => { const m = rcLook[f] || (rcLook[f] = {}); k = String(k || "").trim().toLowerCase(); if (!k) return; m[k] = m[k] && m[k] !== id ? "?" : id; };
+  for (const a of RC_OPT.accounts) { add("account", a.name, a.id); add("account", a.name.split(":").pop(), a.id); }
+  for (const i of RC_OPT.items) add("item", i.name, i.id);
+  for (const c of RC_OPT.classes) { add("class", c.name, c.id); add("class", c.name.split(":").pop(), c.id); }
+  for (const p of RC_OPT.projects) { add("project", p.name, p.id); if (p.proj) add("project", p.proj, p.id); }
+  rcLook.names = {};
+  for (const [f, list] of [["account", RC_OPT.accounts], ["item", RC_OPT.items], ["class", RC_OPT.classes], ["project", RC_OPT.projects]])
+    rcLook.names[f] = Object.fromEntries(list.map(x => [x.id, f === "project" && x.proj ? x.proj : x.name]));
 }
-function rcRecode() {
-  return $$("#rcCodesBar input[data-code]").map(i => [i.dataset.code, i.value.trim().toUpperCase()])
-    .filter(([o, n]) => n && n !== o).map(([o, n]) => `${o}=${n}`).join(",");
+function rcId(f, text) {   // typed name -> QuickBooks id ("" = blank, null = not one record)
+  const t = String(text || "").trim(); if (!t) return "";
+  if (!rcLook || !rcLook[f]) return null;
+  const id = rcLook[f][t.toLowerCase()]; return id && id !== "?" ? id : null;
 }
-async function rcPreview() {
-  const from = ($("#rcFrom").value || "").trim().toUpperCase(), to = ($("#rcTo").value || "").trim().toUpperCase();
+function rcFilters(mode) {
+  const q = { mode: mode || "lines", d1: $("#rcD1").value, d2: $("#rcD2").value, types: $("#rcTypes").value,
+              name: $("#rcFName").value.trim(), memo: $("#rcFMemo").value.trim(), doc: $("#rcFDoc").value.trim() };
+  for (const [f, id] of [["account", "#rcFAccount"], ["item", "#rcFItem"], ["class", "#rcFClass"], ["project", "#rcFProject"]]) {
+    const v = $(id).value.trim(); if (!v) continue;
+    if ((f === "class" || f === "project") && v.toLowerCase() === "(none)") { q[f] = "none"; continue; }
+    const got = rcId(f, v); if (got === null) return { error: `No single QuickBooks ${f} named "${v}".` };
+    q[f] = got;
+  }
+  return q;
+}
+async function rcPreview(mode) {
+  if (typeof mode !== "string") mode = "lines";
+  await loadReclassify();
   const msg = $("#rcMsg"); msg.innerHTML = ""; $("#rcResult").innerHTML = "";
-  if (!from || !to) { rcLine(msg, "Pick both projects.", "neg"); return; }
-  const keep = RC && RC.ok && RC.from === from ? rcRecode() : "";
-  const btn = $("#btnRcPreview"); btn.disabled = true; btn.textContent = "Reading…";
+  if (mode === "pnl" && !$("#rcD1").value && !$("#rcD2").value) { const y = new Date().getFullYear(); $("#rcD1").value = `${y}-01-01`; }
+  const q = rcFilters(mode);
+  if (q.error) { rcLine(msg, q.error, "neg"); return; }
+  const btn = mode === "pnl" ? $("#btnRcPnl") : $("#btnRcPreview"), label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Reading…";
   skeletonInto($("#rcTable").tBodies[0] || $("#rcTable"), 6);
-  try { RC = await (await fetch(`/api/reclassify/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&recode=${encodeURIComponent(keep)}`)).json(); }
+  try { RC = await (await fetch("/api/reclassify/plan?" + new URLSearchParams(q).toString())).json(); }
   catch (e) { RC = { ok: false, error: String(e) }; }
-  btn.disabled = false; btn.textContent = "Preview";
-  rcTick = new Set(RC.ok ? RC.rows.filter(r => !r.closed).map(r => r.key) : []);
+  btn.disabled = false; btn.textContent = label;
+  rcTick = new Set(RC.ok && RC.rows ? RC.rows.filter(r => !r.closed).map(r => r.key) : []);
   renderReclassify();
 }
 function rcLine(host, text, cls) { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; host.appendChild(x); return x; }
+function rcNew(r, f) {   // the new value a ticked line gets for one field, or undefined
+  if (!r.edit.includes(f)) return undefined;
+  if (RC_TEXT.some(([k]) => k === f)) {
+    const s = rcChg[f]; if (!s.mode) return undefined;
+    const nv = s.mode === "set" ? s.text : (s.find ? r[f].split(s.find).join(s.text) : r[f]);
+    return nv !== r[f] ? nv : undefined;
+  }
+  const c = rcChg[f], typed = (c.open && c.each[r[f]]) || c.all;
+  const id = rcId(f, typed); return id && id !== r[f] ? id : undefined;
+}
+function rcRowChanges(r) { const out = {}; for (const f of [...RC_REF.map(x => x[0]), ...RC_TEXT.map(x => x[0])]) { const v = rcNew(r, f); if (v !== undefined) out[f] = v; } return out; }
+function rcLabel(f, id) { return (rcLook && rcLook.names[f] && rcLook.names[f][id]) || id; }
 function renderReclassify() {
   const table = $("#rcTable"), thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
-  const msg = $("#rcMsg"), bar = $("#rcCodesBar"), act = $("#rcAct"), note = $("#rcNote");
-  msg.innerHTML = ""; thead.innerHTML = ""; tbody.innerHTML = ""; act.hidden = true; act.innerHTML = "";
-  if (!RC || !RC.ok) { bar.hidden = true; note.textContent = ""; if (RC) rcLine(msg, RC.error || "failed", "neg"); return; }
-  note.textContent = `${RC.from_name} → ${RC.to_name}`;
-  bar.hidden = !RC.codes_on_from.length; bar.innerHTML = "";
-  if (RC.codes_on_from.length) {
-    const lab = document.createElement("span"); lab.className = "seg-lbl"; lab.textContent = "Cost code"; bar.appendChild(lab);
-    for (const c of RC.codes_on_from) {
-      const w = document.createElement("label"); w.className = "rc-code"; w.append(c + " → ");
-      const i = document.createElement("input"); i.type = "search"; i.dataset.code = c; i.setAttribute("list", "rcCodes"); i.placeholder = "same";
-      i.value = RC.recode[c.toUpperCase()] || ""; i.onchange = rcPreview; w.appendChild(i); bar.appendChild(w);
-    }
-  }
-  if (!RC.rows.length) rcLine(msg, `No bills, expenses or vendor credits on ${RC.from}.`);
-  for (const j of RC.je) rcLine(msg, `Journal entry ${j.doc || j.id} · ${fmtDateShort(j.date)} · ${qaCents(j.amount)} on ${RC.from} - not moved here.`, "warn");
-  if (!RC.rows.length) return;
+  const msg = $("#rcMsg"), act = $("#rcAct"), note = $("#rcNote"), panel = $("#rcChange");
+  msg.innerHTML = ""; thead.innerHTML = ""; tbody.innerHTML = ""; act.hidden = true; act.innerHTML = ""; panel.hidden = true;
+  if (!RC || !RC.ok) { note.textContent = ""; if (RC) rcLine(msg, RC.error || "failed", "neg"); return; }
+  if (RC.mode === "pnl") return renderRcPnl();
+  note.textContent = `${RC.total.toLocaleString()} line${RC.total !== 1 ? "s" : ""} · ${qaCents(RC.amount)}`;
+  if (RC.truncated) rcLine(msg, `Showing the first ${RC.rows.length.toLocaleString()} - narrow the filters to see the rest.`, "warn");
+  if (!RC.rows.length) { rcLine(msg, "No lines match."); return; }
   const open = RC.rows.filter(r => !r.closed);
   const trh = document.createElement("tr");
   const thc = document.createElement("th"); const all = document.createElement("input"); all.type = "checkbox";
   all.checked = open.length && open.every(r => rcTick.has(r.key)); all.title = "Tick / untick every line";
   all.onchange = () => { rcTick = new Set(all.checked ? open.map(r => r.key) : []); renderReclassify(); };
   thc.appendChild(all); trh.appendChild(thc);
-  for (const [h, c] of [["Type", "left"], ["Doc #", "left"], ["Date", "left"], ["Vendor", "left"], ["Cost code", "left"], ["Amount", "right"], ["Lines on doc", "right"], ["Description", "left"]]) {
+  for (const [h, c] of [["Type", "left"], ["Doc #", "left"], ["Date", "left"], ["Name", "left"], ["Account", "left"], ["Item", "left"], ["Class", "left"], ["Project", "left"], ["Memo", "left"], ["Amount", "right"]]) {
     const th = document.createElement("th"); th.className = c; th.textContent = h; trh.appendChild(th); }
   thead.appendChild(trh);
   for (const r of RC.rows) {
+    const ch = rcTick.has(r.key) ? rcRowChanges(r) : {};
     const tr = document.createElement("tr"); if (r.closed) tr.className = "dim";
     const td = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = rcTick.has(r.key); cb.disabled = r.closed; if (r.closed) cb.title = `Dated on or before the books-closed date (${fmtDateShort(RC.closed_date)}) - move it in QuickBooks with the closing password`;
-    cb.onchange = () => { cb.checked ? rcTick.add(r.key) : rcTick.delete(r.key); rcActions(); };
+    cb.checked = rcTick.has(r.key); cb.disabled = r.closed; if (r.closed) cb.title = `Dated on or before the books-closed date (${fmtDateShort(RC.closed_date)}) - change it in QuickBooks with the closing password`;
+    cb.onchange = () => { cb.checked ? rcTick.add(r.key) : rcTick.delete(r.key); renderReclassify(); };
     td.appendChild(cb); tr.appendChild(td);
-    tr.appendChild(leftText(rcType(r.entity) + (r.closed ? " · closed" : "")));
-    tr.appendChild(qboLinkCell(r.doc || r.id, qboUrl(rcKind(r.entity), r.id), "Open in QuickBooks"));
-    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.vendor));
-    tr.appendChild(leftText(r.new_code ? `${r.code} → ${r.new_code}` : r.code));
-    for (const v of [qaCents(r.signed), String(r.doc_lines)]) { const c = document.createElement("td"); c.className = "right"; c.textContent = v; tr.appendChild(c); }
-    tr.appendChild(leftText(r.desc)); tbody.appendChild(tr);
+    tr.appendChild(leftText(RC_TYPE[r.entity] + (r.kind === "item" ? " · item" : "") + (r.closed ? " · closed" : "")));
+    tr.appendChild(qboLinkCell(r.doc || r.id, qboUrl(RC_KIND[r.entity], r.id), "Open in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.name));
+    const cell = (f, now) => { const c = leftText(now || ""); if (f === "account" && (r.kind === "item" || r.kind === "sales")) c.classList.add("dim");
+      if (ch[f] !== undefined) { c.innerHTML = ""; const o = document.createElement("s"); o.className = "dim"; o.textContent = now || "–";
+        const n = document.createElement("b"); n.className = "rc-new"; n.textContent = RC_TEXT.some(([k]) => k === f) ? (ch[f] || "(blank)") : rcLabel(f, ch[f]);
+        c.append(o, " → ", n); }
+      return c; };
+    tr.appendChild(cell("account", r.account_name)); tr.appendChild(cell("item", r.item_name));
+    tr.appendChild(cell("class", r.class_name)); tr.appendChild(cell("project", r.proj || r.project_name));
+    const mc = cell(ch.docmemo !== undefined && ch.memo === undefined ? "docmemo" : "memo", ch.docmemo !== undefined && ch.memo === undefined ? r.docmemo : r.memo);
+    mc.classList.add("rc-memo"); mc.title = [r.memo, r.docmemo && r.docmemo !== r.memo ? "Document memo: " + r.docmemo : ""].filter(Boolean).join("\n");
+    tr.appendChild(mc);
+    const a = document.createElement("td"); a.className = "right"; a.textContent = qaCents(r.signed); tr.appendChild(a);
+    tbody.appendChild(tr);
   }
-  rcActions();
+  renderRcChange(); rcActions();
 }
-function rcPicked() { return RC.rows.filter(r => !r.closed && rcTick.has(r.key)); }
+function renderRcPnl() {
+  const table = $("#rcTable"), thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  $("#rcNote").textContent = `P&L · ${RC.d1 ? fmtDateShort(RC.d1) : "start"} – ${RC.d2 ? fmtDateShort(RC.d2) : "today"}`;
+  if (!RC.accounts.length) { rcLine($("#rcMsg"), "Nothing posted in that range."); return; }
+  thead.innerHTML = `<tr><th class="left">Account</th><th class="left">Type</th><th class="right">Lines</th><th class="right">Amount</th></tr>`;
+  let last = "";
+  for (const a of RC.accounts) {
+    if (a.cls !== last) { last = a.cls; const g = document.createElement("tr"); g.className = "rc-pl-group";
+      const t = document.createElement("td"); t.colSpan = 4; t.textContent = a.cls === "Revenue" ? "Income" : "Costs and expenses"; g.appendChild(t); tbody.appendChild(g); }
+    const tr = document.createElement("tr"); tr.className = "rc-pl-row"; tr.tabIndex = 0; tr.title = "Show these lines";
+    tr.appendChild(leftText(a.name)); tr.appendChild(leftText(a.type));
+    for (const v of [a.lines.toLocaleString(), qaCents(a.amount)]) { const c = document.createElement("td"); c.className = "right"; c.textContent = v; tr.appendChild(c); }
+    const go = () => { $("#rcFAccount").value = a.name; rcPreview("lines"); };
+    tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); };
+    tbody.appendChild(tr);
+  }
+}
+function renderRcChange() {
+  const panel = $("#rcChange"); panel.innerHTML = "";
+  const ticked = RC.rows.filter(r => !r.closed && rcTick.has(r.key));
+  if (!ticked.length) return;
+  panel.hidden = false;
+  const head = document.createElement("div"); head.className = "rc-ch-head"; head.textContent = `Change the ${ticked.length.toLocaleString()} ticked line${ticked.length !== 1 ? "s" : ""}`;
+  const clr = document.createElement("button"); clr.type = "button"; clr.className = "btn small"; clr.textContent = "Clear changes";
+  clr.onclick = () => { rcReset(); renderReclassify(); }; head.appendChild(clr); panel.appendChild(head);
+  const redraw = () => { const keep = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.rcf : null;
+    renderReclassify(); if (keep) { const el = panel.querySelector(`[data-rcf="${keep}"]`); if (el) { el.focus(); const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) { /* select */ } } } };
+  for (const [f, label, list] of RC_REF) {
+    const can = ticked.filter(r => r.edit.includes(f));
+    if (!can.length) continue;
+    const c = rcChg[f], row = document.createElement("div"); row.className = "rc-ch-row";
+    const l = document.createElement("span"); l.className = "rc-ch-lbl"; l.textContent = label; row.appendChild(l);
+    const inp = document.createElement("input"); inp.type = "search"; inp.setAttribute("list", list); inp.autocomplete = "off"; inp.spellcheck = false;
+    inp.placeholder = c.open ? "every other value →" : "keep"; inp.value = c.all; inp.dataset.rcf = f + ":all";
+    if (c.all && rcId(f, c.all) === null) inp.classList.add("rc-bad");
+    inp.onchange = () => { c.all = inp.value.trim(); redraw(); };
+    row.appendChild(inp);
+    const olds = [...new Map(can.map(r => [r[f], r])).values()];
+    if (olds.length > 1 || c.open) {
+      const t = document.createElement("button"); t.type = "button"; t.className = "btn small"; t.textContent = c.open ? "One value" : `Map each (${olds.length})`;
+      t.onclick = () => { c.open = !c.open; renderReclassify(); }; row.appendChild(t);
+    }
+    if (f !== "account" && can.length < ticked.length) { const s = document.createElement("span"); s.className = "dim"; s.textContent = `${can.length} of ${ticked.length} lines can carry it`; row.appendChild(s); }
+    panel.appendChild(row);
+    if (c.open) {
+      const box = document.createElement("div"); box.className = "rc-ch-map";
+      for (const r of olds.slice(0, 40)) {
+        const w = document.createElement("label"); w.className = "rc-code";
+        const nm = f === "account" ? r.account_name : f === "item" ? r.item_name : f === "class" ? r.class_name : (r.proj || r.project_name);
+        w.append((nm || "(blank)") + " → ");
+        const i = document.createElement("input"); i.type = "search"; i.setAttribute("list", list); i.autocomplete = "off"; i.spellcheck = false;
+        i.placeholder = c.all || "keep"; i.value = c.each[r[f]] || ""; i.dataset.rcf = `${f}:${r[f]}`;
+        if (i.value && rcId(f, i.value) === null) i.classList.add("rc-bad");
+        i.onchange = () => { c.each[r[f]] = i.value.trim(); redraw(); };
+        w.appendChild(i); box.appendChild(w);
+      }
+      panel.appendChild(box);
+    }
+  }
+  for (const [f, label] of RC_TEXT) {
+    const s = rcChg[f], row = document.createElement("div"); row.className = "rc-ch-row";
+    const l = document.createElement("span"); l.className = "rc-ch-lbl"; l.textContent = label; row.appendChild(l);
+    const sel = document.createElement("select");
+    for (const [v, t] of [["", "keep"], ["replace", "find & replace"], ["set", "set to"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
+    sel.value = s.mode; sel.onchange = () => { s.mode = sel.value; renderReclassify(); }; row.appendChild(sel);
+    if (s.mode === "replace") { const fi = document.createElement("input"); fi.type = "text"; fi.placeholder = "find"; fi.value = s.find; fi.dataset.rcf = f + ":find";
+      fi.onchange = () => { s.find = fi.value; redraw(); }; row.appendChild(fi); }
+    if (s.mode) { const ti = document.createElement("input"); ti.type = "text"; ti.placeholder = s.mode === "replace" ? "replace with" : "new memo"; ti.value = s.text; ti.dataset.rcf = f + ":text";
+      ti.className = "rc-ch-text"; ti.onchange = () => { s.text = ti.value; redraw(); }; row.appendChild(ti); }
+    panel.appendChild(row);
+  }
+}
+function rcPicked() { return RC.rows.filter(r => !r.closed && rcTick.has(r.key)).map(r => [r, rcRowChanges(r)]).filter(([, ch]) => Object.keys(ch).length); }
 function rcActions() {
   const act = $("#rcAct"); act.hidden = false; act.innerHTML = "";
-  const pick = rcPicked(), amt = Math.round(pick.reduce((s, r) => s + r.signed, 0) * 100) / 100;
-  const s = document.createElement("span"); s.className = "dim"; s.textContent = `${pick.length} line${pick.length !== 1 ? "s" : ""} · ${qaCents(amt)}  `; act.appendChild(s);
+  const ticked = RC.rows.filter(r => !r.closed && rcTick.has(r.key)).length;
+  const pick = rcPicked(), amt = Math.round(pick.reduce((s, [r]) => s + r.signed, 0) * 100) / 100;
+  const s = document.createElement("span"); s.className = "dim";
+  s.textContent = `${pick.length} line${pick.length !== 1 ? "s" : ""} change · ${qaCents(amt)}` + (ticked > pick.length ? ` · ${ticked - pick.length} ticked line${ticked - pick.length !== 1 ? "s" : ""} unchanged` : "") + "  ";
+  act.appendChild(s);
   const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.textContent = "Reclassify in QuickBooks…";
   w.disabled = !pick.length; w.onclick = () => rcWrite(pick, amt, w); act.appendChild(w);
 }
+function rcPayload(pick) {
+  const changes = {};
+  for (const [r, ch] of pick) for (const [f] of RC_REF) if (ch[f] !== undefined) (changes[f] || (changes[f] = {}))[r[f]] = ch[f];
+  for (const [f] of RC_TEXT) if (pick.some(([, ch]) => ch[f] !== undefined)) changes[f] = { mode: rcChg[f].mode, find: rcChg[f].find, text: rcChg[f].text };
+  return changes;
+}
 async function rcWrite(pick, amt, btn) {
-  const docs = new Set(pick.map(r => r.entity + r.id)).size;
-  const swaps = Object.entries(RC.recode).map(([o, n]) => `${o} → ${n}`).join(", ");
-  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: ${pick.length} line${pick.length !== 1 ? "s" : ""} on ${docs} document${docs !== 1 ? "s" : ""}, ${qaCents(amt)},\nmove from ${RC.from} to ${RC.to}.`
-    + (swaps ? `\nCost code on those lines: ${swaps}.` : "") + `\n\nOnly those lines change. Each document is backed up first.`)) return;
+  const docs = new Set(pick.map(([r]) => r.entity + r.id)).size, changes = rcPayload(pick);
+  const lines = [];
+  for (const [f, label] of RC_REF) if (changes[f]) {
+    const pairs = Object.entries(changes[f]).map(([o, n]) => `${o ? rcLabel(f, o) : "(blank)"} → ${rcLabel(f, n)}`);
+    lines.push(`${label}: ${pairs.slice(0, 6).join(", ")}${pairs.length > 6 ? ` … (+${pairs.length - 6})` : ""}`); }
+  for (const [f, label] of RC_TEXT) if (changes[f]) lines.push(changes[f].mode === "set" ? `${label}: set to "${changes[f].text}"` : `${label}: "${changes[f].find}" → "${changes[f].text}"`);
+  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: ${pick.length} line${pick.length !== 1 ? "s" : ""} on ${docs} document${docs !== 1 ? "s" : ""}, ${qaCents(amt)}.\n\n${lines.join("\n")}`
+    + `\n\nOnly those lines change; amounts stay. Each document is backed up first.`)) return;
   btn.disabled = true; btn.textContent = "Writing…";
   let res;
   try { res = await (await fetch("/api/reclassify/commit", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RC.from, to: RC.to, recode: Object.entries(RC.recode).map(([o, n]) => `${o}=${n}`).join(","),
-                           keys: pick.map(r => r.key), n: pick.length, amount: amt, confirm: true }) })).json(); }
+    body: JSON.stringify({ keys: pick.map(([r]) => r.key), sigs: Object.fromEntries(pick.map(([r]) => [r.key, r.sig])), changes,
+                           n: pick.length, amount: amt, confirm: true }) })).json(); }
   catch (e) { res = { ok: false, error: String(e) }; }
   const out = $("#rcResult"); out.innerHTML = "";
   if (res.results && res.results.length) {
     const t = document.createElement("table"); t.className = "qa-repair-tbl";
-    t.innerHTML = `<thead><tr><th class="left">Doc #</th><th class="left">Result</th><th class="left"></th></tr></thead>`;
+    t.innerHTML = `<thead><tr><th class="left">Doc #</th><th class="left">Type</th><th class="left">Result</th><th class="left"></th></tr></thead>`;
     const tb = document.createElement("tbody");
     for (const x of res.results) { const tr = document.createElement("tr");
-      tr.appendChild(qboLinkCell(x.doc, qboUrl(rcKind(x.entity), x.id), "Open in QuickBooks"));
-      tr.appendChild(leftText(x.result)); tr.appendChild(leftText(x.detail)); tb.appendChild(tr); }
+      tr.appendChild(qboLinkCell(x.doc, qboUrl(RC_KIND[x.entity], x.id), "Open in QuickBooks"));
+      tr.appendChild(leftText(RC_TYPE[x.entity] || x.entity)); tr.appendChild(leftText(x.result)); tr.appendChild(leftText(x.detail)); tb.appendChild(tr); }
     t.appendChild(tb); out.appendChild(t);
   }
-  rcLine(out, res.ok ? `Done: ${res.moved_lines} line${res.moved_lines !== 1 ? "s" : ""} on ${res.moved_docs} document${res.moved_docs !== 1 ? "s" : ""} now on ${RC.to}.`
+  rcLine(out, res.ok ? `Done: ${res.moved_lines} line${res.moved_lines !== 1 ? "s" : ""} on ${res.moved_docs} document${res.moved_docs !== 1 ? "s" : ""} changed.`
     + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : "") : `Stopped: ${res.error || "failed"}`, res.ok ? "ok" : "neg");
   btn.textContent = "Reclassify in QuickBooks…"; btn.disabled = false;
-  if (res.moved_docs) { const keep = out.innerHTML; await rcPreview(); $("#rcResult").innerHTML = keep; }
+  if (res.moved_docs) { const keep = out.innerHTML; rcReset(); await rcPreview("lines"); $("#rcResult").innerHTML = keep; }
 }
 
 async function loadDupCustomers(force) {
@@ -10027,6 +10981,45 @@ async function openBillScan(f, el) {
   } catch (e) { el.disabled = false; el.textContent = orig; }
 }
 
+// ── Keyboard on every filter bar (owner 2026-10-12: "when i press cmd f, and then tab i expect the select to go from
+// left to right so i can tab to vendor and immediately start typing their name once it shows tab and it saves the
+// check mark and goes to the next one"). ⌘F lands in Ref #; Tab walks the bar left to right (the buttons are in the
+// tab order). On a filter's button, typing a letter opens its menu with that letter in the search box (a menu with no
+// search box jumps to the first option starting with it); the first match is outlined = what Tab will tick. Tab ticks
+// it (if not ticked already), closes the menu and moves to the next control; Enter ticks it and stays; Esc closes.
+function _mselKeys(btn, menu, closeOthers) {
+  const opts = () => [...menu.querySelectorAll(".msel-opt")].filter(l => !l.hidden);
+  const mark = () => { menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); const f = opts()[0]; if (f) { f.classList.add("msel-next"); f.scrollIntoView({ block: "nearest" }); } };
+  const open = () => { if (menu.hidden) { closeOthers(); menu.hidden = false; _placeMenu(btn, menu); } };
+  const close = () => { menu.hidden = true; menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); };
+  const tickFirst = () => { const f = opts()[0]; if (!f) return false; const cb = f.querySelector("input[type=checkbox]"); if (cb && !cb.checked) cb.click(); return true; };
+  const next = (back) => { const bar = btn.closest(".bill-filters") || btn.closest(".widget-head, .vp-bar") || document;   // the whole bar, not the button's own .fld
+    const all = [...bar.querySelectorAll("button, input, select")].filter(x => x.offsetParent && !x.disabled && !x.closest(".msel-menu") && x.tabIndex >= 0);
+    const i = all.indexOf(btn); const t = all[i + (back ? -1 : 1)]; if (t) { t.focus(); if (t.select && t.type === "search") t.select(); } };
+  let prefix = "", pt = 0;
+  const jump = (ch) => {   // no search box: the first option starting with what was typed (letters typed quickly add up)
+    const now = Date.now(); prefix = (now - pt < 900 ? prefix : "") + ch.toLowerCase(); pt = now;
+    const hit = [...menu.querySelectorAll(".msel-opt")].find(l => l.textContent.trim().toLowerCase().startsWith(prefix));
+    menu.querySelectorAll(".msel-opt").forEach(l => l.hidden = false);
+    if (hit) { menu.querySelectorAll(".msel-opt.msel-next").forEach(l => l.classList.remove("msel-next")); hit.classList.add("msel-next"); hit.scrollIntoView({ block: "nearest" }); } };
+  btn.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Tab") { if (!menu.hidden && opts().some(l => l.classList.contains("msel-next"))) { e.preventDefault(); const f = menu.querySelector(".msel-opt.msel-next input"); if (f && !f.checked) f.click(); close(); next(e.shiftKey); } else close(); return; }
+    if (e.key === "Escape") { close(); return; }
+    if (e.key.length !== 1 || e.key === " ") return;
+    e.preventDefault(); open();
+    const q = menu.querySelector("input.msel-search");
+    if (q) { q.value = e.key; q.dispatchEvent(new Event("input", { bubbles: true })); q.focus(); q.setSelectionRange(1, 1); mark(); }
+    else jump(e.key);
+  });
+  menu.addEventListener("keydown", (e) => {
+    const q = e.target && e.target.matches && e.target.matches("input.msel-search") ? e.target : null;
+    if (e.key === "Tab" && q) { e.preventDefault(); if (!e.shiftKey) tickFirst(); close(); btn.focus(); next(e.shiftKey); return; }
+    if (e.key === "Enter" && q) { e.preventDefault(); tickFirst(); mark(); return; }
+    if (e.key === "Escape") { e.preventDefault(); close(); btn.focus(); return; }
+  });
+  menu.addEventListener("input", (e) => { if (e.target && e.target.matches && e.target.matches("input.msel-search")) mark(); });
+}
 function showScanMenu(files, el) {
   _closeScanMenu();
   const menu = document.createElement("div"); menu.className = "scan-menu"; menu.id = "scanMenu";
@@ -10066,6 +11059,7 @@ function init() {
     if (btn && menu) {
       btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; _closeMsels(menuId); menu.hidden = !open; if (open) _placeMenu(btn, menu); });   // one menu open at a time; pinned to the viewport so no card clips it
       document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
+      _mselKeys(btn, menu, () => _closeMsels(menuId));
     }
   }
 
@@ -10158,6 +11152,7 @@ function init() {
   { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
   { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("review"); }; }
   { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
+  { const el = $("#btnRevRefresh"); if (el) el.onclick = () => loadRevised(true); }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
   // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
   // above the fold"); remembered per person, and forced open while one of them is active.
@@ -10204,9 +11199,10 @@ function init() {
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
   { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
   { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
-  { const el = $("#btnRcPreview"); if (el) el.onclick = rcPreview;
-    for (const id of ["#rcFrom", "#rcTo"]) { const i = $(id); if (i) i.onkeydown = (e) => { if (e.key === "Enter") rcPreview(); }; } }
-  { const el = $("#btnRcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#rcProg"), fill: $("#rcFill"), step: $("#rcStep"), after: () => { RC_OPT = null; loadReclassify(); if (RC && RC.ok) rcPreview(); } }); }
+  { const el = $("#btnRcPreview"); if (el) el.onclick = () => rcPreview("lines");
+    const pl = $("#btnRcPnl"); if (pl) pl.onclick = () => rcPreview("pnl");
+    $$("#rcFilters input").forEach(i => { i.onkeydown = (e) => { if (e.key === "Enter") rcPreview("lines"); }; }); }
+  { const el = $("#btnRcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#rcProg"), fill: $("#rcFill"), step: $("#rcStep"), after: () => { RC_OPT = null; loadReclassify().then(() => { if (RC && RC.ok) rcPreview(RC.mode === "pnl" ? "pnl" : "lines"); }); } }); }
   { const el = $("#btnDcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#dcProg"), fill: $("#dcFill"), step: $("#dcStep"), after: () => loadDupCustomers(true) }); }
   { const el = $("#dcSearch"); if (el) { el.addEventListener("input", renderDupCustomers); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderDupCustomers(); } }); } }
   { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }
@@ -10242,6 +11238,8 @@ function init() {
   setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
+  setInterval(() => { loadServer(); loadStatements(); }, 90000);   // the office server monitor + the statement standings (reads of two small files on the share)
+  loadServer(); loadStatements();
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());
@@ -10451,7 +11449,8 @@ function rrRenderCards() {
       mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>`
         + `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`;
     } else {
-      const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.contract != null) ? gp - x.contract * 0.10 : null;
+      // finished: to-date figures, so overhead = 10% of BILLED, never the contract (owner 2026-10-14)
+      const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.billed != null) ? gp - x.billed * 0.10 : null;
       mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td class="n ${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}${gp != null && x.billed ? `<div class="d">${(gp / x.billed * 100).toFixed(1)}%</div>` : ""}</td><td class="n ${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</td><td>${_ge(x.last_day || "–")}</td>`;
     }
     // answer right on the list (owner 2026-09-15: "we only click if we need details"): the verdict + Save;
@@ -10556,13 +11555,13 @@ function rrCard(x, kind) {   // the RP card: schedule first, then the contract a
   const qboPl = x.costs_link ? `<a class="btn tiny" href="${_ge(x.costs_link)}" target="_blank" rel="noopener" title="The project's P&L in QuickBooks (costs)">QBO P&amp;L</a>` : "";
   // one line of numbers, each with its source, then the profit line (owner 2026-09-15: "remove big
   // block just show the numbers and below it gross profit - oh 10% net"). GP = contract - ETC (the WIP's
-  // original profit), overhead = 10% of the contract, net = GP - overhead.
+  // original profit), overhead = 10% of the contract; finished: 10% of billed (to date = billed), net = GP - overhead.
   const cell = (l, v, pill) => `<span class="rr-n"><span class="l">${l}</span> <span class="v">${v}</span>${pill || ""}</span>`;
   const K = x.contract, E = x.etc;
   // current: GP = contract - ETC (the WIP's original profit); finished: GP = billed - costs (actuals)
   const fin = kind === "finished";
   const gp = fin ? ((x.billed != null && x.costs != null) ? x.billed - x.costs : null) : ((K != null && E != null) ? K - E : null);
-  const oh = K != null ? K * 0.10 : null, net = (gp != null && oh != null) ? gp - oh : null;
+  const oh = fin ? (x.billed != null ? x.billed * 0.10 : null) : (K != null ? K * 0.10 : null), net = (gp != null && oh != null) ? gp - oh : null;
   const base = fin ? x.billed : K;
   const pctTxt = (gp != null && base) ? ` (${(gp / base * 100).toFixed(1)}%)` : "";
   const profit = K != null ? `<div class="rr-profit">Gross profit${fin ? " (billed - costs)" : ""} <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";

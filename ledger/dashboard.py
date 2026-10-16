@@ -48,6 +48,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven, wip_audit  # noqa: E402
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
 from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
+from shared import statement_record  # the vendor statement record the reconciler writes (Vendor Center bubble + Statement view)
+from shared import revised_sheet      # the Bill Tracker's Revised Bills sheet (AP-13): read-only here, /api/revisions
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -59,8 +61,11 @@ import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - 
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
-import reclassify         # noqa: E402  (local: Reclassify transactions - cost lines from one project to another, owner-confirmed QBO write)
+import invoice_view       # noqa: E402  (local: the invoice viewer - an invoice as QuickBooks holds it: lines, payments, joint checks; /api/invoice/view)
+import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
+import draw_periods       # noqa: E402  (local: a job's draw periods as set on the ledger - the project page's editor; never QBO)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
+import server_status      # noqa: E402  (local: the office server as the ledger watches it - server-status.json + writer.json -> one judgement)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
 HERE = Path(__file__).resolve().parent
@@ -74,7 +79,7 @@ STATIC = HERE / "static"
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
 # 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
-LEDGER_VERSION = "1.5.0"
+LEDGER_VERSION = "1.6.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -261,12 +266,14 @@ def _ensure_lien_vendor_dir(vendor: str):
 # ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
 # Conventions match project-pnl/project_pnl_export.py so the two reconcile:
 # Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
-# Overhead = a % of the CONTRACT (10% company, 9% MFD view - the user
-# 2026-09-03: "it's contract 10%"; total billed stands in when no contract is
-# on file, as the P&L workbook does). net = revenue − costs − overhead. Billed
-# (AR) is shown alongside as the realized view.
-_OVERHEAD_REV = 0.10          # company: 10% of the contract
-_OVERHEAD_MFD_COST = 0.09     # MFD view: 9% of the contract
+# Overhead = 10% company / 9% MFD view. The PROJECTION takes the rate x the
+# CONTRACT (the user 2026-09-03: "it's contract 10%"); every TO-DATE figure -
+# the actuals here, the Company P&L, each draw - takes the rate x GROSS BILLED so
+# far, never the full contract (the user 2026-10-02: "why would we add a future
+# OH amount to a current?"; 2026-10-14: "the oh on the actual should be the
+# actual billed NOT the contract price"). net = gross billed - costs - overhead.
+_OVERHEAD_REV = 0.10          # company rate
+_OVERHEAD_MFD_COST = 0.09     # MFD view rate
 
 
 def _project_pnl(con, proj: str) -> dict:
@@ -336,9 +343,8 @@ def _project_pnl(con, proj: str) -> dict:
         net_billed = q_net                            # fresh from the mirror (the ledger's copy can lag an edit)
     gross = q_gross if q_gross is not None else round(net_billed + ret, 2)
     ret = round(gross - net_billed, 2)
-    _base = contract or gross
     rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
-    overhead = round(rate * _base, 2)
+    overhead = round(rate * gross, 2)            # to date: rate x GROSS billed (the projection's contract basis is the page's)
     gross_profit = round(gross - cost, 2)
     net = round(gross - cost - overhead, 2)
     return {
@@ -349,7 +355,7 @@ def _project_pnl(con, proj: str) -> dict:
         "since_wip": since,
         "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
-        "overhead_basis": f"{rate * 100:g}% of contract" + (" (MFD)" if is_mfd else ""),
+        "overhead_basis": f"{rate * 100:g}% of gross billed" + (" (MFD)" if is_mfd else ""),
         "net": net, "net_pct": (net / gross) if gross else None,
         "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
@@ -401,7 +407,7 @@ def _portfolio_pnl(con) -> dict:
             b = qn                                 # NET billed, fresh from the mirror
         gross = qg if qg is not None else round(b + ret, 2)   # GROSS billed: QuickBooks income, before retainage
         ret = round(gross - b, 2)
-        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or gross), 2)
+        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * gross, 2)   # to date: rate x GROSS billed, never the contract
         net = round(gross - cost - oh, 2)         # actuals: GROSS billed - costs - overhead (owner 2026-09-23, the Excel P&L)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
             mtime = pnl_paths.find_pnl(p).get("mtime")
@@ -547,6 +553,8 @@ def _pipelines():
         ]},
         {"key": "uncleared", "label": "Uncleared checks (QBO)", "steps": [
             # QBO's TransactionList `cleared=Uncleared` filter -> uncleared_check + bank_match (owner 2026-09-24)
+            # mirror first: the loader drops voided ($0) and "to print" checks by the mirror's copy (owner 2026-10-09)
+            {"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
             {"label": "Pull uncleared checks (Touch ID)", "script": "ledger/load_uncleared_checks.py", "args": []},
         ]},
         {"key": "healthpull", "label": "Health metrics (QBO)", "steps": [
@@ -568,9 +576,11 @@ def _resolve_steps(pipeline_key):
     if pipeline_key == "wip-draft":
         return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
     if pipeline_key == "billpay":             # the vendor page's Refresh: just-entered payments without a sync-all
-        # mirror first (the stub prints read it), then the bill_payment table the page lists
+        # mirror first (the stub prints read it), then the bill_payment table the page lists, then QuickBooks' uncleared
+        # list so the Cleared column is current (owner 2026-10-15: "cleared or still out there")
         return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
-                {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []}]
+                {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []},
+                {"label": "Pull uncleared checks (QBO bank match)", "script": "ledger/load_uncleared_checks.py", "args": []}]
     if pipeline_key == "billsync":            # the vendor page's Bills-view Refresh: the Bill Tracker without a sync-all
         # mirror -> Bill Tracker.xlsx (the Bills list's source; fails if the file is open in Excel) -> ledger -> QBO open AP
         return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
@@ -731,13 +741,14 @@ def _project_customer_map(con) -> dict:
     return out
 
 
-_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> (memo, due date), per mirror refresh stamp (re-read only when the mirror moved)
+_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> (memo, due date, QBO balance), per mirror refresh stamp (re-read only when the mirror moved)
 
 
 def _bill_memos(bills: list) -> None:
-    """Put each bill's QuickBooks memo (PrivateNote) and due date (DueDate) on its row, from the mirror (the Bill Tracker workbook
-    never carried it; cost_line has it for half the bills only). Cached per mirror stamp, so the 90 s
-    refresh costs nothing until the mirror actually changes; a failed read is said once on stderr."""
+    """Put each bill's QuickBooks memo (PrivateNote), due date (DueDate) and open balance (Balance, as `qbo_balance`) on its
+    row, from the mirror (the Bill Tracker workbook never carried the memo; cost_line has it for half the bills only).
+    Cached per mirror stamp, so the 90 s refresh costs nothing until the mirror actually changes; a failed read is said
+    once on stderr. `qbo_balance` is None when the mirror has no record of the bill (or no Balance on it)."""
     ids = {str(b["bill_id"]) for b in bills if b.get("bill_id")}
     memos: dict = _MEMO_CACHE["memos"]
     if ids:
@@ -751,7 +762,8 @@ def _bill_memos(bills: list) -> None:
                     try:
                         for bid in missing:
                             rec = qbo_mirror.get("Bill", bid, con=mcon)
-                            memos[bid] = (str((rec or {}).get("PrivateNote") or ""), str((rec or {}).get("DueDate") or "")[:10])
+                            memos[bid] = (str((rec or {}).get("PrivateNote") or ""), str((rec or {}).get("DueDate") or "")[:10],
+                                          qbo_mirror._num(rec.get("Balance")) if rec and "Balance" in rec else None)
                     finally:
                         mcon.close()
                     _MEMO_CACHE["stamp"] = stamp
@@ -760,9 +772,57 @@ def _bill_memos(bills: list) -> None:
                 print(f"[memo] bill memos unavailable from the mirror: {e}", file=sys.stderr)
                 _MEMO_CACHE["warned"] = True
     for b in bills:
-        memo, due = memos.get(str(b.get("bill_id") or ""), ("", ""))
+        memo, due, bal = memos.get(str(b.get("bill_id") or ""), ("", "", None))
         b["memo"] = memo
         b["due_date"] = due or None                     # QuickBooks' due date - the vendor page's Unpaid view (owner 2026-10-01)
+        b["qbo_balance"] = bal                          # QuickBooks' own open balance (the mirror); None = not in the mirror
+
+
+def _mirror_newer_than(loaded_at: str) -> bool:
+    """True when the QuickBooks mirror was refreshed after the Bill Tracker workbook was loaded into the ledger
+    (`ap_bill_line.loaded_at`, naive local time) - then QuickBooks' balance is the newer fact. Absent-safe."""
+    if not loaded_at:
+        return True
+    try:
+        from shared import qbo_mirror
+        st = qbo_mirror.stamp()
+        if not st:
+            return False
+        return st.astimezone().replace(tzinfo=None).isoformat(timespec="seconds") >= str(loaded_at)[:19]
+    except Exception:                                   # noqa: BLE001 - no mirror = the workbook stands
+        return False
+
+
+def _apply_qbo_balance(bills: list, use_mirror: bool) -> list:
+    """QuickBooks' open balance wins over the workbook's (owner 2026-10-13: three HDS bills he had just paid in
+    QuickBooks stayed open - and on the pay run - because the ledger's workbook load was four days old; the
+    mirror, refreshed every 3 minutes, already showed them at 0). When the mirror is newer than the workbook
+    load, every bill the mirror knows gets its `Balance` as `open_balance`; a bill QuickBooks shows paid is
+    taken off the pay run (`pay_selected` False - the same as a payment written from here). Returns the bill
+    ids whose saved pay mark should be dropped (the caller purges them). Nothing changes when the mirror is
+    older or absent."""
+    drop = []
+    if not use_mirror:
+        return drop
+    for b in bills:
+        bal = b.get("qbo_balance")
+        if bal is None:
+            continue
+        b["open_balance"] = round(float(bal), 2)
+        if b["open_balance"] <= 0 and b.get("pay_selected"):
+            b["pay_selected"] = False
+            b["pay_amount"] = None
+            if b.get("bill_id"):
+                drop.append(str(b["bill_id"]))
+    return drop
+
+
+def _bill_key(r) -> str:
+    """ONE identity per bill across the Bills + Inventory sheets: the QuickBooks bill id when the row
+    links to one, else vendor | bill # | bill date. Two QuickBooks bills with the same bill # (a real
+    duplicate entry, e.g. Quikrete 34736499 twice on 09/10/2026) stay two bills."""
+    bid = bill_marks.bill_id_from_link(r["qbo_link"]) if r["qbo_link"] else None
+    return f"id:{bid}" if bid else f"{r['vendor'] or ''}|{r['bill_ref'] or ''}|{r['bill_date'] or ''}"
 
 
 def _fetch_ap(con) -> dict:
@@ -770,36 +830,30 @@ def _fetch_ap(con) -> dict:
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
           "lien_watch": [], "by_project": {}, "bills": []}
     try:
-        rows = con.execute(
-            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
-            "matched_invoice, invoice_no, qbo_link FROM ap_bill_line").fetchall()
+        con.execute("SELECT 1 FROM ap_bill_line LIMIT 1").fetchall()   # the table is there (the loader has run)
     except sqlite3.OperationalError:
         return ap
     # Site lien marks (Notice Sent / Lien Filed / Released) the owner set on the dashboard.
     # They win over the computed/loaded lien_status INSTANTLY, before the next sync-ap mirrors
     # them into the workbook. Keyed by QBO bill id (= the workbook's _Key). Absent-safe.
     marks = bill_marks.read_lien_marks()
-    def _eff_lien(r):
-        bid = bill_marks.bill_id_from_link(r["qbo_link"])
-        tag = marks.get(bid) if bid else None
-        return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
-    open_bal, open_lines = 0.0, 0
-    for r in rows:
-        ob = r["open_balance"] or 0
-        if ob > 0:
-            open_bal += ob
-            open_lines += 1
+    # Open AP is counted ONCE per bill (10/12/2026) - a multi-job bill sits on the Bills sheet as one "(multiple)"
+    # row AND on the Inventory sheet once per job, every row carrying the bill's FULL open balance; summing rows
+    # counted Cowtown 396753 four times (277,760 shown vs 229,700 real; 1.15M across the ledger). The sum is
+    # taken below, over the one-row-per-bill list, after QuickBooks' balance is settled on each bill.
     by_project = {}
     for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
                          "WHERE COALESCE(open_balance,0) > 0"):
         if r["project_no"]:
             by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
     ap["by_project"] = by_project
-    # Full bill list for the Bill Tracker tab. Every row is one bill (open_balance is
-    # per-bill, safe to sum). Description is omitted to keep the payload lean; account
-    # carries the QBO category. Newest first (bill_date is ISO). Each bill is enriched
-    # with its AR invoice (from billing_event, joined on Invoice #) so the Bills tab can
-    # show the real invoice pay status and deep-link to the invoice in QuickBooks.
+    # Full bill list for the Bill Tracker tab. ONE row per bill (owner 2026-10-12: "one row per bill"):
+    # the workbook's Bills-sheet row stands for the bill (its "(multiple)" project / division / client
+    # when it spans jobs) and the Inventory-sheet rows only feed `projects` / `clients` / `divisions` -
+    # the job list the filters match on - so open_balance is per-bill and safe to sum. Description is
+    # omitted to keep the payload lean; account carries the QBO category. Newest first (bill_date is
+    # ISO). Each bill is enriched with its AR invoice (from billing_event, joined on Invoice #) so the
+    # Bills tab can show the real invoice pay status and deep-link to the invoice in QuickBooks.
     bmap = {}
     try:
         for be in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
@@ -810,13 +864,26 @@ def _fetch_ap(con) -> dict:
     proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
     pay = bill_marks.read_pay_marks()             # current check run: {bill_id -> {amount}}
     bills = []
+    groups: dict = {}   # bill key -> [rows], first seen first (newest bill first)
     for r in con.execute(
-        "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
+        "SELECT project_no, division, vendor, bill_ref, bill_date, account, source_sheet, "
         "line_amount, bill_total, open_balance, pay_status, approved, invoice_status, lien_status, "
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
-        b = dict(r)
-        b["client"] = proj_customer.get(b.get("project_no"))
+        groups.setdefault(_bill_key(r), []).append(r)
+    for key, grp in groups.items():
+        head = next((r for r in grp if (r["source_sheet"] or "") == "Bills"), grp[0])
+        b = dict(head)
+        b.pop("source_sheet", None)
+        projs = [r["project_no"] for r in grp if r["project_no"] and r["project_no"] != "(multiple)"]
+        if not projs and head["project_no"]:
+            projs = [head["project_no"]]
+        b["projects"] = list(dict.fromkeys(projs))                       # the jobs on the bill, in order
+        b["divisions"] = list(dict.fromkeys(r["division"] for r in grp if r["division"] and r["division"] != "(multiple)"))
+        b["lines"] = max(1, sum(1 for r in grp if (r["source_sheet"] or "") != "Bills") or len(grp))
+        clients = list(dict.fromkeys(c for c in (proj_customer.get(pn) for pn in b["projects"]) if c))
+        b["clients"] = clients
+        b["client"] = clients[0] if len(clients) == 1 else ("(multiple)" if clients else None)
         bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
         b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
         pm = pay.get(bid) if bid else None           # is this bill in the current pay run?
@@ -835,7 +902,21 @@ def _fetch_ap(con) -> dict:
             b["inv_date"] = inv["txn_date"]
             b["inv_customer"] = inv["customer"]
         bills.append(b)
-    _bill_memos(bills)                           # the QBO bill memo (PrivateNote) - a column + searchable (owner 2026-09-22)
+    _bill_memos(bills)                           # the QBO bill memo (PrivateNote) + QuickBooks' balance (owner 2026-09-22 / 10-13)
+    try:
+        loaded_at = con.execute("SELECT MAX(loaded_at) FROM ap_bill_line").fetchone()[0]
+    except sqlite3.OperationalError:
+        loaded_at = None
+    paid_marks = _apply_qbo_balance(bills, _mirror_newer_than(loaded_at))
+    if paid_marks:                               # paid in QuickBooks outside the ledger: off the saved run, like our own writes
+        try:
+            bill_marks.set_pay_marks([{"bill_id": b, "selected": False} for b in paid_marks],
+                                     _dt.datetime.now().isoformat(timespec="seconds"))
+        except (sqlite3.OperationalError, ValueError, TypeError) as e:
+            print(f"[pay run] could not drop {len(paid_marks)} paid bill(s) from the run: {e}", file=sys.stderr)
+    # open AP counted once per bill, on the balance just settled (QuickBooks' when the mirror is the newer fact)
+    open_bal = round(sum(b["open_balance"] for b in bills if (b.get("open_balance") or 0) > 0), 2)
+    open_lines = sum(1 for b in bills if (b.get("open_balance") or 0) > 0)
     ap["bills"] = bills
     # The lien WATCHLIST = the enriched bills that are on the clock OR marked (any LIEN_RANK status),
     # so the Liens page carries the client, bill date, the AR invoice + its pay status - not just the
@@ -1786,6 +1867,98 @@ def _fetch_qbo_changes(days: int = 30, db_path=None) -> dict:
     return out
 
 
+def _invoice_history(rec_id: str, db_path=None, mcon=None) -> dict:
+    """Audit > AR: one invoice's whole story (owner 2026-10-11: "the history of invoices and the creation date
+    ... with notion invoice tracker data"). From the mirror: when QuickBooks created it (MetaData.CreateTime), the
+    copy as held (the last copy, for a deleted one), every change the log holds oldest first with what moved
+    (the same explainer as the page), the payments applied to it and whether each is still on file. From the
+    ledger: the Invoice Tracker row (status, lien, the collections note and dates, the page) - or, when the row is
+    gone (the sync archives a deleted invoice's page and the loader replaces the rows), the page url kept in
+    invoice_notion_ref so the archived page is still reachable. Read-only on both."""
+    from shared import qbo_mirror as mirror
+    rec_id = str(rec_id or "").strip()
+    out = {"ok": False, "id": rec_id, "invoice": None, "history": [], "payments": [], "notion": None}
+    if not rec_id:
+        out["error"] = "no invoice id"
+        return out
+    own = mcon is None
+    try:
+        con = mcon or mirror.connect()
+    except Exception as e:                       # noqa: BLE001
+        out["error"] = f"mirror unavailable: {e}"
+        return out
+    try:
+        row = con.execute(f"SELECT created, last_updated, deleted, deleted_at FROM {mirror.table('Invoice')} WHERE id=?",
+                          (rec_id,)).fetchone()
+        rec = mirror.get("Invoice", rec_id, con)
+        rows = [r for r in mirror.changes(con, entity="Invoice", limit=200000) if str(r["rec_id"]) == rec_id]
+        if not rec and rows:                     # gone before the mirror held it: the before copy of its newest change
+            rec = mirror.change_before(con, rows[0]["id"]) or {}
+        if not rec:
+            out["error"] = "the mirror has no copy of this invoice"
+            return out
+        _explain_changes(con, rows)
+        hist = [{k: r.get(k) for k in ("id", "kind", "changed_at", "flags", "detail", "total_before", "total_after",
+                                       "balance_before", "balance_after", "doc_number")} for r in reversed(rows)]
+        md, cust = rec.get("MetaData") or {}, rec.get("CustomerRef") or {}
+        jobs = mirror.jobs_of(rec)
+        out["invoice"] = {
+            "id": rec_id, "doc_number": rec.get("DocNumber"), "customer": cust.get("name") or "", "customer_id": cust.get("value"),
+            "project": jobs[0] if jobs else "", "txn_date": rec.get("TxnDate"), "due_date": rec.get("DueDate"),
+            "total": mirror._num(rec.get("TotalAmt")), "balance": mirror._num(rec.get("Balance")), "memo": rec.get("PrivateNote") or "",
+            "created": (row[0] if row else None) or md.get("CreateTime"), "last_updated": (row[1] if row else None) or md.get("LastUpdatedTime"),
+            "deleted": bool(row and row[2]),
+            # QuickBooks' own time of the deletion from the log; the mirror row only knows when the refresh noticed
+            "deleted_at": next((h["changed_at"] for h in reversed(hist) if h["kind"] == "deleted"), None) or (row[3] if row else None),
+            "logged_since_birth": any(h["kind"] == "created" for h in hist),   # the log saw it born: its history is complete
+        }
+        pays = []
+        for lt in rec.get("LinkedTxn") or []:
+            if lt.get("TxnType") != "Payment":
+                continue
+            pid = str(lt.get("TxnId"))
+            p = mirror.get("Payment", pid, con) or {}
+            prow = con.execute(f"SELECT deleted, deleted_at FROM {mirror.table('Payment')} WHERE id=?", (pid,)).fetchone()
+            applied = None
+            for ln in p.get("Line") or []:
+                if any(str(x.get("TxnId")) == rec_id and x.get("TxnType") == "Invoice" for x in ln.get("LinkedTxn") or []):
+                    applied = (applied or 0.0) + (mirror._num(ln.get("Amount")) or 0.0)
+            pays.append({"id": pid, "date": p.get("TxnDate"), "total": mirror._num(p.get("TotalAmt")), "applied": applied,
+                         "ref": str(p.get("PaymentRefNum") or ""), "deleted": bool(prow and prow[0]), "deleted_at": (prow[1] if prow else None)})
+        out["payments"] = sorted(pays, key=lambda x: x["date"] or "")
+        out["history"] = hist
+    finally:
+        if own:
+            con.close()
+    if db_path:
+        try:
+            lcon = _connect(db_path)
+        except sqlite3.Error:
+            lcon = None
+        if lcon is not None:
+            try:
+                try:
+                    r = lcon.execute("SELECT doc_number, status, lien_status, lien_notice, note, paid_date, last_action_date, next_followup, "
+                                     "notion_url, notion_edited, aging_bucket, litigation, customer, project_no FROM billing_event "
+                                     "WHERE qbo_txn_id=? AND source='invoice_tracker'", (rec_id,)).fetchone()
+                except sqlite3.Error:
+                    r = None
+                if r:
+                    out["notion"] = {**{k: r[k] for k in r.keys()}, "url": r["notion_url"], "source": "ledger"}
+                else:
+                    try:
+                        g = lcon.execute("SELECT notion_url, doc_number, first_seen, last_seen FROM invoice_notion_ref WHERE qbo_txn_id=?",
+                                         (rec_id,)).fetchone()
+                    except sqlite3.Error:
+                        g = None
+                    if g:
+                        out["notion"] = {"url": g[0], "doc_number": g[1], "first_seen": g[2], "last_seen": g[3], "source": "register"}
+            finally:
+                lcon.close()
+    out["ok"] = True
+    return out
+
+
 def _fetch_accounting_audits() -> dict:   # cached per workbook mtime - the project page reads it per request (2026-09-08)
     bt = paths.bill_tracker_xlsx()
     try:
@@ -2058,6 +2231,98 @@ def _fetch_sales(con) -> dict:
     return out
 
 
+def _mark_cleared_payments(con, payments: list) -> None:
+    """Cashed or still out there (owner 2026-10-15: "need to see when it's been cashed, using bank transaction match i
+    need to know if it's cleared or still out there"). QuickBooks' bank-feed match is the only word: a check on the
+    uncleared list (ledger/load_uncleared_checks.py) is `outstanding` (with its days out and whether it is older than
+    the account's newest matched transaction - `past_match`); a check NOT on a list pulled after its date is `cleared`
+    (QuickBooks never gives the bank date, so `cleared_seen` is the window the ledger first found it cleared in);
+    a card payment never clears a bank (`card`); a check on an account QuickBooks never feed-matches (Joint Checks) is
+    `joint`; a check entered after the last pull is `unknown` until the next refresh.
+    `cleared` = one of outstanding | cleared | card | joint | unknown | None (voided)."""
+    try:
+        unclr = {str(r["qbo_txn_id"]): dict(r) for r in con.execute(
+            "SELECT qbo_txn_id, txn_date, account, loaded_at FROM uncleared_check")}
+        acc = {r["account"]: dict(r) for r in con.execute("SELECT account, matched_through, feed_matched, loaded_at FROM bank_match")}
+    except sqlite3.OperationalError:
+        for p in payments:
+            p["cleared"] = None if p.get("voided") else "unknown"
+            p["cleared_as_of"] = None
+        return
+    try:                                     # written by the loader from its second run on; absent until then = no windows
+        seen = {str(r["qbo_txn_id"]): dict(r) for r in con.execute(
+            "SELECT qbo_txn_id, last_uncleared_at, cleared_seen_at FROM check_cleared")}
+    except sqlite3.OperationalError:
+        seen = {}
+    pulled = max([r["loaded_at"] or "" for r in acc.values()] + [r["loaded_at"] or "" for r in unclr.values()], default="")
+    pulled_day = pulled[:10] if pulled else ""
+    # "not on the list" means cleared ONLY for a payment QuickBooks already held when the list was pulled: a check
+    # entered after the pull is simply not pulled yet. The mirror's `created` (QuickBooks' CreateTime) decides; a
+    # payment the mirror lacks falls back to its date being before the pull day.
+    created: dict = {}
+    try:
+        from shared import qbo_mirror
+        if payments and qbo_mirror.db_path().exists():
+            mcon = qbo_mirror.connect()
+            try:
+                ids = [str(p.get("qbo_txn_id")) for p in payments]
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    for mr in mcon.execute(f"SELECT id, created FROM {qbo_mirror.table('BillPayment')} WHERE id IN "
+                                           f"({','.join('?' * len(chunk))})", chunk):
+                        created[str(mr[0])] = mr[1]
+            finally:
+                mcon.close()
+    except Exception:                               # noqa: BLE001 - no mirror = the date rule alone
+        created = {}
+    pulled_utc = None
+    try:
+        pulled_utc = _dt.datetime.fromisoformat(pulled).astimezone(_dt.timezone.utc) if pulled else None
+    except ValueError:
+        pass
+
+    def held_before_pull(p) -> bool:
+        c = created.get(str(p.get("qbo_txn_id")))
+        if c and pulled_utc:
+            try:
+                return _dt.datetime.fromisoformat(c).astimezone(_dt.timezone.utc) < pulled_utc
+            except ValueError:
+                pass
+        return bool(pulled_day) and str(p.get("txn_date") or "")[:10] < pulled_day
+    today = _dt.date.today()
+    for p in payments:
+        pid = str(p.get("qbo_txn_id"))
+        p["cleared_as_of"] = pulled or None
+        p["cleared_seen"] = None
+        p["cleared_after"] = None
+        p["days_out"] = None
+        p["past_match"] = False
+        if p.get("voided"):
+            p["cleared"] = None
+        elif (p.get("pay_type") or "") == "CreditCard":
+            p["cleared"] = "card"
+        elif pid in unclr:
+            u = unclr[pid]
+            a = acc.get(u.get("account")) or {}
+            # an account QuickBooks never matches to a bank feed (Joint Checks) can't say either way
+            p["cleared"] = "outstanding" if a.get("feed_matched") else "joint"
+            try:
+                p["days_out"] = (today - _dt.date.fromisoformat(str(p.get("txn_date"))[:10])).days
+            except (TypeError, ValueError):
+                pass
+            p["feed_matched"] = bool(a.get("feed_matched"))
+            p["past_match"] = bool(a.get("matched_through") and p.get("txn_date") and str(p["txn_date"])[:10] < a["matched_through"])
+            p["bank_account"] = u.get("account")
+        elif held_before_pull(p):
+            p["cleared"] = "cleared"
+            w = seen.get(pid)
+            if w:
+                p["cleared_seen"] = (w.get("cleared_seen_at") or "")[:10] or None
+                p["cleared_after"] = (w.get("last_uncleared_at") or "")[:10] or None
+        else:
+            p["cleared"] = "unknown"
+
+
 def _mark_voided_payments(payments: list) -> None:
     """Flag a voided BillPayment (total 0 in QBO) and carry its memo. Read from the mirror; a machine
     without the mirror just gets total-0 + no bills as the tell."""
@@ -2225,6 +2490,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
         # voided (owner 2026-09-22: "voided checks need to say voided"): QBO voids a bill payment by zeroing it
         # (TotalAmt 0, lines gone, memo "Voided…"); the memo is the only word on why, so it rides along.
         _mark_voided_payments(payments)
+        _mark_cleared_payments(con, payments)
     except sqlite3.OperationalError:
         pass
     # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the
@@ -2544,6 +2810,22 @@ def _fetch_project_page(con, pn: str) -> dict:
     is_rp = pn.startswith("RP")
     raw = [] if is_rp else [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
     draws = _draws_by_invoice(con, pn, division, raw, scopes=is_rp)   # same-draw invoices = one draw; RP = scopes between invoice dates
+    # a draw's period as SET ON THE LEDGER (the page's Draw periods editor, owner 2026-10-11: "save but only on the ledger")
+    # wins over the invoice memo's for everything on this page - the Draw overview and the subs matched into the draw;
+    # the memo's window rides along as "as invoiced". QuickBooks is never touched.
+    if not is_rp:
+        held = draw_periods.saved(con, pn)
+        for d in draws:
+            if d.get("no_draw"):
+                continue
+            inv = d.get("period") or _draw_period_range(d.get("matched_invoice") or "")
+            d["inv_period_start"], d["inv_period_end"] = inv[0], inv[1]
+            hit = next((held[str(i.get("qbo_txn_id"))] for i in (d.get("invoices") or []) if str(i.get("qbo_txn_id")) in held), None)
+            if hit:
+                d["period"] = (hit[0], hit[1])
+                d["period_source"], d["period_saved_at"] = "ledger", hit[2]
+            else:
+                d["period_source"] = "invoice"
     # draw order = invoice date, then recency; the "no draw yet" bucket last
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
     pay = bill_marks.read_pay_marks()
@@ -2643,7 +2925,7 @@ def _fetch_project_page(con, pn: str) -> dict:
         costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
         gross = round(income - costs, 2)
         oh_rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
-        overhead = round(oh_rate * income, 2)   # the draw's slice of the contract
+        overhead = round(oh_rate * income, 2)   # to date: rate x the draw's gross billed
         d["pl"] = {"income": income, "net_billed": round(net_billed, 2), "retainage": round(income - net_billed, 2), "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
                    "margin_pct": (gross / income) if income else None, "overhead": overhead, "oh_rate": oh_rate,   # shown + the fx bar's formula
                    "overhead_basis": "9% of gross billed (MFD)" if is_mfd else "10% of gross billed",
@@ -3535,6 +3817,24 @@ class Handler(BaseHTTPRequestHandler):
                     "lines": [{"description": ln.get("description"), "cost_code": ln.get("cost_code"), "account": ln.get("account"),
                                "project_no": ln.get("project_no"), "amount": ln.get("amount")} for ln in lines]})
 
+    def _invoice_pdf(self, q: dict) -> None:
+        """Subprocess invoice_pdf.py (never an import, like attachments.py) and send the PDF it cached."""
+        inv, sync = str(q.get("id") or "").strip(), str(q.get("sync") or "0").strip()
+        if not inv.isdigit() or not sync.isdigit():
+            return self._send(400, b"bad invoice id", "text/plain; charset=utf-8")
+        try:
+            out = subprocess.check_output([sys.executable, str(PROJECT_ROOT / "ledger" / "invoice_pdf.py"), inv, "--sync", sync],
+                                          cwd=str(PROJECT_ROOT), stderr=subprocess.DEVNULL, timeout=120)
+            lines = [ln for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
+            r = json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"}
+        except subprocess.TimeoutExpired:
+            r = {"ok": False, "error": "QuickBooks took too long to print the invoice"}
+        except Exception as e:                          # noqa: BLE001
+            r = {"ok": False, "error": f"invoice PDF failed: {e}"}
+        if not r.get("ok"):
+            return self._send(502, str(r.get("error") or "failed").encode(), "text/plain; charset=utf-8")
+        self._send(200, Path(r["path"]).read_bytes(), "application/pdf")
+
     def _attachment(self, q: dict) -> None:
         """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
         import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
@@ -3673,11 +3973,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_accounting_audits())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
-        elif path == "/api/qboaudit":      # the QBO Audit page: the mirror's change log (deleted / edited / unapplied), flagged
+        elif path == "/api/qboaudit":      # the Audit view's QBO changes pages: the mirror's change log (deleted / edited / unapplied), flagged; the page scopes it AP / AR / other
             try:
                 self._json(_fetch_qbo_changes(int(self._query().get("days") or 30), self.db_path))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
+        elif path == "/api/qboaudit/invoice":   # Audit > AR: one invoice's story - created, every logged change, payments, the Invoice Tracker page
+            try:
+                self._json(_invoice_history(self._query().get("id") or "", self.db_path))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": f"invoice history failed: {e}"})
         elif path == "/api/uncleared":     # Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24)
             con = _connect(self.db_path)
             try:
@@ -3689,9 +3994,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(dup_customers.audit())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "groups": [], "error": f"duplicate customer audit failed: {e}"})
-        elif path == "/api/pay-bills/plan":   # dry run of the saved pay run (live QBO read, no write)
+        elif path == "/api/pay-bills/plan":   # dry run of the saved pay run - or ?bills=id,id (the vendor page's ticks); live QBO read, no write
             try:
-                self._json(pay_bills.plan())
+                q = self._query().get("bills")
+                self._json(pay_bills.plan([b for b in q.split(",") if b.strip()] if q is not None else None))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
         elif path == "/api/pay-bills/queue":   # payments pushed from here until matched (+ flagged ones); watches first (mirror only)
@@ -3704,10 +4010,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(reclassify.options())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
-        elif path == "/api/reclassify/plan":      # preview: every cost line on FROM (mirror read, no write)
+        elif path == "/api/reclassify/plan":      # find: the lines matching the filters, or the P&L by account (mirror read, no write)
             q = self._query()
             try:
-                self._json(reclassify.plan(q.get("from") or "", q.get("to") or "", q.get("recode") or ""))
+                self._json(reclassify.plan({k: q.get(k) or "" for k in
+                                            ("mode", "d1", "d2", "types", "account", "item", "class", "project", "name", "memo", "doc")}))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
         elif path == "/api/checkdrift/reapply":   # dry run: what re-applying a stripped check would write (live QBO read, no write)
@@ -3750,6 +4057,18 @@ class Handler(BaseHTTPRequestHandler):
             self._subloc_project(self._query().get("p", ""))
         elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
             self._vendor(self._query().get("v", ""))
+        elif path == "/api/statements":      # every vendor's statement standing (the Vendor Center bubble, the pay run) - from the reconciler's records on the share
+            self._statements()
+        elif path == "/api/statement":       # one vendor's full record: the marked pages, every line with its band, the legend (the Statement view)
+            self._statement(self._query())
+        elif path == "/api/statement/page":  # one marked page (PNG) - the path comes from the record, never the request
+            self._statement_file(self._query(), "page")
+        elif path == "/api/statement/file":  # the statement itself / the vendor's Excel - same rule
+            self._statement_file(self._query(), "file")
+        elif path == "/api/server":          # the office server monitor: server-status.json + writer.json -> ok / late / down / failing / standing down
+            self._json(server_status.read(paths.accounting_base() / "_automation"))
+        elif path == "/api/revisions":       # the REVISED-bill follow-up board (Notion, written by bill-tracker/revised_bills.py) + where each stands
+            self._revisions(self._query())
         elif path == "/api/bill-payment/stubs":     # the printed-stub history for a vendor / payment (status vs QBO now) + the column registry
             self._bp_stubs(self._query())
         elif path == "/api/bill-payment/stub/file":  # one printed stub's PDF, by history id (the file as it went out, even if QBO changed)
@@ -3772,6 +4091,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_project_page(con, self._query().get("no", "")))
             finally:
                 con.close()
+        elif path == "/api/invoice/view":    # the invoice viewer: one or more invoices (a draw) from the QBO mirror - header, lines as typed, payments
+            q = self._query()
+            self._json(invoice_view.view((q.get("nos") or "").split(","), q.get("project") or ""))
+        elif path == "/api/invoice/pdf":     # QuickBooks' printed copy of one invoice (cached per version), for the viewer's right side
+            self._invoice_pdf(self._query())
         elif path == "/api/invoice/page":    # on-demand: the invoice page - QBO details, the draw's bills by vendor + pay status, subs
             con = _connect(self.db_path)
             try:
@@ -3805,6 +4129,8 @@ class Handler(BaseHTTPRequestHandler):
             self._check_reapply()
         elif p == "/api/reclassify/commit":   # THE QBO WRITE: move the ticked lines, only the preview the owner confirmed
             self._reclassify_commit()
+        elif p == "/api/draw-periods/save":   # a ledger write - a job's draw periods as set on the page (draw_period); never QBO
+            self._draw_periods_save()
         elif p == "/api/checkdrift/bulk":     # Clear copy, step 1: prove every listed check again LIVE (no write)
             self._check_bulk(False)
         elif p == "/api/checkdrift/bulk/commit":  # THE QBO WRITE: every confirmed clear copy that still proves
@@ -3897,6 +4223,95 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             con.close()
 
+    # ── vendor statements: the reconciler's record copy (shared/statement_record, owner 2026-10-09) ─────────
+    # The ledger shows what the reconciler found - it never reads a statement itself. The summary is cached
+    # for a minute (one small JSON per vendor folder on the SMB share); the full record is read on click.
+    _stmt_cache: dict = {"at": 0.0, "data": None}
+
+    def _statements(self):
+        now = time.time()
+        c = type(self)._stmt_cache
+        if c["data"] is None or now - c["at"] > 60 or self._query().get("fresh"):
+            try:
+                c["data"] = statement_record.read_all()
+            except Exception as e:                        # noqa: BLE001 - a share hiccup is an answer, not a 500
+                c["data"] = {"mounted": False, "root": "", "vendors": {}, "error": str(e)}
+            c["at"] = now
+        self._json({"ok": True, **c["data"]})
+
+    def _statement(self, q: dict):
+        vendor = (q.get("v") or "").strip()
+        if not vendor:
+            return self._json({"ok": False, "error": "no vendor"}, 400)
+        try:
+            rec = statement_record.find(vendor)
+        except Exception as e:                            # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if not rec:
+            mounted = statement_record.root().is_dir()
+            return self._json({"ok": False, "mounted": mounted,
+                               "error": "no statement record for this vendor" if mounted else "the Accounting share is not mounted"})
+        rec = dict(rec)
+        rec.pop("_dir", None)
+        self._json({"ok": True, "record": rec})
+
+    def _statement_file(self, q: dict, kind: str):
+        """A marked page (kind=page, n = index) or a file the record names (kind=file, i = index into
+        `files`, or which=excel). The path is taken from the record and must sit under the vendor's folder."""
+        vendor = (q.get("v") or "").strip()
+        rec = statement_record.find(vendor) if vendor else None
+        if not rec:
+            return self._send(404, b"no statement record for this vendor", "text/plain; charset=utf-8")
+        rel = ""
+        try:
+            if kind == "page":
+                rel = (rec.get("pages") or [])[int(q.get("n", "0"))].get("file") or ""
+            elif q.get("which") == "excel":
+                rel = rec.get("excel") or ""
+            else:
+                rel = (rec.get("files") or [])[int(q.get("i", "0"))]
+        except (ValueError, IndexError, AttributeError):
+            rel = ""
+        target = statement_record.resolve_file(rec, rel)
+        if not target:
+            return self._send(404, b"that file is not on disk (is the Accounting share mounted?)", "text/plain; charset=utf-8")
+        ctype = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".pdf": "application/pdf",
+                 ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                 ".xls": "application/vnd.ms-excel"}.get(target.suffix.lower(), "application/octet-stream")
+        self._send(200, target.read_bytes(), ctype)
+
+    # ── revised bills: the Notion board the clerk works, read live (owner 2026-10-12) ─────────────────────────
+    _rev_cache: dict = {"at": 0.0, "data": None}
+
+    def _revisions(self, q: dict):
+        """Every vendor's Revised Bills rows, from the statement records on the share (60 s cache)."""
+        now = time.time()
+        c = type(self)._rev_cache
+        if c["data"] is None or now - c["at"] > 60 or q.get("fresh"):
+            try:
+                base = statement_record.root()
+                if not base.is_dir():
+                    c["data"] = {"ok": False, "error": "the Accounting share is not mounted on this Mac - the statement records live there", "rows": []}
+                else:
+                    today = _dt.date.today()
+                    rows = []
+                    newest = ""
+                    for d in statement_record.vendor_dirs(base):
+                        rec = statement_record.read(d)
+                        if not rec:
+                            continue
+                        newest = max(newest, rec.get("checked_at") or "")
+                        for r in rec.get("revised") or []:
+                            r = dict(r, vendor=rec.get("vendor") or d.name, key=str(r.get("bill_id") or ""), as_of=rec.get("as_of") or "")
+                            r["standing"] = revised_sheet.standing(r, today)
+                            rows.append(r)
+                    rows.sort(key=lambda r: (r["standing"]["final"], r["standing"]["rank"], -(r["standing"]["days"] or 0), r.get("vendor") or ""))
+                    c["data"] = {"ok": True, "rows": rows, "read_at": newest[:16]}
+            except Exception as e:                        # noqa: BLE001
+                c["data"] = {"ok": False, "error": _scrub(str(e)), "rows": []}
+            c["at"] = now
+        self._json(c["data"])
+
     # ── bill payment stubs (payment on top, bills below) + their print history ──────────────
     def _bp_stubs(self, q: dict):
         """Every stub printed for a vendor (or one payment), newest first, each judged against the mirror
@@ -3933,7 +4348,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), "application/pdf")
 
     def _bp_stub_print(self):
-        """POST {payment_id, columns:[keys]} -> build from the mirror, PDF into the vendor folder, history row."""
+        """POST {payment_id, columns:[keys], kind, invoices} -> build from the mirror, PDF into the vendor folder, history
+        row. `invoices` (internal only, default off - owner 2026-10-15) puts the client invoices on top of the bills."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -3950,16 +4366,17 @@ class Handler(BaseHTTPRequestHandler):
         kind = str(body.get("kind") or "vendor")
         if kind not in bill_payment_stub.KINDS:
             return self._json({"ok": False, "error": "kind must be vendor or internal"}, 400)
+        invoices = kind == "internal" and body.get("invoices") is True
         # QuickBooks first (owner 2026-10-07, checks 2612/2613 entered minutes before the print): the stub reads the
         # mirror, so bring it current - a just-entered or just-edited payment prints as QuickBooks has it now. A
         # failed refresh still prints from the copy held. refresh=false skips it (a multi-print refreshes once).
         if body.get("refresh", True) is not False:
             self._refresh_for_stub(with_payments=False)
         try:
-            res = self._print_stub_once(pid, cols, kind)
+            res = self._print_stub_once(pid, cols, kind, invoices)
             if not res.get("ok") and res.get("missing"):
                 self._refresh_for_stub(with_payments=True)
-                res = self._print_stub_once(pid, cols, kind)
+                res = self._print_stub_once(pid, cols, kind, invoices)
         except (ValueError, FileNotFoundError) as e:
             return self._json({"ok": False, "error": str(e)}, 400)
         except Exception as e:                            # noqa: BLE001 - locked DB, missing mirror key, a hung Chrome: still an answer
@@ -3981,10 +4398,12 @@ class Handler(BaseHTTPRequestHandler):
                 ok = False
         return ok
 
-    def _print_stub_once(self, pid: str, cols, kind: str) -> dict:
+    def _print_stub_once(self, pid: str, cols, kind: str, invoices: bool = False) -> dict:
+        # the invoice map feeds the Client line of the internal header too, so it is read whether or not the
+        # invoices table is asked for
         invoice_of = self._stub_invoice_map(pid) if kind == "internal" else None
         return bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path,
-                                            kind=kind, invoice_of=invoice_of)
+                                            kind=kind, invoice_of=invoice_of, invoices=invoices)
 
     def _stub_invoice_map(self, pid: str) -> dict:
         """bill id -> the client invoice it is billed through, exactly as the vendor page shows it (the same
@@ -4531,21 +4950,45 @@ class Handler(BaseHTTPRequestHandler):
             res["mirror_refreshed"] = r.returncode == 0
         self._json(res)
 
-    def _reclassify_commit(self):
-        """{from, to, recode, keys, n, amount, confirm: true} -> move the ticked lines the owner confirmed
-        ("Are you sure?"); refused unless they are still exactly the preview. Then the mirror refresh."""
+    def _draw_periods_save(self):
+        """{project, periods: [{id, start, end, inv_start, inv_end, label}]} for every draw of the job that carries a
+        period -> the windows that differ from the invoice are kept on the ledger (draw_period), the rest dropped.
+        Refused on an overlap. Ledger only - QuickBooks, the Bill Tracker and Notion never see it."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
-            keys = [str(k) for k in body.get("keys") or []][:2000]
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        pn = str(body.get("project") or "").strip().upper()
+        if not _PROJ_RE.match(pn):
+            return self._json({"ok": False, "error": "project required"}, 400)
+        try:
+            con = sqlite3.connect(self.db_path)
+            try:
+                res = draw_periods.save(con, pn, list(body.get("periods") or [])[:200])
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            return self._json({"ok": False, "error": f"write failed: {e}"}, 500)
+        self._json(res)
+
+    def _reclassify_commit(self):
+        """{keys, sigs, changes, n, amount, confirm: true} -> change the ticked lines the owner confirmed
+        ("Are you sure?"); refused unless each is still exactly the preview. Then the mirror refresh."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            keys = [str(k) for k in body.get("keys") or []][:5000]
+            sigs = {str(k): str(v) for k, v in (body.get("sigs") or {}).items()}
             n, amount = int(body.get("n")), float(body.get("amount"))
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
             return self._json({"ok": False, "error": "bad request"}, 400)
         if body.get("confirm") is not True or not keys:
             return self._json({"ok": False, "error": "not confirmed"}, 400)
         try:
-            res = reclassify.commit(str(body.get("from") or ""), str(body.get("to") or ""),
-                                    str(body.get("recode") or ""), keys, n, amount)
+            res = reclassify.commit(keys, sigs, body.get("changes") or {}, n, amount)
         except Exception as e:             # noqa: BLE001
             return self._json({"ok": False, "error": str(e)})
         if res.get("moved_docs"):

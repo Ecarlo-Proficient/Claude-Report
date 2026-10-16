@@ -6,6 +6,7 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/13/2026 · Payment card docstring: the invoice clerk prints the card now (the owner rebuilt the payment intake as a two-person flow).
 - 10/08/2026 · **Notion: only write an invoice that changed.** The invoice cache keeps each page's properties as read; an
   existing page is written only when a QBO field differs (`_changed_fields`, read and write shapes reduced alike by
   `_plain`; an unknown shape always counts as changed) or the page was not stamped Last Synced today - so an unchanged

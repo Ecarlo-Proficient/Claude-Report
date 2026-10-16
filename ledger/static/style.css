@@ -118,13 +118,17 @@ a.btn { display: inline-block; text-decoration: none; }   /* a link dressed as a
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 /* Second-level nav: the active group's tabs, a lighter second row of the same strip. */
-.subtabs { display: flex; gap: 4px; padding: 5px 16px 6px; background: var(--surface-2);
-  border-top: 1px solid var(--border); overflow-x: auto; }
+.subtabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 16px 6px; background: var(--surface-2);
+  border-top: 1px solid var(--border); }   /* wraps rather than clips (the Audit row carries three categories, 2026-10-11) */
 .subtabs[hidden] { display: none; }
 .subtab { font: inherit; font-size: .93em; cursor: pointer; white-space: nowrap;
   padding: 5px 12px; border: none; background: none; color: var(--text-dim); border-radius: 7px; }
 .subtab:hover { color: var(--text); background: var(--row-hover); }
 .subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+/* a category name inside the sub-tab row (Audit: AP · AR · Company) - a caption, not a button */
+.subcat { align-self: center; font-size: .74em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim);
+  padding: 0 4px 0 10px; white-space: nowrap; }
+.subcat:not(:first-child) { margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--border); }
 .tab-page { display: flex; flex-direction: column; gap: 18px; }
 .tab-page[hidden] { display: none; }
 [hidden] { display: none !important; }   /* the hidden attribute always wins - rows with their own display:flex/grid were still painted (groups, 2026-09-08) */
@@ -1459,6 +1463,21 @@ main small, main .k-sub, main .k-label { font-size: max(.8em, 12px); }
 .pp-tab:hover { border-color: var(--text-dim); }
 .pp-tab.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 700; }
 .pp-tabs-hint { margin-left: auto; font-size: .82em; }
+/* the vendor band on the project page: its total under Amount, the counts as words beside it (money adds in one column) */
+table.grid tr.pp-vendor td.pp-band-amt { font-weight: 700; }
+table.grid tr.pp-vendor td.pp-band-words { white-space: nowrap; }
+.pp-fx[hidden] { display: none; }
+.pp-fx-x { margin-left: auto; }
+/* a little box glows while the wheel is scrolling inside it */
+.table-scroll, .msel-menu, .panel-body, .np-box { transition: outline-color .25s, box-shadow .25s; outline: 2px solid transparent; outline-offset: -2px; }
+.scroll-in { outline-color: color-mix(in srgb, var(--accent) 55%, transparent) !important; box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 8px color-mix(in srgb, var(--accent) 12%, transparent) !important; border-radius: 6px; }
+/* the draw picker: one bar you click and choose (owner 2026-10-11) */
+.pp-draw-pick { font: inherit; font-size: .95em; font-weight: 600; padding: 7px 34px 7px 12px; min-width: 300px; max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text); cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.pp-draw-pick:hover { border-color: var(--text-dim); }
+.pp-draw-pick:focus { outline: none; border-color: var(--accent); }
 .pp-cov-wrap { padding: 4px var(--pad-x) 10px; }
 table.pp-cov tr.pp-cov-row { cursor: pointer; }
 table.pp-cov tr.pp-cov-row:hover > td { background: var(--row-hover); }
@@ -1841,6 +1860,8 @@ table.pp-pva td.pp-pva-diff.pos { color: var(--pos); font-weight: 600; }
 table.pp-pva td.pp-pva-diff.warn { color: var(--warn-text); font-weight: 600; }
 table.pp-pva tr.pp-pva-total td { border-top: 2px solid var(--text); border-bottom: 0; font-weight: 800; }
 table.pp-pva tr.pp-pva-total td.pp-pva-act { font-size: 1.15em; }
+table.pp-pva tr.pp-pva-sub td { border-top: 2px solid var(--text) !important; font-weight: 800; }   /* Gross profit: the line under the costs, bold (owner 2026-10-11) */
+table.pp-pva tr.pp-pva-sub td.pp-pva-proj { color: var(--text); }
 table.pp-bills tr.pp-tot > td { border-top: 1px solid var(--text); font-weight: 700; padding-top: 7px; padding-bottom: 7px; }
 table.pp-bills tr.pp-tot td.pp-tot-amt { text-align: right; font-variant-numeric: tabular-nums; }
 table.pp-bills tr.pp-grand > td { border-top: 3px double var(--text); font-size: 1.04em; }
@@ -1932,6 +1953,15 @@ table.grid td.qa-val .qa-now { color: var(--warn-text); font-weight: 600; }
 table.grid tr.qa-detail td { border-top: 0; padding-top: 0; white-space: normal; font-size: .86em; color: var(--text-dim); line-height: 1.45; }
 table.grid tr.qa-detail td > div { overflow-wrap: anywhere; }
 table.grid tr:has(+ tr.qa-detail) td { border-bottom: 0; }
+/* an invoice's story under its Audit row (created · history · payments · the tracker page), 2026-10-11 */
+.qa-histlink { margin-left: 8px; font-size: .9em; color: var(--accent-text); }
+table.grid tr.qa-hist td { color: var(--text); font-size: .88em; padding-bottom: 10px; }
+.qh-body { border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); padding: 4px 0 4px 12px; max-width: 980px; }
+.qh-head { font-weight: 600; }
+.qh-sub { margin-top: 8px; font-weight: 600; }
+.qh-line { margin-left: 10px; padding: 1px 0; color: var(--text); }
+.qh-line.qh-detail { margin-left: 24px; color: var(--text-dim); }
+.qh-np { margin: 6px 0 0 10px; }
 .qa-knock { font-size: .8em; color: var(--neg-text); margin-top: 2px; }
 /* the fix under a row = a white card on the grey band (owner 2026-09-25: "grey everywhere, it blends, there's no
    distinction"). The inner table must not inherit the grid's sticky white header - reset it here. */
@@ -1954,6 +1984,12 @@ table.grid table.qa-repair-tbl tbody td { color: var(--text); }
 .stub-pill.vp-inv-paid { background: color-mix(in srgb, var(--pos) 14%, transparent); color: var(--pos); }
 .stub-pill.vp-inv-later { background: color-mix(in srgb, #2b6cb0 14%, transparent); color: color-mix(in srgb, #2b6cb0 65%, var(--text)); }
 .stub-pill.vp-inv-open { background: color-mix(in srgb, #b7791f 16%, transparent); color: var(--warn-text); }
+/* Cleared at the bank (the vendor page's Payments view): green = matched, amber = still out, red = older than the feed match */
+.stub-pill.vp-clr-ok { background: color-mix(in srgb, var(--pos) 14%, transparent); color: var(--pos); margin-left: 0; }
+.stub-pill.vp-clr-out { background: color-mix(in srgb, #b7791f 16%, transparent); color: var(--warn-text); margin-left: 0; }
+.stub-pill.vp-clr-late { background: color-mix(in srgb, var(--neg) 14%, transparent); color: var(--neg); border-color: color-mix(in srgb, var(--neg) 40%, var(--border)); margin-left: 0; }
+.stub-pill.vp-clr-joint { margin-left: 0; }
+td.vp-clr { white-space: nowrap; }
 
 /* Bills to fix: the four groups are the main filter (owner 2026-09-23) - big, one line, the count first */
 .acct-help { margin: 0 0 8px; }
@@ -2062,6 +2098,15 @@ button.help-i { border: 0; background: none; padding: 0 2px; margin-left: 6px; f
   color: var(--text-dim); cursor: pointer; line-height: 1; vertical-align: 0; }
 button.help-i:hover, button.help-i.on { color: var(--accent); }
 p.help-pop { margin-top: 0; }
+/* an (i) in a cell's corner with a note that opens on click (2026-10-11) */
+td.has-i { position: relative; padding-right: 22px !important; }
+.cell-i { position: absolute; top: 3px; right: 4px; border: 0; background: none; padding: 0; font: inherit; font-size: .78em; font-weight: 400; line-height: 1; color: var(--text-dim); cursor: pointer; }
+.cell-i:hover, .cell-i.on { color: var(--accent); }
+.cell-pop { position: absolute; right: 0; top: calc(100% - 2px); z-index: 30; min-width: 280px; max-width: 420px; padding: 8px 12px; text-align: left; font-weight: 400; font-size: .9em; white-space: normal;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.16); }
+.cell-pop[hidden] { display: none; }
+.cell-pop-l { padding: 2px 0; }
+.cell-pop-l.warn { color: var(--neg-text); font-weight: 600; }
 /* a panel heading never crushes its controls (2026-09-24 visual QC: "90 days" was cut off, buttons broke in two) -
    the controls stay one line each and drop under the title when the row is too narrow */
 .widget-head { flex-wrap: wrap; gap: 6px 12px; }
@@ -2109,6 +2154,19 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 
 /* Pay in QuickBooks (the saved pay run -> bill payments): the controls, the per-vendor reference, the credits */
 .pq-head-btns { display: inline-flex; gap: 8px; }
+.msel-opt.msel-next { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, transparent); }   /* what Tab / Enter will tick */
+/* the review's text lines sit inside the widget's gutter like every other widget (owner 2026-10-12: the lettering
+   hugged the left edge); the grid itself stays flush with the widget like every other grid */
+#payQboBody, .pq-body { padding: 0 var(--pad-x) 12px; }
+#payQboBody .bill-filters, .pq-body .bill-filters { padding-left: 0; padding-right: 0; }
+#payQboBody .table-scroll, .pq-body .table-scroll { margin: 0 calc(-1 * var(--pad-x)); }
+#payQboBody .cd-ra-line, .pq-body .cd-ra-line { line-height: 1.5; }
+/* NOT APPROVED on the run: one loud box + yellow rows (colour = state, nowhere else) */
+.pq-na-box { margin: 8px 0 10px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--text); line-height: 1.5; }
+.pq-na-box b { color: var(--warn-text, var(--warn)); }
+.pq-grid tr.pq-na > td { background: color-mix(in srgb, #ffd600 32%, transparent); }
+.pq-grid tr.pq-na:hover > td { background: color-mix(in srgb, #ffd600 42%, transparent); }
+.pq-grid tr.pq-na td:nth-child(5) { font-weight: 700; }
 .pq-ctl { margin: 10px 0 6px; }
 .pq-ctl select, .pq-ctl input[type="date"] { min-width: 150px; }
 .pq-grid tr.bill-group .bg-cell { flex-wrap: wrap; }
@@ -2118,7 +2176,17 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .pq-cnt { color: var(--text-dim); font-size: .8em; font-variant-numeric: tabular-nums; min-width: 3.2em; }
 .pq-cnt.full { color: var(--warn-text, var(--warn)); font-weight: 600; }
 .pq-credit td { color: var(--text-dim); }
+/* the check amount on a vendor's band: typed higher than the bills = a credit QuickBooks holds with the vendor */
+.pq-amt input { width: 120px; text-align: right; }
+.pq-amt-l { color: var(--text-dim); font-size: .9em; }
+.pq-credit-note { color: var(--warn-text, var(--warn)); font-weight: 600; }
+.pq-credit-note.neg { color: var(--neg-text, var(--neg)); }
+.pq-credit-note:empty { display: none; }
+.pq-grid tr.pq-paid td { color: var(--text-dim); font-style: italic; }
 .pq-act .btn { margin-bottom: 6px; }
+.pq-vendor { margin-bottom: 14px; }   /* the vendor page's Pay in QuickBooks review, above its bill list */
+.sumbar .sb-pay { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sumbar .sb-pay[hidden] { display: none; }
 .pq-num { width: 110px; margin-right: 6px; }
 .pq-grid td:nth-child(4) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pq-grid td:nth-child(5) { color: var(--warn-text, var(--warn)); font-size: .85em; white-space: nowrap; }
@@ -2180,6 +2248,16 @@ tr.dt-group.dt-recent .bg-key { color: var(--accent-text); }
 .rs-val.neg { color: var(--neg-text); }
 .rs-sub { color: var(--text-dim); font-size: .82em; }
 .record-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; max-width: 620px; padding-top: 2px; }
+/* little space (owner 2026-10-11: "broken when viewed in little space"): title on its own line, the tools and the stats
+   under it from the left edge, nothing side by side */
+.record-title { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .record-head { gap: 8px 10px; }
+  .record-head-txt { flex: 1 1 100%; order: 2; }
+  .record-tools { margin-left: 0; max-width: none; justify-content: flex-start; flex-basis: 100%; order: 3; }
+  .record-stats { margin-left: 0; gap: 4px 16px; order: 4; }
+  .rv-project .record-title { font-size: 1.25em; }
+}
 .record-tools .rt-group { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; margin-left: 4px; border-left: 1px solid var(--border); }
 .record-tools .rt-lab { color: var(--text-dim); font-size: .82em; }
 .record-tools .rt-stamp { color: var(--text-dim); font-size: .78em; white-space: nowrap; }
@@ -2408,11 +2486,165 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .cd-bulk { margin: 8px 0 4px; }
 
 /* Reclassify transactions */
-.filters.rc-pick { align-items: center; gap: 10px; }
+.filters.rc-pick { align-items: center; gap: 8px 12px; }
 .rc-lbl { display: inline-flex; align-items: center; gap: 6px; }
 .filters.rc-pick input[type="search"] { flex: 0 0 150px; min-width: 0; width: 150px; }
-.rc-codes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 var(--pad-x) 12px; }
+.filters.rc-pick input[type="date"] { width: 140px; }
+/* Draw periods editor on the project page (owner 2026-10-11): shift all with ‹ › / the slider, or type one draw's dates */
+.pp-pe-link { color: var(--accent-text); }
+.pp-pe-x { margin-left: auto; }
+.pp-periods { margin: 0 var(--pad-x) 12px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); display: flex; flex-direction: column; gap: 10px; }
+.pp-pe-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.pp-pe-shift { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pp-pe-range { width: 260px; max-width: 60vw; accent-color: var(--accent); }
+.pp-pe-off { min-width: 110px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.pp-pe-reset { color: var(--accent-text); font-size: .9em; }
+.pp-pe-tbl { width: auto; }
+.pp-pe-tbl input[type=date] { font: inherit; font-size: .95em; padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.pp-pe-tbl tr.pp-pe-changed td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pp-pe-act { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pp-pe-bad { color: var(--neg-text, #b3261e); font-weight: 600; }
+.pp-pe-ok { color: var(--ok-text, #2e7d32); font-weight: 600; }
+td.pp-period-saved { text-decoration: underline dotted; text-underline-offset: 3px; }   /* a window set on the ledger (hover: as invoiced) */
+td.pp-period-draft { color: var(--accent-text); font-weight: 600; }
+.rc-change { margin: 0 var(--pad-x) 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.rc-ch-head { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.rc-ch-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.rc-ch-lbl { width: 120px; color: var(--text-dim); }
+.rc-ch-row input, .rc-ch-row select, .rc-code input { font: inherit; font-size: .9em; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.rc-ch-row input[type="search"] { width: 240px; }
+.rc-ch-row input.rc-ch-text { width: 320px; max-width: 100%; }
+.rc-ch-map { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-left: 130px; }
 .rc-code { display: inline-flex; align-items: center; gap: 4px; }
-.rc-code input { font: inherit; font-size: .9em; width: 96px; padding: 4px 8px; border-radius: 8px; }
+.rc-code input { width: 160px; }
+input.rc-bad { border-color: var(--neg); color: var(--neg-text); }
+#rcTable .rc-new { color: var(--accent-text); font-weight: 600; }
+#rcTable td.rc-memo { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rcTable tr.rc-pl-row { cursor: pointer; }
+#rcTable tr.rc-pl-row:hover { background: var(--row-hover); }
+#rcTable tr.rc-pl-group td { font-weight: 600; color: var(--text-dim); background: var(--surface-2); }
 #rcMsg, #rcResult, #rcAct { margin-left: var(--pad-x); margin-right: var(--pad-x); }
 #rcAct { margin-bottom: 14px; }
+@media (max-width: 700px) { .rc-ch-map { margin-left: 0; } .rc-ch-lbl { width: auto; } .rc-ch-row input[type="search"] { width: 100%; } }
+#rcTable td.rc-memo:has(.rc-new) { white-space: normal; max-width: 420px; }
+
+/* ── Vendor statements: the reconciler's record copy (owner 2026-10-09) ────────────────────────────────────────
+   One bubble everywhere (Vendor Center, vendor page, pay run); colour = the Notion board's Status. The Statement view
+   = the marked pages on the left, the legend floating (sticky) on the right; a click finds the same line on the other side. */
+.stmt-pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px 1px 7px; border-radius: 999px; font-size: .8em; line-height: 1.5; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; cursor: pointer; vertical-align: middle; max-width: 100%; font-weight: 500; }
+.stmt-pill .stmt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.stmt-pill.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); background: color-mix(in srgb, var(--pos) 10%, var(--surface)); } .stmt-pill.ok .stmt-dot { background: var(--pos); }
+.stmt-pill.bad { color: var(--neg-text); border-color: color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 10%, var(--surface)); } .stmt-pill.bad .stmt-dot { background: var(--neg); }
+.stmt-pill.odd { color: color-mix(in srgb, #7e57c2 80%, var(--text)); border-color: color-mix(in srgb, #7e57c2 45%, var(--border)); background: color-mix(in srgb, #7e57c2 12%, var(--surface)); } .stmt-pill.odd .stmt-dot { background: #7e57c2; }
+.stmt-pill.none { color: var(--text-dim); }
+.stmt-pill.dim { color: var(--text-dim); border-style: dashed; background: transparent; }
+.stmt-pill:hover { border-color: var(--accent); }
+.bg-key .stmt-pill, .vendor-seg .stmt-pill { margin-left: 10px; }
+td.stmt-cell { white-space: nowrap; }
+.stmt-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+.stmt-wrap.stmt-empty { display: block; }
+.stmt-pages { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.stmt-pagecap { color: var(--text-dim); font-size: .8em; margin-top: 8px; }
+.stmt-page { position: relative; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; box-shadow: var(--shadow); }
+.stmt-page img { display: block; width: 100%; height: auto; }
+.stmt-band { position: absolute; left: 0; right: 0; cursor: pointer; border-radius: 2px; }
+.stmt-band:hover, .stmt-band.on { outline: 3px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.stmt-band.flash { animation: stmtFlash 1.6s ease-out; }
+@keyframes stmtFlash { 0% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 65%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.stmt-legend { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px 10px; font-size: .9em; }
+.stmt-lhead { display: flex; align-items: center; gap: 8px; }
+.stmt-standing { margin: 8px 0 2px; font-weight: 600; }
+.stmt-meta { color: var(--text-dim); font-size: .86em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.stmt-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+.stmt-found { margin: 10px 0 0; padding: 6px 9px; border-radius: 8px; background: var(--surface-2); font-variant-numeric: tabular-nums; font-size: .9em; color: var(--pos); font-weight: 600; }
+.stmt-found.warn { color: var(--neg-text); background: color-mix(in srgb, var(--neg) 10%, var(--surface)); }
+.stmt-group { border-top: 1px solid var(--border); padding: 7px 0 5px; }
+.stmt-ghead { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; font-size: .9em; user-select: none; }
+.stmt-ghead .stmt-sw { width: 14px; height: 14px; border-radius: 3px; }
+.stmt-ghead .n { color: var(--text-dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+.stmt-ghead .sum { font-variant-numeric: tabular-nums; color: var(--text-dim); font-weight: 500; }
+.stmt-lines { margin: 4px 0 0 22px; display: flex; flex-direction: column; gap: 1px; }
+.stmt-lines[hidden] { display: none; }
+.stmt-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 3px 7px; border-radius: 6px; cursor: pointer; font-size: .88em; }
+.stmt-line:hover, .stmt-line.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.stmt-line b { font-weight: 600; }
+.stmt-line .amt { font-variant-numeric: tabular-nums; text-align: right; }
+.stmt-line .sub { grid-column: 1 / -1; color: var(--text-dim); font-size: .92em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stmt-line.nopage { opacity: .8; }
+@media (max-width: 1100px) { .stmt-wrap { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 860px) { .stmt-wrap { grid-template-columns: 1fr; } .stmt-legend { position: static; max-height: none; order: -1; } }
+
+/* ── The office server monitor (owner 2026-10-09: "make sure we can monitor action") ─────────────────────────── */
+.srv-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.srv-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.srv-dot.ok { background: var(--pos); } .srv-dot.late, .srv-dot.standing { background: #d99a2b; } .srv-dot.down, .srv-dot.failing { background: var(--neg); }
+.srv-word { font-weight: 700; }
+.srv-meta { color: var(--text-dim); font-size: .84em; }
+.srv-table { width: 100%; font-size: .84em; border-collapse: collapse; margin-top: 8px; }
+.srv-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 2px 6px; }
+.srv-table td { text-align: left; padding: 3px 6px; border-top: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.srv-table td.bad { color: var(--neg-text); font-weight: 600; } .srv-table td.good { color: var(--pos); } .srv-table td.warn { color: var(--warn-text); }
+.srv-table details summary { cursor: pointer; color: var(--text-dim); font-size: .9em; }
+.srv-tail { font-family: var(--font-mono); font-size: .8em; white-space: pre-wrap; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; margin: 4px 0 6px; max-height: 160px; overflow: auto; }
+.sync-pill.bad .dot { background: var(--neg); } .sync-pill.bad { border-color: color-mix(in srgb, var(--neg) 60%, var(--border)); color: var(--neg-text); }
+.sp-dot.bad { background: var(--neg); }
+.sp-row.sp-srv .sp-l { white-space: normal; }
+.flash-row { animation: rowFlash 2.4s ease-out; }
+@keyframes rowFlash { 0% { background: color-mix(in srgb, var(--accent) 35%, transparent); } 100% { background: transparent; } }
+
+/* ── the invoice viewer (owner 2026-10-11): an invoice # opens QuickBooks' copy beside its lines + payments;
+   a draw on several invoices shows them adding up to the draw total ── */
+.inv-open { color: var(--accent-text); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; font-weight: 600; }
+.inv-open:hover, .inv-open:focus-visible { text-decoration-color: currentColor; outline: none; }
+.inv-open .inv-count { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 8px; font-size: .78em; line-height: 1.5; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); text-decoration: none; vertical-align: 1px; }
+.iv-draw { margin: 0 0 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.iv-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.iv-plus { color: var(--text-dim); font-weight: 700; }
+.iv-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); font: inherit; cursor: pointer; transition: background .25s, border-color .25s, color .25s, box-shadow .25s; }
+.iv-chip .iv-chip-no { font-size: .78em; font-weight: 600; }
+.iv-chip .iv-chip-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+.iv-chip.counted { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.iv-chip.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.iv-chip.iv-total { cursor: default; color: var(--text); border: 2px solid var(--text); }
+.iv-bar { margin-top: 9px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, var(--surface)); overflow: hidden; }
+.iv-fill { display: flex; height: 100%; }
+.iv-seg { height: 100%; background: transparent; border-right: 2px solid var(--surface); transition: background .35s; }
+.iv-seg.in { background: color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+.iv-seg.on { background: var(--accent); }
+.iv-run { margin-top: 6px; font-size: .9em; color: var(--text-dim); }
+.iv-run .iv-run-amt { color: var(--text); font-size: 1.1em; font-variant-numeric: tabular-nums; }
+.iv-run .neg { color: var(--neg-text); font-weight: 600; } .iv-run .pos { color: var(--pos); font-weight: 600; }
+.iv-lines { width: 100%; margin: 10px 0; font-size: .9em; border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 20%, var(--border)); font-variant-numeric: tabular-nums; }
+.iv-lines th, .iv-lines td { border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); padding: 5px 8px; }
+.iv-lines thead th { background: color-mix(in srgb, var(--text) 12%, var(--surface)); color: var(--text); font-weight: 700; position: static; }
+.iv-lines td.iv-desc { white-space: normal; }
+.iv-lines tr.iv-neg td { color: var(--neg-text); }
+.iv-lines tr.bv-tot td { font-weight: 800; border-top: 2px solid var(--text); }
+.iv-lines tr.iv-pay td { color: var(--text-dim); font-weight: 500; }
+.iv-lines tr.iv-pay-open td { color: var(--neg-text); }
+.iv-lines tr.iv-due td { font-weight: 800; border-top: 2px solid var(--text); background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.iv-lines tr.iv-due.neg td:last-child { color: var(--neg-text); }
+.xdlg.att-full .iv-draw, .xdlg.att-full #ivPrev, .xdlg.att-full #ivNext { display: none; }
+.iv-lines { table-layout: fixed; }
+.iv-lines th, .iv-lines td { overflow-wrap: anywhere; }
+.iv-lines th:nth-child(1), .iv-lines td:nth-child(1) { width: 24%; }
+.iv-lines th:nth-child(3), .iv-lines td:nth-child(3) { width: 38px; }
+.iv-lines th:nth-child(4), .iv-lines td:nth-child(4), .iv-lines th:nth-child(5), .iv-lines td:nth-child(5) { width: 23%; }
+.iv-lines tbody td { white-space: normal; } .iv-lines tbody td:last-child { white-space: nowrap; }
+
+/* little space (owner 2026-10-11: "broken when viewed in little space"): the project head is a grid (back · title ·
+   tools / stats) and its rule sits late in this file, so the narrow form must come after it - title beside Back, the
+   tools under it from the left, the stats under those */
+@media (max-width: 760px) {
+  .rv-project .record-head { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "back txt" "tools tools" "stats stats"; row-gap: 8px; }
+  .rv-project .record-tools { grid-area: tools; justify-content: flex-start; margin-left: 0; max-width: none; }
+  .rv-project .record-stats { grid-area: stats; margin-left: 0; }
+}
+
+/* ── Revised bills (AP-13 follow-up board, owner 2026-10-12) ─────────────────────────────────────────────────── */
+.rev-pill.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); } .rev-pill.warn .stmt-dot { background: var(--warn); }
+.rev-pill.info { color: color-mix(in srgb, #2f6fd6 80%, var(--text)); border-color: color-mix(in srgb, #2f6fd6 45%, var(--border)); background: color-mix(in srgb, #2f6fd6 12%, var(--surface)); } .rev-pill.info .stmt-dot { background: #2f6fd6; }
+.rev-pill { cursor: default; }
+tr.rev-flagged td.rev-flags { color: var(--neg-text); font-weight: 600; }
+td.rev-late { color: var(--warn-text); font-weight: 600; }
+#revTable td { white-space: nowrap; } #revTable td.inv-memo, #revTable td.rev-flags { white-space: normal; min-width: 240px; max-width: 360px; }

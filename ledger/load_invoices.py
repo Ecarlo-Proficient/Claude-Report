@@ -239,7 +239,33 @@ def _migrate_billing_event(con) -> None:
     con.commit()
 
 
+_REF_SQL = ("CREATE TABLE IF NOT EXISTS invoice_notion_ref (qbo_txn_id TEXT PRIMARY KEY, doc_number TEXT, "
+            "notion_url TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)")
+
+
+def remember_pages(con, records: list[dict], now: str) -> int:
+    """invoice_notion_ref - QBO invoice id -> its Invoice Tracker page, kept for good. The tracker rows above
+    are replaced on every load and invoice-sync archives the page of an invoice QuickBooks deleted, so the
+    Audit page's "Invoices deleted" could never find the page of exactly the invoice it asks about
+    (owner 2026-10-11). Only grows; the url and doc # follow the latest load. Seeds itself from any tracker
+    rows already in billing_event the first time."""
+    con.execute(_REF_SQL)
+    con.execute("INSERT OR IGNORE INTO invoice_notion_ref(qbo_txn_id, doc_number, notion_url, first_seen, last_seen) "
+                "SELECT qbo_txn_id, doc_number, notion_url, loaded_at, loaded_at FROM billing_event "
+                "WHERE source='invoice_tracker' AND notion_url IS NOT NULL")
+    n = 0
+    for r in records:
+        if not r.get("notion_url"):
+            continue
+        con.execute("INSERT INTO invoice_notion_ref(qbo_txn_id, doc_number, notion_url, first_seen, last_seen) VALUES (?,?,?,?,?) "
+                    "ON CONFLICT(qbo_txn_id) DO UPDATE SET doc_number=excluded.doc_number, notion_url=excluded.notion_url, last_seen=excluded.last_seen",
+                    (str(r["qbo_txn_id"]), r.get("doc_number"), r["notion_url"], now, now))
+        n += 1
+    return n
+
+
 def write_events(con, records: list[dict], now: str) -> int:
+    remember_pages(con, records, now)        # before the tracker rows are replaced - never lose a page url
     con.execute("DELETE FROM billing_event WHERE source='invoice_tracker'")
     ph = ", ".join(f":{c}" for c in _COLS)
     for r in records:

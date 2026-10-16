@@ -62,18 +62,17 @@ DIVISIONS = {
 # double-counts it (the user 2026-08-27). Excluded from job cost and reported
 # on the sheet as a named exclusion — never silently dropped.
 PAYROLL_RE = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", re.I)
-# BOTH overhead views are a % of the CONTRACT, and on a finished job the
-# contract IS the total billed - what the job ultimately sold for (the user
-# 2026-09-03: "completed jobs use the total billed as contract and make the oh
-# correct then take 10% or 9% of the total contract"). This REPLACES the old
-# 9%-of-COSTS basis: a cost-based overhead moved with the overrun, so the
+# BOTH overhead views are a % of GROSS BILLED on every to-date / actual column
+# (the user 2026-10-02: a to-date view never charges a future overhead); only the
+# PROJECTION column takes the % of the contract (the user 2026-09-03). On a
+# finished job the two meet: its contract IS the total billed. This REPLACES the
+# old 9%-of-COSTS basis: a cost-based overhead moved with the overrun, so the
 # worse a job went the bigger its overhead charge, which is backwards.
 # The contract is READ OUT OF EACH WORKBOOK (`_read_contract`) - the Revised
-# Contract inputs the P&L carries - and total billed stands in when a job has
-# none on file, exactly as the P&L itself does. Same base, same rule, so the
-# Overview can never disagree with the workbooks it is assembled from.
-OVERHEAD_PCT = 0.10          # 10% of contract (= total billed on a done job)
-MFD_OVERHEAD_PCT = 0.09      # 9% of the same contract - the second view
+# Contract inputs the P&L carries - for the projection only. Same base, same
+# rule, so the Overview can never disagree with the workbooks it is assembled from.
+OVERHEAD_PCT = 0.10          # 10%: projection of the contract, to date of gross billed
+MFD_OVERHEAD_PCT = 0.09      # 9%: the MFD view, same bases
 
 # ── one accent, lots of white space ────────────────────────────────────
 # The first cut used solid navy on the tile headers AND the section headers AND

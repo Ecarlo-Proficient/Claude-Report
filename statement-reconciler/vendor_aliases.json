@@ -5,6 +5,12 @@
     "qbo_name": "ABATIX",
     "saved": "2026-09-17"
   },
+  "bartel ready mix": {
+    "pdf_name": "Bartel Ready Mix",
+    "qbo_id": "30777",
+    "qbo_name": "Bartel Ready Mix",
+    "saved": "2026-10-15"
+  },
   "bee line": {
     "pdf_name": "BEE LINE",
     "qbo_id": "28432",
@@ -112,6 +118,18 @@
     "qbo_id": "27080",
     "qbo_name": "Estrada Ready Mix",
     "saved": "2026-05-20"
+  },
+  "frank bartel transportation": {
+    "pdf_name": "Frank Bartel Transportation",
+    "qbo_id": "30777",
+    "qbo_name": "Bartel Ready Mix",
+    "saved": "2026-10-15"
+  },
+  "frank bartel transportation, inc": {
+    "pdf_name": "Frank Bartel Transportation, Inc.",
+    "qbo_id": "30777",
+    "qbo_name": "Bartel Ready Mix",
+    "saved": "2026-10-15"
   },
   "gonzales brothers": {
     "pdf_name": "GONZALES BROTHERS",

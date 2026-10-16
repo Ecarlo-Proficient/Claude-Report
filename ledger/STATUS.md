@@ -4,12 +4,326 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Vendor Payments: Cleared at the bank + drag the columns** (owner: "vendor payments, need to see when
+  it's been cashed, using bank transaction match i need to know if it's cleared or still out there"; "reorder the
+  payments screen. i want to reorder by dragging"). NEW **Cleared** column on the vendor page's Payments view, after
+  Amount, from QuickBooks' bank-feed match (the Uncleared checks pull): **Cleared** (green; "by <date>" = the refresh
+  that first found it matched, since QuickBooks never gives the bank date - NEW table `check_cleared`, written by
+  `load_uncleared_checks.cleared_delta` on every pull from the checks that left the uncleared list, with the window
+  last-pull -> this-pull), **Outstanding · N days** (amber, still on the uncleared list; red **Not matched** once it is
+  older than the account's newest matched transaction = not cashed, or cashed and never matched), **Joint check** (the
+  Joint Checks account is never feed-matched, so no verdict), **Card** (nothing to clear), **not pulled yet** (entered
+  in QuickBooks after the last pull - judged by the mirror's `created` against the pull time, so a check written the
+  morning of a pull never reads as cleared). `_mark_cleared_payments` in dashboard.py; the Payments view's Refresh
+  (`billpay`) now ends with the uncleared pull, so one click brings the column current. **Drag a header** to move a
+  column (the same `colOrderable` as Bills, key `vendorPays`, standard order `VP_PAY_ORDER`), the order remembered on
+  this Mac, a Reset column order button on the bar while one is saved; the tick column is put in front after the order
+  is applied, so it never moves. Checked on a test instance: 58 RCI payments = 27 joint · 16 cleared · 10 card · 3 not
+  pulled yet · 2 voided; a saved order moves the payment rows and their bill rows alike. `test_uncleared_clean` gained
+  `test_cleared_delta`. The owner's 8787 instance needs a restart for the API side (the JS is live on reload; until
+  then the column shows "–").
+- 10/15/2026 · **Bill payment stubs: an internal and an external stub, each a fixed set** (owner: "we need a internal
+  and external stub. The internal remove the invoice it's associated with as default. simply include the project #,
+  and the memo in that order with the bill total, open balance, paid and new balance. finally don't include the mail
+  format revert to the original header. for external simply put the date, ref, total, open, paid, new and put it on
+  the mail template. every stub should have this"). `bill_payment_stub.py`: **External** (kind `vendor`, the envelope
+  template of 10/14) = `DEFAULT_COLUMNS` Date · **Reference** (the `number` column relabelled with QuickBooks' own
+  word; `memo` is now "Memo") · Bill total · Open balance · Paid · New balance - no Transaction type, no Project; the
+  picker (`ledger.stubColumns.v3`, so the new default applies once) can still add any registry column. **Internal**
+  (the original centered header + payment block, never the envelope) = NEW `INTERNAL_COLUMNS` Project · Memo · Bill
+  total · Open balance · Paid · New balance, fixed - `columns_for("internal")` ignores the pick. The client invoices
+  table on top is OFF by default: `print_stub(..., invoices=True)` / POST `invoices: true` puts it back
+  (`stub["invoices"]`, so the history snapshot says which); the print menu gains an "Internal stub · Client invoices
+  on top" tick (never remembered). One `_bills_table` renders both stubs (band on the external one), so the internal
+  stub now totals every money column like the external one (was: Paid only). Buttons and toasts read **External stub**
+  / **Internal stub**; the Client line stays in the internal header (the invoice map is still read for it). Selftest
+  + `test_bill_payment_stub` updated; both stubs rendered to PDF and checked (3 bills, a partial, an un-invoiced bill).
+  Not changed: the auto-filed stub after Pay in QuickBooks (external, default columns), file names, `<vendor>/Internal/`.
+- 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
+  making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
+  repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x
+  contract, every to-date figure = rate x gross billed); the ledger was the one renderer left on the contract (fixed
+  10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
+  were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
+  OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview and Director's
+  cut show 10% beside 9% ON PURPOSE (owner 10/15: 9% agreed with the director, 10% real - both stay; CP/RP 10% only).
+- 10/14/2026 · **Overhead to date = rate x gross billed, never the contract** (owner: "the oh on the actual should be
+  the actual billed NOT the contract price for actuals ... that grossly showing us a bad loss for no reason"; the rule
+  settled 10/02 on the P&L workbook, the ledger had kept the contract). `dashboard.py` `_project_pnl` and
+  `_portfolio_pnl`: overhead = 10% (MFD 9%) x GROSS billed to date; `overhead_basis` reads "10% of gross billed";
+  net = gross billed - costs - that overhead. `app.js`: the project page's Overhead row is labelled by rate alone, its
+  hover says "projected: 10% of contract · actual: 10% of gross billed"; the Company P&L tile and the Net P&L card say
+  gross billed; a finished job on the review page takes 10% of billed. Only a PROJECTION (contract - ETC, the current
+  review card) still uses the contract. 22 P&L tests pass; checked on the project page.
+- 10/14/2026 · **The vendor stub is mailable: a two-window envelope layout** (owner: "a mailable view with a two
+  window design, our info on top and the vendor in the bottom", envelope 8 11/16 x 3 5/8). `bill_payment_stub.py`:
+  the vendor stub's page 1 opens with a 3.5 in envelope panel - our name (`ACB_COMPANY_NAME`) + mailing address
+  (NEW `ACB_COMPANY_ADDRESS` in machine.env, lines split on `|`) where the top window falls, the vendor's
+  print-on-check name + bill address where the bottom window falls (QuickBooks' repeated name line dropped), the
+  payment (date / type / check # / Amount) to the right of both; the bills follow below the first fold, flowing onto
+  page 2 as before. Faint ticks at both paper edges mark the folds (3.5 / 7 / 10.5 in). The page's side margins moved
+  from `@page` onto the body (Chrome clips anything printed inside a page margin). The internal stub keeps its
+  centered header - never mailed. Snapshots, history, columns, the credit block and the dashboard call are unchanged.
+  Selftest covers the panel; checked on paper by the owner with an ACME template first.
+- 10/14/2026 · **Bill Tracker's Approved icon read back as the word.** The tracker's Bills + Inventory sheets now show
+  approval as one icon (green check / red cross / amber `?`); `load_bill_tracker.py` maps it to `approved` /
+  `not approved` / `check QBO` with `shared/bill_approval.icon_state`, so the Vendors filters, the project pages and
+  the pay run keep the words. A check-QBO bill the sheet used to print as `approved` now lands as `check QBO` (the
+  To-approve filter counts it). Test: `tests/test_bill_tracker_memo.py`.
+- 10/13/2026 · **A bill payment to a set amount; the credit it makes on the stub** (owner: "need ability to create a
+  bill payment to a certain amount and for it to show the credit it made after receiving it since qbo will make a
+  credit available to use, i need that in the bill payment stub to show in the bottom. context, joint check pays a
+  bill we paid"). QuickBooks' shape, from the mirror (HDS White Cap check 20119, a joint check): the BillPayment's
+  `TotalAmt` (9,552.63) is more than its lines (9,251.63), no extra line - the 301.00 is QuickBooks' "Amount to
+  Credit", held with the vendor. (1) `bill_payment_stub.build_stub` reads it: `credit` = TotalAmt - what the lines
+  applied (a VendorCredit line now comes OFF - a negative Paid row - as QuickBooks subtracts it; Ubaldo 48395 =
+  3,499.56 bill - 150.00 credit = 3,349.56 check), `ties` is false only on a shortfall; the old "Unapplied" row is
+  gone (QuickBooks never writes one). Both stubs print a block under the bills - **Paid on bills / Credit on account /
+  Total of this check** - with one line: the vendor's copy asks them to hold it as a credit on our account, the
+  internal copy says QuickBooks holds it with that vendor (Amount to Credit). The red "check this payment" warning
+  (which every such payment used to get) now fires only when the check is SHORT of its bills. (2) Pay in QuickBooks:
+  every vendor band carries an **Amount** box (placeholder = the bills less the ticked credits = the least it can be);
+  typed higher, the band says "creates a credit of $X with VENDOR" and shows the credit as a metric, Are you sure?
+  lists CREATES A CREDIT WITH THE VENDOR, the result line says "$X held as a credit with the vendor"; typed lower =
+  a problem, the button stays off. The write (`_pay_vendor`) takes `amount` per vendor: never below the bills less
+  credits, `TotalAmt` = the amount, the bills as lines, nothing for the excess (QuickBooks keeps it); the result
+  carries `credit` (from what QuickBooks actually wrote) and a `warn` if QuickBooks trimmed the amount; `commit()`
+  refuses a non-number. (3) From the vendor page a ticked bill ALREADY PAID now goes on the review too (a joint check
+  paying a bill we paid): `_plan_live` keeps its vendor with `paid_bills` (only when the bills were handed in - the
+  saved run still skips it as before), the review shows it as an italic "already paid - this payment becomes a
+  credit" row, the amount typed is the whole payment and the BillPayment is written with **no Line at all**; the
+  tick bar reads "Pay in QuickBooks · a credit on paid bills…" when nothing ticked is open. Tests:
+  `test_a_typed_amount_above_the_bills_becomes_the_credit`, `test_an_amount_below_the_bills_is_refused`,
+  `test_paid_bills_only_pay_as_a_credit_with_no_lines`; the stub selftest covers the credit block on both copies,
+  the negative credit row and the shortfall warning. NOT yet proven against QuickBooks itself: a BillPayment POSTed
+  with TotalAmt above its lines, or with no lines - the first real one is the proof (QuickBooks' own screen does it:
+  "This transaction will create an additional credit in the amount of 301.00").
+- 10/13/2026 · **Pay bills reads QuickBooks' open balance** (owner: "still showing the broken amount and total bills" -
+  three HDS bills he had just paid in QuickBooks stayed open and on the pay run: the ledger's Bill Tracker load was
+  four days old, the mirror already had them at 0). `_bill_memos` now also carries each bill's mirror `Balance`
+  (`qbo_balance`); when the mirror is newer than the workbook load (`_mirror_newer_than`, mirror stamp vs
+  `ap_bill_line.loaded_at`) `_apply_qbo_balance` makes it the bill's `open_balance`, takes a bill QuickBooks shows
+  paid off the pay run (`pay_selected` False) and the feed drops its saved mark (`set_pay_marks` selected False -
+  the same as a payment written from here); open AP (`summary`) is summed over the settled list. A bill the mirror
+  does not know keeps the workbook's figure; an older or absent mirror changes nothing. The run badge says
+  "N not shown by the filters" when run bills are hidden by the filters. Tests: `tests/test_pay_run_qbo_balance.py`.
+- 10/13/2026 · **Bill payment stub: project # instead of memo, Bill total first** (owner: "the auto bill payment stub
+  after, default it to not show memo but the project # instead. I also need the total first, open, paid and balance
+  after"). `bill_payment_stub.DEFAULT_COLUMNS` = date · type · number · project · bill_total · balance_before · amount
+  · open_balance (Project replaces Memo/Description; `bill_total` relabelled **Bill total** and in the default set, so
+  the money reads Bill total · Open balance · Paid · New balance); the stub filed after Pay in QuickBooks
+  (`pay_bills._stub` -> `print_stub` with no columns) and the vendor page's picker default follow it. With no memo the
+  Project column takes the page's leftover width (`stretch`). The picker's saved pick moved to a new storage key
+  (`ledger.stubColumns.v2`) so the new default applies once; a re-pick is remembered as before. Internal stub
+  unchanged in shape (project after number, the three balances last). Selftest + `test_bill_payment_stub` updated.
+- 10/13/2026 · **Pay in QuickBooks from the vendor page** (owner: "let me pay bills in the vendor center when opening
+  up their unpaid bills. it's the same thing as pay bills"). The vendor page's tick bar gains **Pay in QuickBooks · N
+  bills…** (the ticked bills still open; a paid bill ticked for the copy is left out): it opens the SAME review
+  (`openPayQbo({bills, vendor})`), built as a widget on top of that page (kept across the page's re-renders, removed
+  when another vendor opens), scoped to those bills - `GET /api/pay-bills/plan?bills=id,id` -> `pay_bills.plan(bills)`
+  (`marks_for`: each bill in full) and the review token carries `marks`, so `_commit` re-reads exactly the bills the
+  review showed (`_plan_live(access, cid, marks)`); with no `bills` everything is as before (the saved run). The
+  write, Touch ID, stub and billpay follow-up are unchanged; afterwards the vendor page re-reads itself
+  (`_vpAfterPay`). The review renders into the open widget (`PQ.body` / `PQ.note`), no longer by the Pay run page's
+  ids. Tests: `test_plan_on_given_bills_is_scoped_and_remembered`, `test_plan_live_on_given_bills_never_reads_the_saved_run`.
+- 10/12/2026 · **Filter bars by keyboard; Pay from default; the warning by vendor** (owner: "if same vendor why are
+  you keeping the name? just do vendor and the bill # separated by comma" / "default pay from Frost Bank Vendor,
+  remove OLD account from showing" / "when i press cmd f, and then tab i expect the select to go from left to right
+  so i can tab to vendor and immediately start typing their name once it shows tab and it saves the check mark and
+  goes to the next one"). (1) The Not Approved box and the Are you sure? list read "VENDOR · 1, 2; OTHER · 3"
+  (`_pqByVendor`). (2) `pay_bills.accounts()`: an account named "OLD ..." is never offered (`HIDE_ACCOUNT_RE`) and
+  the account starting "Frost Bank Vendor" is listed first (`DEFAULT_ACCOUNT`) = the review's default. (3) NEW
+  `_mselKeys` on every filter-bar multi-select (Bill Tracker, Liens, Pay bills, Invoices, the vendor page's): on a
+  filter's button a typed letter opens its menu with the letter in the search box (a menu without one jumps to the
+  first option starting with it), the first match is outlined (`.msel-opt.msel-next` = what Tab will tick); Tab
+  ticks it, closes the menu and moves to the next control of the bar; Enter ticks and stays; Esc closes. ⌘F still
+  lands in Ref #; the bar's buttons are the tab order. Verified on 8792 by keys: Ref # -> Tab -> "cow" -> Tab =
+  Cowtown ticked, focus on the Date switch; 3 Tabs -> "r" -> Tab = RP ticked, focus on Approved; mocked review:
+  box groups by vendor, Pay from = Frost Bank Vendor.
+- 10/12/2026 · **Pay in QuickBooks: a NOT APPROVED bill stays on the run, warned loudly** (owner: "need to bypass, i
+  want it to warn me but not remove it. make it easy to see, Paying Not Approved bill, x, y, z, then highlight the row
+  yellow"). `pay_bills._plan_live` no longer skips a bill whose memo says NOT APPROVED; the row carries
+  `not_approved` (the `--plan` print says NOT APPROVED too). The review shows one amber box - "Paying N Not Approved
+  bills: vendor · bill #, ..." - and paints those rows yellow (`tr.pq-na`, "NOT APPROVED" bold in the notes column);
+  the Are you sure? dialog repeats the list in capitals. The write path never blocked on it, so nothing else changed
+  there. **Lettering**: the review's text lines hugged the widget's left edge (`#payQboBody` had no gutter while the
+  controls and grid had theirs) - the body now carries the widget gutter, the grid stays flush like every other grid.
+  **Pay bills filter order** (owner): Ref # · Vendor · Date · Division · Approved · Project # · Client · Lien · Show.
+  Verified on 8792 with a mocked plan (a live read needs Touch ID): box names both bills, two yellow rows, text
+  inset like the controls; the bar reads in the new order.
+- 10/12/2026 · **One row per bill on the ledger's bill feed** (owner: "find out why cowtown shows 277,760.40 of open
+  bills from july and back on the ledger but on the bill tracker excel it shows a smaller figure" -> "fix it, one row per
+  bill"). Cause: the Bill Tracker lists a multi-job bill on the Bills sheet once as "(multiple)" AND on the Inventory
+  sheet once per job, every row carrying the bill's FULL open balance; `load_bill_tracker` lands both sheets and
+  `_fetch_ap` emitted one row per `ap_bill_line` row, so Cowtown 396753 (07/24/2026, 16,020.00, RP7327 / RP7491 /
+  RP7492) showed 4 times = 48,060.00 extra; 21 open bills this way, 1,149,901.21 overstated across the ledger (5.37M
+  shown vs 4.22M). Fix: `_bill_key` (the QuickBooks bill id, else vendor | bill # | date) groups the rows; the
+  Bills-sheet row stands for the bill and the Inventory rows feed NEW `projects` / `clients` / `divisions` / `lines`
+  on it; `client` = the one client or "(multiple)". `ap.summary` counts once per bill too. app.js: filter configs may
+  give `vals: b => [...]` (`mselValsOf` / `mselHit`) - Client / Project # / Division on the Bill Tracker, Pay bills
+  and Liens list every job and a bill passes on ANY of its jobs; `billJobs(b)` walks the job list in the
+  payment panel's by-project index, the vendor page's project box and its suggestions; a "(multiple)" cell reads
+  "RP7327 +2" with the jobs in its tooltip. Two QuickBooks bills with the same bill # stay two bills (Quikrete
+  34736499 x2 on CP790 - a real duplicate entry to check in QuickBooks). Verified on 8792: Cowtown July and back =
+  37 bills, 229,700.40 (= the workbook's Bills sheet); 733 open bills (was 805 rows); 4,234,647.05 open; no bill id
+  twice; Project # RP7491 finds 396753; Select all on that view = those 37 bills. The per-project view
+  `v_ap_by_project` is still line-based (the project page's AP by job) - untouched here.
+- 10/12/2026 · **Pay bills gets the Bill Tracker's Date filter** (owner: "i need the date filter with the month feature
+  like the bill tracker to filter by months when paying bills"). The same `dateFilter` component (Month = every month
+  ticked, Select all / Deselect all, a pick; Date = from / to with the calendar; Reset) sits after Ref # on the Pay bills
+  bar (`#pfDate`, state `payRunDate`) and filters on the bill date, so a check run can be one month's bills and
+  **Select all shown** ticks only that month. Built with the other pay filters (once per bill-set change, state kept).
+  Verified on 8792: 805 open bills -> Sep 2026 = 270 rows all 09/2026; from 09/01 to 09/15 = 142; Reset = 805 again.
+  Follow-up the same day (owner: "only show me the months min and max that is being shown"): the month list is ONLY the
+  months of the bills on the screen - every other filter applied, the date filter itself not (`_payMonthsShown`,
+  `_payFilterPass(b, skipDate)`), rebuilt on each render. Open bills = 13 months (a paid bill's Dec 2026 gone); one
+  vendor picked = just its Aug + Sep 2026; "In this pay run" with nothing on it = no months.
+- 10/12/2026 · **Select all at the top of Pay bills' Pay column** (owner: "need a select all as well on the pay bills
+  screen"). A master checkbox in the Pay header (`input.pay-all`): one tick puts every payable bill on the screen on
+  the run (`paySelectAllShown`), a second tick takes every shown bill off it (NEW `payDeselectAllShown`); half-ticked
+  when only some are on; the ticks are a draft until Save. The "Select all shown" button stays. Verified: one vendor's
+  4 bills on / 3 after one row off (half-tick) / 0 after the untick, no draft left; all 805 open bills on and off.
+- 10/12/2026 · **Vendors -> Revised bills** (owner: "a way to have the revised bills in a process so we know where they
+  stand" - "in the same statement Excel, not a mix"). `/api/revisions` reads every vendor's statement record
+  (`revised` rows the reconciler writes from each workbook's Revised Bills sheet, 60 s cache) and judges each row
+  (`shared/revised_sheet.standing`: the stage, since when, "waiting on the vendor's reply - 9 days"); chips per stage
+  (Open · each stage · All), then one row per bill: vendor (opens the Statement view), invoice # (QuickBooks), invoice
+  date, amount billed vs corrected, the reason as the vendor reads it, the Stage pill, where it stands (amber past 14
+  days), the clerk's four dates, her Notes. The Statement legend adds "revised bill: <stage> - <standing>" under a line
+  that is one. The ledger never writes the workbook.
+- 2026-10-11 · **Invoice viewer + Gross profit rule** (owner: "invoice # not clickable i want that to open just like
+  attachment and see the invoice load from qbo ... see the line items as is so you don't have to leave the ledger";
+  "Jpi mayhil ... show clearly that you are opening the popup but ... there are more invoices adding to the total";
+  "a line divider here and make gross profit bold"). Project page draw table: the Invoice # is a link (a count badge
+  when a draw has several) -> the viewer: left = the invoice from the mirror (`invoice_view.py`: customer, dates,
+  status, memo, every line as typed, each payment with its check # and joint-check supplier, balance due); right =
+  QuickBooks' own printed invoice (`invoice_pdf.py` -> `/api/invoice/pdf`, cached per SyncToken in Application
+  Support) plus the invoice's attachments (the pay app). Several invoices = a strip on top (each invoice chip, + ... =
+  Draw total, a segmented bar, the running total counting up as ← → / a chip move the focus). Proven on MFD192 June
+  2026 (34417 + 34418 + 34419 = 700,905) and CP800 Draw #3 (five joint checks, 102,392.69 due = the QuickBooks PDF).
+- 10/11/2026 (night, last) · **Project P&L: ETC right under gross billed; retained / net billed / the WIP warning
+  behind an (i)** (owner: "remove the contract amounts on the top. on the P&L make the etc costs to date below the
+  gross to compare instead of having that gap of retained and net billed. put that info on a i circle top right of
+  cell that you click and see that. even the wip report warning"). The head line drops Contract (Billed · Costs · Net
+  profit · Owed to us stay). `_ppProjectedVsActual` rows are now Contract · Gross billed → ETC · Costs to date → Gross
+  profit → Overhead → Net profit; the Retained and Net billed rows are gone, their figures, the WIP report's gross
+  billed and the "WIP report shows $x more - Resync" warning sit behind an ⓘ in the top-right of the gross billed
+  Actual cell. NEW reusable `cellInfo(td, lines, title)` (`.cell-i` + `.cell-pop`): an (i) in a cell's corner that
+  opens a small note on click, one open at a time, any click elsewhere closes it - reuse for any cell whose detail
+  should not be a row. Checked in the preview on MFD325 (rows, head, the note's four lines incl. the warning).
+- 10/11/2026 (night, latest) · **Four owner rules on the project page.** (1) **Money adds in one column** (owner:
+  "rule: make money add to the same column" - a vendor band's total sat in its own grid column, right of the bill
+  amounts it sums): the band row is now real cells - the name across to Amount, the total UNDER Amount
+  (`pp-band-amt`, the same cell the bills and the Materials / Labor totals use), the counts as words beside it ("3
+  bills · 2 draws · 3/3 paid ✓ · $x to pay"); the metric-label row over the vendors went with the grid it labelled.
+  (2) **A little box glows while the wheel scrolls it** (owner: "when scrolling in little menus make the menu outline
+  subtle glow to show the scroll is scrolling inside that box until you are out"): one document-level scroll listener
+  (capture) adds `.scroll-in` to any element that scrolls inside the page and is under 560px tall - the capped Draw
+  overview, menus, lists - and drops it half a second after the last scroll (= when the box hit its end and the page
+  took over); an accent outline + soft shadow, transitioned. (3) **The fx bar shows only on a click** (owner, on
+  "Click Overhead, Gross profit, Margin, Net or Net margin to see how it is worked out": "what is this?" - an idle
+  instruction sentence, against his no-instruction-text rule): `_ppPaintFx` hides the bar until a worked-out cell is
+  clicked, then shows the formula with an × to hide it. (4) **The project head in little space** (owner: "broken when
+  viewed in little space" - the title one letter per line beside the tools): at ≤760px the head's grid stacks - Back
+  beside the title, the tools under it from the left, the stats under those - and the title can break anywhere.
+  Checked in the preview: band total and bill amounts share the same right edge (636px), fx hidden until clicked,
+  the glow class on the capped table, the phone-width head stacked with the edge check clean.
+- 10/11/2026 (night, later) · **One draw picker instead of the chip grid** (owner, on the wrapped rows of draw chips:
+  "instead of this disorder what do you think is best? ... a single choice bar that you click and choose"). `_ppTabs`
+  is now one `<select class="pp-draw-pick">`: All draws, No draw yet, then every draw newest first by its NAME alone
+  ("September 2026"; a draw with no month or number says "Draw · Inv 33302") - the owner, on a first cut that carried
+  the invoice, status and bill count: "adding info more than just the draw info clutters it"; the Coverage table
+  carries those. Choosing one sets `_pp.view` as the chips did, ← → still flip, the Coverage table rows still select. Styled as the app's own control (no native
+  chrome, a hairline border, a small chevron). The Coverage table below already lists every draw as a row, so the grid
+  was a second copy of the same list.
+- 10/11/2026 (night) · **Draw periods on the project page - saved on the ledger only** (owner: "a way to change
+  period draw dates by moving it in a horizontal <> way and it changes the dates as it goes for all, and then a way to
+  edit individual periods themselves without it overlapping the other ones"; "never write" [to QuickBooks]; "more of a
+  feature inside the page ... put save but only on the ledger"). On an MFD / CP job whose invoices carry a period, a
+  **Draw periods** button on the draw tabs opens the editor above the Draw overview: ‹ › and a slider move EVERY
+  draw's period by the same days (the Coverage table's Period column follows, staged in the accent colour); one row
+  per draw, oldest first, Start / End date boxes whose min / max are the neighbouring draws (a typed date is clamped,
+  so nothing overlaps), Days, and the window "as invoiced"; "back to as invoiced" stages every draw back. **Save**
+  keeps the windows on the ledger - NEW table `draw_period` (one row per invoice of the draw; a window equal to the
+  invoice's is not kept) via `/api/draw-periods/save` (`draw_periods.save`, refused on an overlap, replaces the job's
+  rows). From then on the project page uses the saved window as the draw's period (`_fetch_project_page` applies
+  `draw_periods.saved` before the subs are matched into the draw; `period_source` = ledger / invoice,
+  `inv_period_start/end` ride along), the Coverage cell is dotted-underlined with "set on the ledger · as invoiced a –
+  b" on hover, and the editor reopens on the saved windows. QuickBooks (where the period lives, on the invoice memo),
+  the Bill Tracker and Notion are never touched. `draw_periods.py` also keeps the period rules (`period_of`,
+  `memo_with`, `check`) and a read-only listing from the mirror. A QuickBooks write path was built first and removed
+  the same evening on the owner's word. Tests: `tests/test_draw_periods.py`. Checked in the preview on MFD325:
+  shift +2, Save (13 draws), the page re-read with the saved windows, back to as invoiced + Save (0 kept).
+  Same night, the owner: "hide the feature, don't make it an essential feature, it's something just to check things"
+  - the button left the draw tabs; the editor opens from a "check draw periods" link inside the Draw overview's ⓘ
+  help (the help stays open while the editor is, and the editor has its own close). A saved window still shows its
+  dotted underline in the overview, so a job with a checked schedule is never silent about it.
+- 10/11/2026 (later) · **An invoice's story under its Audit row** (owner: "add ... if the invoices were deleted with
+  notion invoice tracker data and more so the history of invoices and the creation date"). `/api/qboaudit/invoice?id=`
+  (`_invoice_history`): from the mirror - created in QuickBooks (`MetaData.CreateTime`, the mirror's `created`), the
+  copy as held (a deleted invoice keeps its last copy), every logged change oldest first through the same explainer as
+  the page (what moved, old -> new), the payments applied (each one's date, amount on this invoice, ref #, deleted or
+  not), on file / deleted with QuickBooks' own deletion time; from the ledger - the Invoice Tracker row (status, lien,
+  quick status, paid / last action / next follow-up, aging, litigation, the page) or, when the row is gone, the page url
+  from the NEW register **`invoice_notion_ref`** (schema.sql; `load_invoices.remember_pages` fills it before every
+  tracker replace, seeds itself from the rows already loaded, only grows - the sync archives a deleted invoice's Notion
+  page and the loader replaces the rows, so without it a deleted invoice's page was unreachable; seeded on the live
+  ledger with 465 pages). `notion_page.render` now carries the page's own `created` time and `archived` (in Notion's
+  trash). UI: a **story** link on every Invoice row's Record cell (Invoices changed / deleted / any page showing one)
+  opens `qaHistRow` under the row - created · last changed · on file or deleted, the invoice line, History on record
+  (with "the log began 09/23/2026" when the log did not see it born), Payments applied, Notion Invoice Tracker (the
+  ledger fields, "open the tracker page", then the page body + comments via `invNotionSection`; a register-only page
+  shows every property and the archived badge); on **Invoices deleted** every row opens its story unasked. Tests:
+  `tests/test_invoice_history.py` (edited then deleted invoice, register fallback, the register only grows). Checked
+  in the preview on a live invoice (CP582 draw 4: created 05/20, re-totalled 10/08, the collections log from Notion).
+- 10/11/2026 · **Audit view in categories** (owner: "the audit into an audit and then to categories, AP, AR, etc. I need
+  the checks QuickBooks changed first for AP and invoices changed after saved ... are the invoices getting deleted as
+  well. That's something we never checked"). `NAV_GROUPS` gains **Audit** between Customers and Company; its sub-tab row
+  is captioned by category (`cats` on the group, `.subcat` caption, the row wraps instead of clipping): **AP** = Checks
+  QBO changed · Bills changed · Bills deleted · Bills to fix · Uncleared checks; **AR** = Invoices changed · Invoices
+  deleted; **Company** = Duplicate customers · Other changes. Company keeps Money · Reclassify transactions · Processes.
+  The QBO changes page is ONE tab-page serving five tabs (`PAGE_OF` -> `qboaudit`; `QA_SCOPES` = title + row filter:
+  AP entities Bill / BillPayment / Purchase / VendorCredit / PurchaseOrder, AR entities Invoice / Payment / CreditMemo /
+  SalesReceipt / RefundReceipt / Estimate; "deleted" = kind deleted or flag voided; Other = every remaining entity);
+  the flag chips count the open category only, a chip from another category never hides a page, column funnels and
+  sort are remembered per category (`hf*` keyed by tab), the empty line names the category and offers the new **All**
+  window (3650 days = since the change log began 09/23/2026). `shared/qbo_mirror.change_flags`: a deleted Invoice is
+  *deleted open invoice* (money still owed) or *deleted paid invoice* (test added). `TAB_ALIAS.qboaudit -> qboap`
+  keeps old deep links. Finding on the way: the mirror has logged Invoice deletions since 09/23 (34 created · 60 edited ·
+  0 deleted); the watch existed, the page did not. Checked in the preview: Audit row at desktop and phone width, light
+  and dark; AR Invoices changed (12 flagged / 30 days) and Invoices deleted (none, All). LEDGER_VERSION 1.6.0.
+- 10/09/2026 (night) · **Vendor statements in the ledger + the office server monitor** (owner: "record copy of vendor
+  statements ... notion style bubble ... put it in the vendor center ... the highlighted ones with the legend side
+  floating as you scroll ... cmd/ctrl clicked takes you to the process of where it's at"; "now that we have the live,
+  make sure we can monitor action"). The reconciler's record (`shared/statement_record`) is read, never a statement:
+  `/api/statements` (every standing, 60 s cache), `/api/statement?v=` (one vendor in full), `/api/statement/page|file`
+  (the path comes from the record and must sit under the vendor's folder). UI: `stmtBubble` - the Notion colours (All
+  entered green · Not entered red · Unreadable purple · No statement grey · no folder / share off dashed) - as a
+  **Statement** column in the Vendor Center, on the vendor page bar, and inside every vendor band on the pay run and the
+  Pay in QuickBooks step ("reconciled as of" before a check goes out); click = the vendor page's new third view
+  **Statement**: the marked pages on the left (every band a click target), the legend sticky on the right (standing, as
+  of / checked, statement due, "N of M lines found on the pages · K to check by hand", Statement / Excel / Notion /
+  Process links, then one group per bucket with count + $, problems open by default); a click finds the same line on
+  the other side and flashes its band; ⌘ / Ctrl-click = where it is in the process (a bill QuickBooks has -> the bill
+  viewer; a bill to enter / a row to read by hand -> the clerk's Notion page; else the statement; the Process button
+  -> Company -> Processes scrolled to the reconciliation row). Vendor names meet on a letters + digits key
+  (`stmtKey` = `statement_record.key`). **Office server monitor**: `server_status.py` (`/api/server`) judges
+  server-status.json + writer.json as ok · late (20 min quiet) · down (60) · failing (a job's latest exit != 0) ·
+  standing down (live but the writer file is not "server" / AP-AR skipped) · off; the gear's new "Office server" box
+  lists every job (last run, result, took, last good, its output when it failed) with Check now; the Data status
+  pop-up's Office server block leads with the judgement; the top pill turns red with "server down / failing" (amber
+  for late / standing down); refreshed every 90 s. Tests: `tests/test_server_status.py`. Checked in the preview on a
+  stand-in share (two vendor records with marked pages, a failing AP run): desktop, dark, phone width (edge check
+  clean), the pay-run band, the gear and the pop-up.
 - 10/08/2026 · **Data status: the office server.** `_freshness` reads `Accounting/_automation/server-status.json`: the
   last GOOD run of the server's mirror, Bill Tracker and Invoice sync (a failed latest run shows no time, so the dot goes
   grey) + `server_mode`; the Data status pop-up gains an "Office server" block, "(test - practice copies)" in test mode,
   hidden when the share or the server is absent. Same pass: the Invoice file line read "never" - the ledger never loads
   invoice-sync's `.env`, so it now looks at the Accounting share's `Accounts Receivable/Invoice Tracker.xlsx` first.
   Checked in the preview (light, the pill went from 2 stale to 1).
+- 2026-10-09 · **"Print N stubs" menu opens again** (owner: "doesn't work anymore ... i have to print it from the row"). The multi-print button let its click reach the page's menu closer, which hid the Vendor / Internal menu at once; it now stops the click like the row button. Checked in the preview.
+- 2026-10-09 · **Vendor stub shows "Joint check" too** (owner: a bill payment out of the Joint Checks account is type Joint check). `build_stub` sets `joint` from the bank account, so both stubs print it; RCI check 20098 reprinted.
 - 2026-10-08 · **Internal stub matches a joint check by check #** (owner: "fix the ledger stub to match by check #").
   `find_joint_payment` now takes every Payment and BillPayment of the same amount from the mirror and pairs by
   check # (any date), then date, then the amount alone within 45 days when unique (a client check with no # -
@@ -42,6 +356,19 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   the page's own script puts the name everywhere that role appears. `/api/process-guide?fmt=html` inlines names.js
   (`registry_view.inline_names`) since the relative path does not resolve under /api/. The Guide link opens the html first
   when it has slots. First guide: AR-10 payment intake (3 pages). `tests/test_guide_names.py`.
+- 2026-10-09 · **Uncleared checks cleaned** (owner: "refresh it and clean the list"). `load_uncleared_checks.clean`
+  leaves off voided ($0) checks and checks QuickBooks still holds "To print" (queued, never written), read from the
+  mirror's copy; the page's Refresh now runs the mirror refresh first. `tests/test_uncleared_clean.py`.
+- 2026-10-09 · **Reclassify transactions = the full suite** (owner: "you look at it from a P&L, you click the account
+  and select the transactions to move ... for line items ... reclassify all, item or category, memo, class, project ...
+  bulk edit all of these things"). Find lines by date / type / account (+ sub-accounts) / item / class / project / name /
+  memo / doc #, or the **P&L** by account for a date range (click an account = its lines). Change panel: account, item,
+  class, project, line memo, document memo (set / find & replace), one value or **Map each**; old -> new in every cell.
+  Now covers journal entries (account / class / customer / memo - written now, were listed only), invoices, credit
+  memos, sales receipts (item / class / memo). Commit: per-line signature (refused if the line moved since the preview),
+  live re-read refuses a document edited in QuickBooks since, read-back of every changed field, same money guards.
+  `/api/reclassify/plan` takes filters (`mode=pnl|lines`); POST `/api/reclassify/commit` takes `{keys, sigs, changes}`.
+  A category line stays a category line (no item <-> category conversion - line ids could change).
 - 2026-10-07 · **Company -> Reclassify transactions** (owner: "add this tool as reclassify transactions in the
   ledger"). `ledger/reclassify.py` (graduated from one-offs/move_project_lines.py, first used 10/06 for RP7242-FTW ->
   RP7242): From / To project pickers -> Preview (mirror, no write) lists every Bill / Expense / Vendor credit LINE on
@@ -2806,7 +3133,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   uses. Writes Excel only; the ledger is untouched. `pnl` alone and any
   unknown `pnl-<x>` resolve to zero steps and are rejected by `_sync_start`.
 
-## OPEN ISSUES / NOTES
+## OPEN ISSUES
+- 10/09/2026 · **The Notion "Re-check" poller runs nowhere.** `statement-reconciler/run_recheck.sh` is a Mac launchd job
+  that is not loaded (no scheduled jobs on the owner's Mac, 10/08), and the office server image does not carry the
+  reconciler (it needs tesseract + poppler and the Notion / QBO keys). Until it moves to the server's scheduler, a
+  ticked Re-check box does nothing and the ledger's record only refreshes when someone runs `statement-reconcile`. / NOTES
 - MFD rows come from `Test-Master`, which has **no STATUS column** → MFD `status` loads as NULL
   (MFD closures are manual anyway). RP/CP status comes from their own tabs.
 - `wip_snapshot` stores the master's already-computed figures verbatim (source of truth = the

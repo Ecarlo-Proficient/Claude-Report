@@ -343,12 +343,13 @@
     <section class="subpage" data-sec="qboaudit" id="sec-qboaudit">
       <section class="widget">
         <div class="widget-head">
-          <h2>QBO Audit - what changed in QuickBooks <button type="button" class="help-i" title="How this page works" aria-expanded="false">ⓘ</button> <span class="count" id="qaNote"></span></h2>
+          <h2><span id="qaTitle">What changed in QuickBooks</span> <button type="button" class="help-i" title="How this page works" aria-expanded="false">ⓘ</button> <span class="count" id="qaNote"></span></h2>
           <span class="wh-right">
             <span class="seg" id="qaDays" title="How far back">
               <button type="button" class="seg-btn" data-days="7">7 days</button>
               <button type="button" class="seg-btn on" data-days="30">30 days</button>
               <button type="button" class="seg-btn" data-days="90">90 days</button>
+              <button type="button" class="seg-btn" data-days="3650" title="Since the change log began, 09/23/2026">All</button>
             </span>
             <button class="btn small" id="btnQaRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID) and re-read the log">⟳&nbsp;Refresh from QuickBooks</button>
             <button class="btn small" id="btnQaReload" title="Re-read the change log (no QuickBooks call)">Reload</button>
@@ -358,7 +359,7 @@
           <div class="sync-bar"><div class="sync-bar-fill" id="qaFill"></div></div>
           <div class="sync-step" id="qaStep"></div>
         </div>
-        <p class="hint help-pop" hidden>What QuickBooks deleted, edited or added, with its own time. A check that lost its bills is one row - the bills it reopened fold under it; the fix is on <b>Checks QBO changed</b>. QuickBooks' own audit log says who.</p>
+        <p class="hint help-pop" hidden>What QuickBooks deleted, edited or added, with its own time - one page per category: <b>AP</b> bills, expenses and bill payments · <b>AR</b> invoices, payments received and credit memos · <b>Company</b> everything else. A deletion or a void sits on its own page (<i>deleted open invoice</i> = money was still owed on it). A check that lost its bills is one row - the bills it reopened fold under it; the fix is on <b>Checks QBO changed</b>. An edit can be a fix: OK it and it leaves the list. QuickBooks' own audit log says who.</p>
         <div class="acct-filters" id="qaFilters"></div>
         <div class="filters">
           <input type="search" id="qaSearch" class="ref-search" placeholder="⌘F - ref #; paste a column for many" autocomplete="off">
@@ -456,7 +457,7 @@
     </section><!-- /sec: dupcustomers -->
     </div><!-- /tab: dupcustomers -->
 
-    <!-- Reclassify transactions (owner 2026-10-07): cost lines from one project to another, line level - ledger/reclassify.py -->
+    <!-- Reclassify transactions (owner 2026-10-07, full suite 10-09): find lines, bulk-change account / item / class / project / memo, line level - ledger/reclassify.py -->
     <div class="tab-page" data-tab="reclassify" hidden>
     <section class="subpage" data-sec="reclassify" id="sec-reclassify">
       <section class="widget">
@@ -470,14 +471,29 @@
           <div class="sync-bar"><div class="sync-bar-fill" id="rcFill"></div></div>
           <div class="sync-step" id="rcStep"></div>
         </div>
-        <div class="filters rc-pick">
-          <label class="rc-lbl">From <input type="search" id="rcFrom" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
-          <span class="dim">→</span>
-          <label class="rc-lbl">To <input type="search" id="rcTo" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
-          <button type="button" class="btn small" id="btnRcPreview">Preview</button>
-          <datalist id="rcProjects"></datalist><datalist id="rcCodes"></datalist>
+        <div class="filters rc-pick" id="rcFilters">
+          <label class="rc-lbl">From <input type="date" id="rcD1"></label>
+          <label class="rc-lbl">To <input type="date" id="rcD2"></label>
+          <label class="rc-lbl">Type <select id="rcTypes">
+            <option value="">All</option>
+            <option value="Bill,Purchase,VendorCredit">Bills · expenses · vendor credits</option>
+            <option value="JournalEntry">Journal entries</option>
+            <option value="Invoice,CreditMemo,SalesReceipt">Invoices · credit memos</option>
+          </select></label>
+          <label class="rc-lbl">Account <input type="search" id="rcFAccount" list="rcAccounts" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Item <input type="search" id="rcFItem" list="rcItems" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Class <input type="search" id="rcFClass" list="rcClassesF" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Project <input type="search" id="rcFProject" list="rcProjectsF" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Name <input type="search" id="rcFName" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Memo <input type="search" id="rcFMemo" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Doc # <input type="search" id="rcFDoc" autocomplete="off" spellcheck="false"></label>
+          <button type="button" class="btn small primary" id="btnRcPreview">Find lines</button>
+          <button type="button" class="btn small" id="btnRcPnl">P&amp;L</button>
+          <datalist id="rcAccounts"></datalist><datalist id="rcItems"></datalist>
+          <datalist id="rcClasses"></datalist><datalist id="rcProjects"></datalist>
+          <datalist id="rcClassesF"></datalist><datalist id="rcProjectsF"></datalist>
         </div>
-        <div class="rc-codes" id="rcCodesBar" hidden></div>
+        <div class="rc-change" id="rcChange" hidden></div>
         <div id="rcMsg"></div>
         <div class="table-scroll">
           <table class="grid" id="rcTable"><thead></thead><tbody></tbody></table>
@@ -696,6 +712,20 @@
     </div><!-- /tab: review -->
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
+    <div class="tab-page" data-tab="revised" hidden>
+    <section class="subpage" data-sec="revised" id="sec-revised">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Revised bills <span class="count" id="revNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnRevRefresh" title="Re-read the Notion board now">⟳&nbsp;Refresh</button>
+          </span>
+        </div>
+        <div class="acct-chips" id="revChips"></div>
+        <div class="table-scroll"><table class="grid" id="revTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+    </section>
+    </div>
     <div class="tab-page" data-tab="paybills" hidden>
       <!-- Pay-run save bar: sticky top-right, mirrors the Bills lien save bar -->
       <div class="savebar" id="paySaveBar">
@@ -714,20 +744,21 @@
           QuickBooks is only written when you press <b>Pay in QuickBooks…</b> on the pay list, review it and confirm.</p>
         <div class="bill-filters" id="payFilters">
           <label class="fld"><span>Ref #</span><input type="search" id="pfSearch" class="ref-search" placeholder="⌘F - bill #; paste a column to tick them all" autocomplete="off"></label>
-          <div class="fld"><span>Client</span>
-            <div class="msel" id="pfClientMsel"><button type="button" class="msel-btn" id="pfClientBtn">All clients</button><div class="msel-menu wide" id="pfClientMenu" hidden></div></div>
-          </div>
           <div class="fld"><span>Vendor</span>
             <div class="msel" id="pfVendorMsel"><button type="button" class="msel-btn" id="pfVendorBtn">All vendors</button><div class="msel-menu wide" id="pfVendorMenu" hidden></div></div>
           </div>
-          <div class="fld"><span>Project #</span>
-            <div class="msel" id="pfProjMsel"><button type="button" class="msel-btn" id="pfProjBtn">All projects</button><div class="msel-menu wide" id="pfProjMenu" hidden></div></div>
-          </div>
+          <div class="fld"><span>Date</span><div class="datef" id="pfDate"></div></div>
           <div class="fld"><span>Division</span>
             <div class="msel" id="pfDivMsel"><button type="button" class="msel-btn" id="pfDivBtn">All divisions</button><div class="msel-menu" id="pfDivMenu" hidden></div></div>
           </div>
           <div class="fld"><span>Approved</span>
             <div class="msel" id="pfApprMsel"><button type="button" class="msel-btn" id="pfApprBtn">Any approval</button><div class="msel-menu" id="pfApprMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="pfProjMsel"><button type="button" class="msel-btn" id="pfProjBtn">All projects</button><div class="msel-menu wide" id="pfProjMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="pfClientMsel"><button type="button" class="msel-btn" id="pfClientBtn">All clients</button><div class="msel-menu wide" id="pfClientMenu" hidden></div></div>
           </div>
           <div class="fld"><span>Lien</span>
             <div class="msel" id="pfLienMsel"><button type="button" class="msel-btn" id="pfLienBtn">Any lien</button><div class="msel-menu" id="pfLienMenu" hidden></div></div>
@@ -1024,6 +1055,10 @@
           <button class="btn small" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a Resync.">Refresh view</button>
           <button class="btn small" id="btnCostsFull" title="Full cost reload from QuickBooks: every project, all history, deleted or re-coded bills drop out. 30 to 40 minutes.">Full cost reload</button>
         </div>
+      </div>
+      <div class="set-group">
+        <h3>Office server <span class="count">- what the Synology ran, and whether it is well</span></h3>
+        <div id="serverBox" class="srv-box"></div>
       </div>
       <div class="set-group">
         <h3>Write actions</h3>

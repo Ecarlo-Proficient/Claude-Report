@@ -1,6 +1,8 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
+Last changed: 10/15/2026 - vendor alias added: statements headed 'Frank Bartel Transportation, Inc.' resolve to the QBO vendor **Bartel Ready Mix** (`vendor_aliases.json`; the identify_file alias-cache step, no code change). Earlier: 10/13/2026 - a matched bill's Approved? reads **Pending Approval / Requires Approval** from QuickBooks' approval report (`shared/bill_approval`, `QboBill.vendor` is the key); both land in the Not approved bucket (board, record, marked statement); Check QBO is left for bills the report cannot vouch for; the Summary banner names when the report synced. Earlier: 10/12/2026 (later) - the Revised Bills sheet's **second section**: paid in QuickBooks, the statement still shows it open - bill info + check #, date, amount (`shared/revised_sheet.payments_for` over the copy's bill payments), the clerk's Notes kept; the tie-out says "Lines added up" / "Difference", no "parse". Earlier the same day - **Revised Bills sheet** in every vendor workbook (`shared/revised_sheet`): the bills the vendor must re-issue (the Summary's tax / mismatch rows + a PM's REVISED memo, original total from the change log), bill info left for the email, the clerk's Stage + dates right, carried forward like the notes, the history kept, Done when the statement agrees; the Summary's Finding names the stage; the record carries the rows for the ledger. **Statement (marked)** starts at A1, its caption beside the legend. Earlier: 10/09/2026 (night) - **the ledger's record copy**: after the Notion publish, every live run writes `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` -> `shared/statement_record`); status / standing / Notion URL as the board wrote them, every line with its bucket and where its band sits on which page (`statement_markup.Result.bands` / `.unread`), the clerk's note, the QBO bill; an unreadable run only turns the status. The ledger's Vendor Center shows it (bubble, Statement view, pay run). `INBOX_ROOT` now comes from `statement_record.root()` (one place for the SharePoint move). Earlier the same day: the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
+Earlier 10/09: statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
+Earlier 10/08 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
 Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
 Earlier 10/08 (evening): the workbook is Summary + Statement (marked) only (Statements /
 Changes live on Notion); colour key to the right of the pages; columns Finding / Notes.
@@ -28,16 +30,17 @@ flowchart LR
     SET["statement_set.plan<br/>duplicate (same file) · unreadable ·<br/>merge by invoice-date range:<br/>full list / past-due letter / activity"]:::tool
     MERGED["ONE open list as of the newest date<br/>+ 'statements disagree by $X' when the<br/>vendor's own documents differ"]:::tool
     NOTES["clerk notes<br/>read from the Excel before rewriting,<br/>kept by bill id in .reconciler.json"]:::tool
-    REC["reconcile_vendor<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
+    REC["reconcile_vendor<br/>pair by Ref # (case/spacing ignored,<br/>then a unique clerk suffix)<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
     MARK["statement_markup<br/>find every line on its page (PDF words / OCR),<br/>band it in its bucket colour;<br/>a bill-looking row with no band = NOT READ"]:::tool
     PS["print_status.py<br/>opt-in PRINT_STATUS=1"]:::tool
     NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
     PREV{"--dry-run?"}:::gate
 
-    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Notes col) · Statement (marked)")]:::out
+    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Notes col) · Revised Bills (bill info | the clerk's Stage + dates, the history) · Statement (marked)")]:::out
     HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
     HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
     PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
+    LREC[("&lt;Vendor&gt;/.statement-record.json + .marked/ PNGs<br/>the ledger's record copy (shared/statement_record):<br/>standing · every line + its band on the page · the clerk's note")]:::out
     TEAMS[("Teams<br/>1 digest: vendors not ready to pay")]:::out
     PRINT[("terminal: the plan per vendor<br/>+ what would be filed + board preview")]:::out
 
@@ -51,11 +54,14 @@ flowchart LR
     QBO --> REC
     FILED --> NOTES --> REC
     MBX --> PS --> REC
-    REC --> MARK --> PREV
+    REC --> RVB["_revised_rows<br/>tax / mismatch rows + REVISED memos<br/>+ the old sheet's status (harvest)<br/>Stage forward only, Done when matched"]:::tool --> MARK --> PREV
     PREV -- yes --> PRINT
     PREV -- no --> XLSX
     PREV -- no --> HIST
     PREV -- no --> NB --> PAGE
+    NB -- "status + standing + page url" --> LREC
+    MARK -- "bands: where each line sits" --> LREC
+    LREC -. "Vendor Center bubble · Statement view · pay run" .-> LEDGER[("the Project Ledger")]:::out
     NB --> TEAMS
     RECHECK{"Notion 'Re-check' ticked?<br/>run_recheck.sh every 5 min<br/>(silent when locked / nothing ticked)"}:::gate
     PAGE -. "clerk ticks Re-check · types notes under bills" .-> RECHECK

@@ -3,6 +3,28 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-13 · **Daily CP P&Ls on the server (owner: "set up synology pnl for cp only, to update daily once at 6am
+  every day, the overview as the last piece").** `scheduler.py` gains `pnl-cp`: at `PNL_CP_AT` (06:00, the container's
+  Chicago clock) it runs `project-pnl/project_pnl_export.py active cp --from-folders --no-prompt` - the Active list is
+  the job folders at the top of the awarded-projects folder on the Common share (NEW `--from-folders`; the WIP master
+  is NOT read - owner: "the wip report has nothing to do with this, it must be updated manually on the ledger, we
+  confirm the contract/etc as they come in"), each job's `Project_PnL_<job>.xlsx` from its QuickBooks transactions
+  into `<job>/Profit and Loss/`, and the CP Overview rebuilt LAST from those workbooks (the tool already does it in
+  that order). Runs in the background so
+  the mirror keeps its 3-minute beat (a 23-job batch took 13 min on the Mac); once a day survives a restart (the day
+  read back from status.json); live = only while writer.json says server; test = practice copies under
+  `_server-test/pnl`, no Overview; a missing mount = skipped + Teams alert; 2h timeout. Image: `project-pnl/` added to
+  the allow-list (no QuickBooks write in it - `test_office_server_image.py` still passes); `project_pnl_export.py` takes
+  the CP base from `shared/pnl_paths` (`ACB_CP_AWARDED_BASE`) instead of a hard-coded /Volumes path. Pinned by
+  `tests/test_office_server_pnl.py`. **Not live until the developer does the TO DO below.**
+- 2026-10-09 · **LIVE.** Release PR #22 (dev -> main) approved and merged (`1ef8e17`). DSM update task re-pasted
+  (10/08 script) and scheduled daily 03:00; the owner's last sync-all + `carry_history.py --commit` done;
+  `server.env` ACB_SERVER_MODE=live (edited over SSH - the Mac's account can read but not write
+  `/Volumes/docker/automation/`), `TEAMS_WEBHOOK_PAYMENTS` left blank, `writer.json` = `{"writer": "server"}`.
+  The 09:19 update task run moved the checkout dev -> main by itself, rebuilt and started live. First two live rounds
+  (09:21-09:23, 09:38-09:39) all exit 0: mirror, reconcile (QBO = mirror on every entity), AP wrote the live
+  `Accounts Payable/Bill Tracker.xlsx` (Excel-strict check passed), AR wrote the live `Accounts Receivable/Invoice
+  Tracker.xlsx` (114 open) and Notion clean. Rollback = `writer.json` `{"writer": "mac"}`.
 - 2026-10-08 · **Hands-free after go-live.** `update_server.sh`: no new commits = no rebuild (`up -d` still applies a
   changed server.env), so the DSM task can run nightly at 03:00 and deploy whatever reaches main; in live mode it moves a
   checkout on another branch onto main itself (same deploy key + host-key pin) - no SSH step at go-live. Tested on a
@@ -38,18 +60,38 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
+- 2026-10-13 · **Cloud Sync copy of the approval report (the developer).** The AP step reads QuickBooks' "Bill Approval
+  Status ALL" report (`shared/bill_approval`) from `ACB_BILL_APPROVAL_XLSX` = `/mnt/bill-approval/Bill Approval Status
+  ALL.xlsx`: Cloud Sync > the Accounts Payable channel's document library (SharePoint, "Company Files - Accounts Payable")
+  > `/volume1/docker/automation/bill-approval`, download only; compose mounts it read only (README 2c). Until it is there
+  the server's Bill Tracker says check QBO for every bill entered since 09/16 and unpaid (the Mac's reconciler already
+  reads the OneDrive copy).
 - 2026-10-07 · **ON HOLD (owner): prove the base AP/AR run on the server first, then turn this on with `PAYMENTS_TEST=1`.**
   **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
   `payments-test` after AR (`qbo_payment_notify.py --test`): TEST cards to `TEAMS_WEBHOOK_PAYMENTS_TEST`, own posted record,
   dry-run log while that key is blank. To do: rebuild the image, add the Payments channel webhook to secrets.env, watch a
   week of cards against QuickBooks (README step 7). Mac: keep `TEAMS_WEBHOOK_PAYMENTS` unset during the test so only
   the server posts.
-- 2026-10-05 · The test week is running on the office Synology (test mode). Every job ok since the first full mirror
+- 2026-10-09 · **First week live.** Watch the ledger's Data status ("Office server", no "(test)"), the alerts channel and
+  the nightly 03:00 update log; delete `Accounting/_server-test/` after 10/16.
+- 2026-10-05 · (ENDED 10/09 - went live) The test week is running on the office Synology (test mode). Every job ok since the first full mirror
   (mirror every 3 min, AP + AR + AR export every 15 min, reconcile counts QBO = mirror). First side-by-side vs the
   Mac's live trackers: Invoice Tracker - every open invoice and balance matches (layout differs only because the
   server runs the newer aging code); Bill Tracker - Inventory / Liens identical, Bills differ on payments (side note below).
 
-## TO DO (before live)
+## TO DO (the daily CP P&Ls, 10/13 - for the developer, in this order)
+- `server.env`: add `PNL_CP_AT=06:00` and `ACB_CP_AWARDED_BASE=/mnt/cp-awarded` (server.env.example has them). No
+  Cloud Sync, no WIP master: the job folders on the Common share are the list (README 2b).
+- The automation user needs read + write on `Common/CURRENT PROJECTS/Awarded Projects Commercial projects` (the P&Ls
+  and the CP Overview are written there).
+- Release to main (live runs main only), then the nightly update task rebuilds with the new compose mounts - or run
+  the DSM update task once. `docker compose config` on the box first if in doubt about the mount path.
+- The morning after: `status.json` shows `pnl-cp` exit 0 and the ledger's Data status lists "CP P&Ls (daily 06:00)";
+  every Active CP job folder carries a fresh `Project_PnL_<job>.xlsx` and the awarded-projects folder a fresh
+  `CP Overview.xlsx`; open one from a Mac over the share (permissions - README 2b). A job whose workbook is open in
+  Excel at 06:00 is skipped by the tool's own `~$` lock check and caught the next morning.
+
+## TO DO (before live - all done 10/09)
 - DONE 10/08 - Notion: an invoice is written only when a field changed (invoice-sync; 111 of 114 skipped on the live dry run).
 - DONE 10/06 - The Mac honors the writer file: sync-all stands down on AP/AR while it says "server" (push_registers.sh still run by hand after a rule change).
 - DONE 10/08 - Bill Tracker "open in Excel" guard: the AP run skips (writes nothing) while `~$Bill Tracker.xlsx` sits
@@ -60,7 +102,7 @@ Progression record for the office server package. Update in the SAME commit as a
   (dry run by default, `--commit` backs up and writes; refuses mid-AP-run). README step 8.
 - DONE 10/08 - The ledger's Data status shows the server's last good run per job (mirror / Bill Tracker / Invoice
   sync), from `Accounting/_automation/server-status.json`; "(test - practice copies)" while in test mode.
-- Live runs `main` only - release PR #22 (dev -> main), auto-merge on once approved. Then README step 8.
+- DONE 10/09 - Live runs `main` only - release PR #22 merged; README step 8 done, the server is live.
 
 ## LATER (not needed for the switch, owner 10/08)
 - Bill Tracker Inputs split - the typed Lien tags / Notes leave the workbook (a small inputs file, or the ledger's lien

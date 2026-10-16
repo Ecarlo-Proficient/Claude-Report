@@ -191,10 +191,10 @@ DRAW_REPORTS_SUBDIR = "rd-reports"
 # the Common drive — <CP project folder>/Profit and Loss/ — mirroring where the WIP
 # report lives. If the drive isn't mounted (or no matching folder is found), fall
 # back to the OneDrive PROJECT P&Ls tree. MFD/RP are unaffected.
-CP_AWARDED_BASE = Path(
-    "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"
-)
-CP_PNL_SUBDIR = "Profit and Loss"
+# ONE base, shared with the ledger's finder: `ACB_CP_AWARDED_BASE` moves it (the office server mounts the
+# awarded-projects folder at /mnt/cp-awarded, 2026-10-13), the Mac keeps the /Volumes/Common default.
+CP_AWARDED_BASE = pnl_paths.CP_AWARDED_BASE
+CP_PNL_SUBDIR = pnl_paths.CP_PNL_SUBDIR
 
 
 def _find_awarded_cp_folder(base: Path, proj: str) -> Optional[Path]:
@@ -5944,9 +5944,7 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 # the Awarded-Projects root (active, then Completed Projects/), takeoff = the
 # 'takeoff'-named xlsx in the folder ROOT; several takeoffs → the 'WIP'-tagged
 # ones, summed. Budget = the 'Cost Code(s)' sheet: col A = code, col C = $.
-_CP_ACTIVE_DIR = Path(os.getenv(
-    "CP_ACTIVE_DIR",
-    "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"))
+_CP_ACTIVE_DIR = Path(os.getenv("CP_ACTIVE_DIR") or pnl_paths.CP_AWARDED_BASE)
 _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 _WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
 
@@ -7783,13 +7781,19 @@ def build_sheet_pos(
 
 _FNAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._ -]+")
 _attachable_index_cache: Optional[Dict[Tuple[str, str], List[dict]]] = None
-# The Attachable sweep walks EVERY scan AP ever uploaded (~10 min of paging),
-# so the index persists to disk for a week (logs dir per the repo rule — never
-# inside the repo). TempDownloadUri expires in minutes and is NOT cached; a
-# download re-reads its attachable by id for a fresh link. Attachments
-# uploaded since the cache was built are invisible until it expires — delete
-# the file (or wait out the TTL) to pick them up sooner.
-_ATT_CACHE_TTL_S = 7 * 24 * 3600
+# QBO cannot filter Attachable by the transaction it belongs to, so finding a
+# bill's scans needs a company-wide index of every attachment AP ever uploaded
+# (~78,000, about 8 minutes of paging at 1,000 a page). The index persists to
+# disk (logs dir per the repo rule - never inside the repo) and is refreshed
+# INCREMENTALLY on every run: only attachables whose MetaData.LastUpdatedTime
+# is past the cache's `fetched` stamp (less a 10-minute overlap, the same idea
+# as shared/qbo_mirror.OVERLAP) are pulled and merged in - seconds, not
+# minutes (10/14/2026: the weekly full re-sweep sat silent for 8 minutes on
+# CP800 and the owner thought the run was stuck). The full sweep runs only
+# when there is no cache file or it cannot be read; deleting the file forces
+# one. TempDownloadUri expires in minutes and is NOT cached; a download
+# re-reads its attachable by id for a fresh link.
+_ATT_OVERLAP = dt.timedelta(minutes=10)
 
 
 def _att_cache_file(company_id: str) -> Path:
@@ -7798,50 +7802,89 @@ def _att_cache_file(company_id: str) -> Path:
     return d / f"attachable_index_{company_id}.json"
 
 
+def _att_item(a: dict) -> Optional[dict]:
+    """A cache item {id, file, refs} for one Attachable, or None when it is a
+    bare note (no FileName) or hangs on no transaction (no refs) - those are
+    dropped from the index."""
+    if not a.get("FileName"):
+        return None
+    refs = [((r.get("EntityRef") or {}).get("type"),
+             (r.get("EntityRef") or {}).get("value"))
+            for r in a.get("AttachableRef") or []]
+    refs = [list(x) for x in refs if x[0] and x[1]]
+    if not refs:
+        return None
+    return {"id": str(a["Id"]), "file": a["FileName"], "refs": refs}
+
+
+def _att_parse_stamp(s: str) -> dt.datetime:
+    """The cache's `fetched` stamp as an aware datetime. Stamps written before
+    10/14/2026 were naive local time; a naive stamp is read as local."""
+    t = dt.datetime.fromisoformat(str(s).strip())
+    return t.astimezone() if t.tzinfo is None else t
+
+
 def _load_attachable_index(access: str, company_id: str
                            ) -> Dict[Tuple[str, str], List[dict]]:
-    """(entity type, txn id) → [attachable {Id, FileName}] — from the disk
-    cache when fresh, else a full sweep (then cached)."""
+    """(entity type, txn id) -> [attachable {Id, FileName}]. Loads the disk
+    cache and pulls only what changed since its stamp; a full sweep only when
+    there is no readable cache. Once per process."""
     global _attachable_index_cache
     if _attachable_index_cache is not None:
         return _attachable_index_cache
     cache = _att_cache_file(company_id)
-    try:
-        if cache.exists() and time.time() - cache.stat().st_mtime < _ATT_CACHE_TTL_S:
+    # The new stamp is when THIS refresh started, so anything QBO changes
+    # while the query pages is inside the next run's window (plus overlap).
+    started = dt.datetime.now().astimezone().replace(microsecond=0)
+    items_by_id: Optional[Dict[str, dict]] = None
+    fetched: Optional[dt.datetime] = None
+    why = "cache missing"
+    if cache.exists():
+        try:
             raw = json.loads(cache.read_text())
-            by_key: Dict[Tuple[str, str], List[dict]] = {}
-            for item in raw["items"]:
-                for etype, evalue in item["refs"]:
-                    by_key.setdefault((etype, evalue), []).append(
-                        {"Id": item["id"], "FileName": item["file"]})
-            _attachable_index_cache = by_key
-            ui_event(f"attachment index: cached "
-                     f"({dt.datetime.fromtimestamp(cache.stat().st_mtime):%m/%d %H:%M}"
-                     f", {len(raw['items'])} files) — delete the cache file to re-sweep",
-                     icon="·")
-            return by_key
-    except Exception:
-        pass                                   # unreadable cache → re-sweep
-    by_key = {}
-    items = []
-    for a in query_all(access, company_id, "Attachable"):
-        if not a.get("FileName"):
-            continue                           # a bare note, not a file
-        refs = [((r.get("EntityRef") or {}).get("type"),
-                 (r.get("EntityRef") or {}).get("value"))
-                for r in a.get("AttachableRef") or []]
-        refs = [x for x in refs if x[0] and x[1]]
-        if not refs:
-            continue
-        items.append({"id": a["Id"], "file": a["FileName"], "refs": refs})
-        for key in refs:
-            by_key.setdefault(key, []).append(
-                {"Id": a["Id"], "FileName": a["FileName"]})
+            fetched = _att_parse_stamp(raw["fetched"])
+            items_by_id = {str(it["id"]): it for it in raw["items"]}
+        except Exception:
+            items_by_id, fetched = None, None   # unreadable cache -> full sweep
+            why = "cache unreadable"
+    if items_by_id is None or fetched is None:
+        ui_event(f"attachment index: {why} - full sweep of every QuickBooks "
+                 f"attachment (about 8 minutes)", icon="…", color=_YEL)
+        t0 = time.time()
+        items_by_id = {}
+        for a in query_all(access, company_id, "Attachable"):
+            it = _att_item(a)
+            if it:
+                items_by_id[it["id"]] = it
+        ui_event(f"attachment index: {len(items_by_id)} files swept in "
+                 f"{time.time() - t0:.0f}s")
+    else:
+        # Same filter shape as shared/qbo_mirror._refresh_by_updated (UTC, Z).
+        since = (fetched - _ATT_OVERLAP).astimezone(dt.timezone.utc)
+        changed = query_all(access, company_id, "Attachable",
+                            where=f"MetaData.LastUpdatedTime > "
+                                  f"'{since:%Y-%m-%dT%H:%M:%SZ}'")
+        for a in changed:
+            it = _att_item(a)
+            if it:
+                items_by_id[it["id"]] = it        # refs may have moved
+            else:
+                items_by_id.pop(str(a.get("Id")), None)
+        ui_event(f"attachment index: {len(items_by_id)} files, "
+                 f"+{len(changed)} changed since {fetched.astimezone():%m/%d %H:%M}")
+    # QBO's query cannot report a DELETED attachable, so a stale id can linger
+    # until the next full sweep; the download loop below re-reads each
+    # attachable by id and a failed read keeps that bill's QBO link.
     try:
-        cache.write_text(json.dumps({"fetched": dt.datetime.now().isoformat(),
-                                     "items": items}))
+        cache.write_text(json.dumps({"fetched": started.isoformat(),
+                                     "items": list(items_by_id.values())}))
     except OSError:
         pass
+    by_key: Dict[Tuple[str, str], List[dict]] = {}
+    for it in items_by_id.values():
+        for etype, evalue in it["refs"]:
+            by_key.setdefault((etype, evalue), []).append(
+                {"Id": it["id"], "FileName": it["file"]})
     _attachable_index_cache = by_key
     return by_key
 
@@ -7859,8 +7902,8 @@ def fetch_txn_attachments(access: str, company_id: str,
 
     txns: (txn_id, tx_type 'Bill'/'Expense', doc#). Idempotent — a file whose
     name is already in dest is not re-downloaded. The company-wide Attachable
-    sweep (every scan AP ever uploaded) is paged and slow, so it runs ONCE per
-    process and is reused across a batch run's projects."""
+    index (every scan AP ever uploaded) is loaded ONCE per process (disk cache
+    + incremental refresh) and reused across a batch run's projects."""
     try:
         by_key = _load_attachable_index(access, company_id)
     except Exception as e:
@@ -7907,7 +7950,10 @@ def fetch_txn_attachments(access: str, company_id: str,
                         path.write_bytes(resp.content)
                         n_dl += 1
                     except Exception:
-                        continue           # this one keeps its QBO bill link
+                        # A deleted attachable (stale index id - QBO's query
+                        # cannot report deletions) fails the re-read and lands
+                        # here too: this one keeps its QBO bill link.
+                        continue
             got.append(name)
         if got:
             out[txn_id] = {
@@ -10081,6 +10127,55 @@ def index_pm_reports(reports_dir, proj: str):
     return index, parsed
 
 
+_CP_FOLDER_RE = re.compile(r"^CP\s*-?\s*(\d+)", re.I)
+
+
+def active_cp_from_folders(base: Optional[Path] = None) -> List[str]:
+    """`active cp --from-folders`: the Active list is the job folders at the TOP of
+    the awarded-projects folder on the Common share (the owner 2026-10-13: "scan the
+    active folders in the synology, query qbo for the transactions and update their
+    p&l - the wip report has nothing to do with this"). A folder filed under
+    Completed Projects (any archive name) is finished and is not in the list. The
+    WIP master is not read: contract and ETC come from the job's own documents (the
+    G702 pay app, the takeoff) and the values typed on the workbook."""
+    base = base or CP_AWARDED_BASE
+    found: set = set()
+    try:
+        kids = sorted(base.iterdir())
+    except OSError:
+        return []
+    for d in kids:
+        if not d.is_dir() or d.name.startswith((".", "~$")):
+            continue
+        if d.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):
+            continue
+        m = _CP_FOLDER_RE.match(d.name)
+        if m:
+            found.add(f"CP{m.group(1)}")
+    return sorted(found)
+
+
+def expand_from_folders(tokens: List[str]) -> Tuple[List[str], bool, str]:
+    """(projects, expanded?, error) for `--from-folders`: `active cp` only - RP and
+    MFD jobs have no folder list to scan (RP folders carry no job #, MFD moves)."""
+    toks = [part for t in tokens for part in re.split(r"[-,/]", t.strip().upper()) if part]
+    if "ACTIVE" not in toks:
+        return [t.strip().upper() for t in tokens], False, ""
+    divs = {t for t in toks if t in ("CP", "RP", "MFD")}
+    if divs - {"CP"}:
+        return [], True, ("--from-folders is CP only (the job folders on the Common "
+                          "share); run RP / MFD from the WIP master")
+    try:
+        mounted = CP_AWARDED_BASE.is_dir()
+    except OSError:
+        mounted = False
+    if not mounted:
+        return [], True, f"the awarded-projects folder is not mounted: {CP_AWARDED_BASE}"
+    extras = [t for t in toks if t not in ("ACTIVE", "CP", "RP", "MFD")]
+    jobs = active_cp_from_folders()
+    return jobs + [e for e in extras if e not in jobs], True, ""
+
+
 def expand_active_projects(tokens: List[str],
                            wip_master: Dict[str, dict]) -> Tuple[List[str], bool]:
     """`ACTIVE [CP|RP|MFD ...]` → every Active project of those divisions from
@@ -10128,8 +10223,9 @@ def main() -> int:
                     help="Path to WIP master .xlsx for Contract/ETC lookup")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--overhead-pct", type=float, default=10.0,
-                    help="Company overhead as %% of the CONTRACT (default 10.0; "
-                         "the base is the contract, the user 2026-09-03). "
+                    help="Company overhead rate (default 10.0; MFD is forced to 9.0). "
+                         "The projection takes it on the CONTRACT (the user 2026-09-03); every "
+                         "to-date row takes it on GROSS BILLED (the user 2026-10-02). "
                          "Drives every Overhead + Net Profit row.")
     ap.add_argument("--legacy", action="store_true",
                     help="LEGACY JOB attribution for jobs that predate "
@@ -10179,6 +10275,12 @@ def main() -> int:
                     help="the division's real home is not mounted and the owner said "
                          "to file this run in the retired OneDrive Automations- folder "
                          "anyway. Without it a missing home STOPS the job.")
+    ap.add_argument("--from-folders", action="store_true",
+                    help="`active cp` takes its list from the job folders at the top "
+                         "of the awarded-projects folder on the Common share, and "
+                         "the WIP master is NOT read (contract / ETC from the job's "
+                         "own documents and the typed values). The office server's "
+                         "daily run. CP only.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
@@ -10207,8 +10309,18 @@ def main() -> int:
 
     # WIP master loads BEFORE auth: `active <division>` expands from it, and
     # it's a local file read — no Touch ID needed to know the batch.
-    wip_master = load_wip_master(Path(args.wip_master).expanduser())
-    projects, was_expanded = expand_active_projects(projects, wip_master)
+    if args.from_folders:
+        wip_master = {}                       # the WIP master is a separate, manual process
+        projects, was_expanded, _err = expand_from_folders(projects)
+        if _err:
+            print(f"  ✗ {_err}")
+            return 1
+        if was_expanded and not projects:
+            print(f"  ✗ no CP job folder at the top of {CP_AWARDED_BASE}")
+            return 1
+    else:
+        wip_master = load_wip_master(Path(args.wip_master).expanduser())
+        projects, was_expanded = expand_active_projects(projects, wip_master)
     if was_expanded and not projects:
         print(f"  ✗ `active` found no Active projects in the WIP master "
               f"({args.wip_master}) — is the Test-Master tab current?")
@@ -10228,7 +10340,10 @@ def main() -> int:
         return 1
 
     ui_banner("Project P&L Export")
-    if was_expanded:
+    if was_expanded and args.from_folders:
+        ui_cfg("Active batch", f"{len(projects)} job folder(s) on the Common share")
+        ui_cfg("WIP master", "not read (contract / ETC from the job's documents)")
+    elif was_expanded:
         ui_cfg("Active batch", f"{len(projects)} project(s) from the WIP master")
     ui_cfg("Projects", ", ".join(projects) or "(none)")
     if report_files:
@@ -10240,12 +10355,13 @@ def main() -> int:
         ui_cfg("Mode", f"{_YEL}DRY RUN — no files written{_RESET}")
     ui_close()
 
-    print(f"\n  {_DIM}Authenticating to QBO (Touch ID)…{_RESET}")
+    print(f"\n  {_DIM}Authenticating to QuickBooks…{_RESET}")
     access, company_id = load_credentials()
     ui_step("Connected to QBO")
     cust_map = build_project_customer_map(access, company_id)
     ui_step("Project → customer map", f"{len(cust_map)} projects")
-    ui_step("WIP master loaded", f"{len(wip_master)} rows")
+    if not args.from_folders:
+        ui_step("WIP master loaded", f"{len(wip_master)} rows")
 
     _ALL_CLASSES = [None]        # lazy: pulled once per run, only if +class
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM

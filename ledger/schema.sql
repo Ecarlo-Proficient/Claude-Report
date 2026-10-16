@@ -127,6 +127,19 @@ CREATE TABLE IF NOT EXISTS billing_event (
 );
 
 
+-- ── invoice_notion_ref : QBO invoice id → its Invoice Tracker page, kept for good (2026-10-11) ──
+-- billing_event's tracker rows are replaced on every load, and invoice-sync archives the Notion page
+-- of an invoice QuickBooks deleted - so the Audit page could never find the page of exactly the
+-- invoice it asks about. This register only grows: every tracker page ever seen, by QBO invoice id.
+CREATE TABLE IF NOT EXISTS invoice_notion_ref (
+    qbo_txn_id      TEXT PRIMARY KEY,
+    doc_number      TEXT,
+    notion_url      TEXT NOT NULL,
+    first_seen      TEXT NOT NULL,
+    last_seen       TEXT NOT NULL
+);
+
+
 -- ── project_customer : project # → its CLIENT (the GC), from the QBO hierarchy ──
 -- Every project is a QBO sub-customer whose name carries the project #, nested under the
 -- GC (Customer:Project). Reversing that gives project → client for EVERY project, not just
@@ -342,6 +355,13 @@ CREATE TABLE IF NOT EXISTS project_note (        -- the owner's notes on a job (
     about       TEXT,                                -- the draw / scope it concerns (free text, optional)
     text        TEXT NOT NULL,
     at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS draw_period (         -- a draw's period as set on the ledger (project page, 2026-10-11): QuickBooks untouched
+    invoice_id  TEXT PRIMARY KEY,                    -- QBO invoice id (every invoice of a draw carries the same window)
+    project_no  TEXT NOT NULL,
+    start       TEXT NOT NULL,                       -- YYYY-MM-DD
+    end         TEXT NOT NULL,
+    saved_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bill_mark (
     bill_id     TEXT PRIMARY KEY,      -- QBO bill TxnId (the workbook _Key)
@@ -648,6 +668,21 @@ CREATE TABLE IF NOT EXISTS bank_match (
     matched_through  TEXT,                          -- newest CLEARED transaction on the account = how current matching is
     feed_matched     INTEGER,                       -- 0 = never matched to a bank feed (Joint Checks Account)
     loaded_at        TEXT
+);
+-- A check seen leaving the uncleared list (owner 2026-10-15: "need to see when it's been cashed"). QuickBooks never
+-- says WHEN a check cleared (the cleared column is dropped by the API), so the ledger records the first refresh that
+-- found it cleared: it was cashed between `last_uncleared_at` (the last pull that still listed it) and `cleared_seen_at`.
+-- Only grows; a check cleared before the first pull ever ran is just "cleared", with no window.
+CREATE TABLE IF NOT EXISTS check_cleared (
+    qbo_txn_id        TEXT PRIMARY KEY,             -- the check / bill payment's QBO id
+    txn_type          TEXT,
+    txn_date          TEXT,
+    check_no          TEXT,
+    payee             TEXT,
+    account           TEXT,
+    amount            NUMERIC,
+    last_uncleared_at TEXT,                         -- the newest pull that still showed it uncleared
+    cleared_seen_at   TEXT                          -- the pull that first found it cleared
 );
 
 -- The owner's "that's OK" on a QBO change (owner 2026-09-24: "need a way to click to say that it's ok and to discard

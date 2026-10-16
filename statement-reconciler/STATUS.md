@@ -12,6 +12,69 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-15 · **Bartel alias.** The vendor's statements are headed 'Frank Bartel Transportation, Inc.' while
+  QuickBooks keeps the vendor as **Bartel Ready Mix** (30777; the owner deactivated the Frank Bartel vendor in QBO
+  so there is one). The run skipped the statement ('no QBO vendor match'); three aliases now map the statement
+  name, the name without Inc., and the QBO name itself to 30777 (`vendor_aliases.json`). Every open Bartel bill
+  already sits on Bartel Ready Mix, so the next run reconciles against it; nothing else changed.
+- 2026-10-13 · **Approved? reads QuickBooks' approval report** (owner: "check this excel while also keeping in mind the
+  last time it synced from qbo"). `QboBill.vendor` (VendorRef.name) keys into `shared/bill_approval`'s report: a matched bill
+  on it shows **Pending Approval** / **Requires Approval** (red, like Not Approved; bucket `approve` on the board, the record
+  and the marked statement); a workflow bill a fresh report does not list is Yes; Check QBO is left for bills the report
+  cannot vouch for (entered after it ran, report stale or missing). The Summary's approval banner counts the queue
+  (how many not routed yet) and names when the report synced. RCI live 10/13: 46 Check QBO -> 12 in the queue + 34 Yes.
+  Test: `tests/test_bill_approval.py::test_reconciler_workbook_shows_the_states`.
+- 2026-10-12 (later) · **Revised Bills, second section + plain words** (owner: "replace the word parse with something
+  simpler"; "make a second section for the ones that show we haven't paid but in QBO we did, with the bill info and
+  the check payment #, date and amount"). Under the re-issue table the sheet now has **Paid in QuickBooks - the
+  statement still shows these open**: one row per LIKELY_VENDOR_LAG bill - Invoice # · Invoice date · Amount · Check #
+  (several joined with ' + '; a card payment shows "(creditcard)") · Check date · Paid amount, for the vendor to apply,
+  plus a Notes column the clerk keeps (`rvs.harvest_paid`, by bill id). The checks come from the QuickBooks copy's
+  bill payments (`shared/revised_sheet.payments_for`: every payment whose line links the bill, payment date within 400
+  days of the statement). The record carries them as `revised_paid`. The Summary's tie-out says "Lines added up" and
+  "Difference (lines vs statement total)", and a failed tie-out "was not read in full"; "parse" is gone from the
+  workbook. Live on Cowtown: 8 re-issue rows + 21 paid rows.
+- 2026-10-12 · **The Revised Bills sheet + the marked statement from the top** (owner: "the revised bill sheet needs to be
+  in the same statement Excel, not a mix ... the bill info with our status on the right"; "move rows 1 and 3 to the side so
+  the PDF can go all the way up and line up with the legend, merge those two"; "when the stage goes to Done move those
+  bills in the Summary up and keep the Revised Bills sheet as the history"). Every vendor workbook gains a 2nd sheet
+  **Revised Bills** (`shared/revised_sheet`, an Excel Table): LEFT the bill info the clerk copies into the email (Invoice
+  # · Invoice date · Amount billed · Corrected amount · Reason), RIGHT our status (Stage dropdown · Sent on · Replied on
+  · Received on · Entered on · Notes), `_Key` = the QuickBooks bill id, hidden. Rows = every bill the vendor must
+  re-issue: the Summary's tax-added and amount-mismatch rows (the owner's "missing bills from Summary") + every pulled
+  QuickBooks bill with a PM's `REVISED - <reason>` line (`shared/bill_approval.revised_reason`, moved from bill-tracker;
+  its original total from the mirror's change log when there is one). `_revised_rows`: the old workbook's sheet is read
+  first (`rvs.harvest`, like the notes) so the clerk's columns come back as typed; every row ever on the sheet stays (the
+  history); Stage moves forward only - blank -> To send, and a history row whose bill the statement now shows at the
+  corrected amount -> **Done - statement agrees** (that bill sits in the Summary's matched block from then on, its
+  Finding saying "revised bill: Done"). A Summary row on the sheet carries "revised bill: <stage>" in Finding. The rows
+  also go on the ledger's record (`revised`), which Vendors -> Revised bills reads. **Statement (marked)**: the page
+  starts at A1; the one caption per statement (file + "N of M bill rows found and coloured" + what was not read) sits in
+  the legend column above the colour key; the sheet comes after Revised Bills. Tests: `tests/test_revised_bills.py`.
+- 2026-10-09 (night) · **The ledger's record copy** (owner: "make the vendor ledger have a record copy of vendor
+  statements so it can show, when paying, reconciled as of"). After the Notion publish every live run writes
+  `<Vendor>/.statement-record.json` + the marked pages as PNGs under `<Vendor>/.marked/` (`_write_records` ->
+  `shared/statement_record`): status / standing / page URL as the board wrote them (computed the same way when the
+  board is off), every statement line with its bucket, the QBO bill, the clerk's note and WHERE its band sits on which
+  page (`statement_markup.Result.bands` + `.unread`, new), the statement files and the Excel by relative path. An
+  unreadable run keeps the last lines and pages and only turns the status. `--dry-run` writes nothing. `INBOX_ROOT`
+  now comes from `statement_record.root()` so the SharePoint move changes one place. The ledger shows it (its STATUS).
+  Tests: `tests/test_statement_record.py` (build, write + read, name folding, path containment, the live/dry/unreadable
+  paths of `_write_records`). Not yet run against the share from this session (not mounted here) - the next live run
+  writes the first records.
+- 2026-10-09 (later) · **A column deleted on the Notion board no longer fails the page.** "Follow-ups" was removed from
+  the board after the 10/08 run; the CMC / Cowtown re-run then failed both pages with a Notion 400. `Board` now reads
+  the board's columns once per run (`ensure_schema`) and writes only those, logging any it skips; it never re-creates a
+  column it does not own. Live re-run 10/09: CMC 2 not entered, Cowtown All entered - both rows read back from Notion,
+  both Excels `assert_clean`. Test: `test_a_column_removed_on_notion_is_skipped_not_a_failed_page`.
+- 2026-10-09 · **Ref # pairing no longer exact text (found re-checking every vendor against QBO).** The owner asked to
+  double-check the 10/08 run instead of trusting it: every "not entered" line (54) was searched across all of QBO.
+  Two were entered and paid: QBO `16018k` vs the statement's `16018K` (CMC) and the clerk's `401417-CC FEE` for the
+  statement's `401417` (Cowtown). Now: case and spacing never decide a match (`_ref_key`, also the Excel's Ref check),
+  then a clerk's suffix after a separator pairs when exactly ONE bill carries it, the number is 4+ characters and the
+  suffixed Ref # is not itself a statement line (`_suffixed_bill`); a suffix-paired open bill is not also "not on
+  statement". Full `--refresh --dry-run` before/after: only CMC (3 -> 2 not entered) and Cowtown (1 -> all entered)
+  moved. `--audit-parsing`: 107 statements, 0 new problems. Tests: `tests/test_statement_match.py` (5).
 - 2026-10-08 (late) · **Notion is where the clerk works; the Excel is the evidence (owner: "using two systems might get
   confusing").**
   - Notes moved to Notion: a line typed indented under a bill's to-do is that bill's note. Each run reads them first

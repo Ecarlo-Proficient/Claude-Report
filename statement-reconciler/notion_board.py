@@ -305,6 +305,7 @@ class Board:
         self.nc = client or NotionClient()
         self._url: Optional[str] = None
         self._schema_ok = False
+        self._have: Optional[set] = None   # the board's columns, once read (None = unknown)
 
     @classmethod
     def from_env(cls) -> Optional["Board"]:
@@ -332,6 +333,7 @@ class Board:
         except Exception as e:
             log(f"  Notion columns not checked ({e})")
             return
+        self._have = set(have) or None   # an empty answer = unknown, never "no columns"
         want: Dict[str, dict] = {name: {"number": {}} for name, _k in BUCKET_PROPS + [("Matched", "")]}
         want["Checked against"] = {"rich_text": {}}
         want["Re-check"] = {"checkbox": {}}
@@ -350,6 +352,8 @@ class Board:
                 continue
             try:
                 self.nc._request("PATCH", f"/data_sources/{self.ds}", {"properties": attempt})
+                if self._have is not None:
+                    self._have |= set(add)
                 log(f"  Notion columns updated: {', '.join(sorted(attempt))}")
                 return
             except Exception as e:
@@ -591,6 +595,13 @@ class Board:
         self.ensure_schema(log)
         page, prior, m, st_name, standing = self._plan(rec)
         props = self._props(rec, m, st_name, standing)
+        # A column removed on Notion (Follow-ups, 10/09) is not written - one missing column
+        # would fail the whole page with a 400. ensure_schema re-adds only the ones it owns.
+        if self._have is not None:
+            gone = sorted(k for k in props if k not in self._have)
+            if gone:
+                log(f"  Notion: not on the board, skipped: {', '.join(gone)}")
+            props = {k: v for k, v in props.items() if k in self._have}
         blocks = self._body_blocks(m, st_name, standing, rec)
         if page is None:
             page = self.nc.create_page(self.ds, props, children=blocks)

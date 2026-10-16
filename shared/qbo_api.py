@@ -272,6 +272,45 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
     raise _api_error(path, "unreachable")
 
 
+PDF_FORMS = ("invoice", "estimate", "salesreceipt", "creditmemo")
+
+
+def get_form_pdf(entity: str, txn_id: str) -> bytes:
+    """QuickBooks' own printed copy of one sales form - GET /<entity>/<id>/pdf, the PDF QuickBooks
+    itself would print or email (the ledger's invoice viewer, owner 2026-10-11: "see the invoice load
+    from qbo ... so you don't have to leave the ledger"). Read-only. A few tries on 5xx / 429 / a
+    network blip, one fresh pass on 401; errors carry no realm."""
+    import time as _time
+    entity = str(entity or "").lower()
+    if entity not in PDF_FORMS or not str(txn_id).isdigit():
+        raise ValueError("not a printable QuickBooks form")
+    access, company_id = load_credentials()
+    path = f"/v3/company/{company_id}/{entity}/{txn_id}/pdf"
+    refreshed = False
+    for attempt in range(4):
+        last = attempt == 3
+        try:
+            r = requests.get(f"{API_BASE}{path}", params={"minorversion": MINOR_VERSION}, timeout=90,
+                             headers={"Authorization": f"Bearer {_CURRENT_ACCESS or access}",
+                                      "Accept": "application/pdf"})
+        except requests.exceptions.RequestException as e:
+            if last:
+                raise _api_error(path, f"network error: {type(e).__name__}") from None
+            _time.sleep(2 ** attempt)
+            continue
+        if r.status_code == 200 and r.content[:4] == b"%PDF":
+            return r.content
+        if r.status_code == 401 and not refreshed:
+            refreshed = True
+            refresh_access()
+            continue
+        if r.status_code in (429, 500, 502, 503, 504) and not last:
+            _time.sleep(2 ** attempt)
+            continue
+        raise _api_error(path, f"{r.status_code}: {r.text[:200]}")
+    raise _api_error(path, "unreachable")
+
+
 def _is_mirror_company(company_id: str) -> bool:
     """The mirror holds ONE company: the realm in the Keychain blob it is refreshed with. A query for any other
     company file (a sister company read with its own token) must go live - answering it from the mirror hands

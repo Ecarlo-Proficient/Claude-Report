@@ -224,9 +224,12 @@ component below; never rebuild one from scratch, and add to this list when a new
 - **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;
   a checkbox per row and a select-all for bulk actions; a voided payment says VOIDED.
 - Groups elsewhere follow the central `GRP_KINDS` mechanism.
-- **Four views** (owner 2026-09-23): Projects · Vendors (Bill Tracker · Vendor Center) · Customers (Invoice Tracker ·
-  Customer Center · Payments received · Sales pipeline) · Company (Money · QBO Audit) + the gear. A new company-wide
-  list is a sub-tab of the view it belongs to, never a fifth view.
+- **Five views** (owner 2026-09-23, Audit split out 2026-10-11): Projects · Vendors (Bill Tracker · Vendor Center ·
+  Pay bills) · Customers (Invoice Tracker · Customer Center · Payments received · Sales pipeline) · **Audit** (in
+  categories - AP: Checks QBO changed · Bills changed · Bills deleted · Bills to fix · Uncleared checks; AR: Invoices
+  changed · Invoices deleted; Company: Duplicate customers · Other changes) · Company (Money · Reclassify transactions ·
+  Processes) + the gear. A new company-wide list is a sub-tab of the view it belongs to, never a sixth view; a new
+  audit goes under its category on Audit (`cats` on the group).
 - **Stats are one line each** (label · value · note · source), never boxed tiles - "no big waste spacer blocks".
 - **A click never scrolls the page** (a draw, a group, a filter): re-render in place, restore `scrollY`.
 
@@ -259,23 +262,43 @@ on the network). What it shows:
   rep (last-editor attribution), warm-account cards with each account's full touch log, and a
   searchable/filterable all-customers table that links out to Notion. Edits stay in Notion; the tab
   never writes.
+- **Draw periods** (project page, MFD / CP) - saved on the ledger only, never QuickBooks (owner 2026-10-11); hidden
+  on purpose ("something just to check things"): a **check draw periods** link inside the Draw overview's ⓘ help
+  opens an editor above the overview: ‹ › and a slider move every draw's
+  period by the same days (the Period column follows), each draw has Start / End date boxes limited by its neighbours
+  so nothing overlaps, **Save** keeps the windows in `draw_period` (`/api/draw-periods/save`; a window equal to the
+  invoice's is not kept). The page then uses the saved window as the draw's period (overview + the subs matched into
+  the draw) and shows "as invoiced" on hover. The invoice memo in QuickBooks, the Bill Tracker and Notion stay as they
+  are. `ledger/draw_periods.py` also keeps the period rules (`period_of`, `memo_with`, `check`) and lists a job's
+  periods from the mirror on the command line.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
-- **QBO Audit** (Company) — what changed in QuickBooks: the mirror's change log (`/api/qboaudit?days=`), every
-  record deleted / edited / restored / added since the previous refresh with QuickBooks' own time and plain-word
-  flags (deleted paid bill, payment unapplied, reopened, voided, class dropped…), tiles + chips + search, **Refresh
-  from QuickBooks** (the `mirror` pipeline); the Bill Tracker audits sit underneath. QuickBooks' API never says who -
-  the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged as the owner).
-- **Uncleared checks** (Company) - every check QuickBooks still shows as uncleared (not matched = not deposited),
+- **QBO changes** (Audit - five pages off ONE tab-page) — what changed in QuickBooks: the mirror's change log
+  (`/api/qboaudit?days=`), every record deleted / edited / restored / added since the previous refresh with
+  QuickBooks' own time and plain-word flags (deleted paid bill, deleted open invoice, payment unapplied, reopened,
+  voided, class dropped…), chips + search, **Refresh from QuickBooks** (the `mirror` pipeline). The page is scoped by
+  the tab that opened it (`QA_SCOPES` in app.js): **AP · Bills changed** (bills, expenses, bill payments, vendor
+  credits, purchase orders edited) · **AP · Bills deleted** (deleted or voided) · **AR · Invoices changed** (invoices,
+  payments received, credit memos edited after they were saved - an edit can be a fix: OK it) · **AR · Invoices
+  deleted** (deleted or voided; *deleted open invoice* = money was still owed) · **Company · Other changes** (lists,
+  journal entries, deposits, transfers). The window has an **All** stop (since the log began, 09/23/2026). QuickBooks'
+  API never says who - the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged
+  as the owner); split into categories 2026-10-11. Every **Invoice** row carries a **story** link (open unasked on
+  Invoices deleted): `/api/qboaudit/invoice?id=` - created in QuickBooks, every logged change oldest first with what
+  moved, the payments applied (deleted or not), on file / deleted with QuickBooks' own time, and the Notion Invoice
+  Tracker (the ledger's row - status, lien, quick status, dates - then the page body + comments; when the tracker row
+  is gone the page comes from the `invoice_notion_ref` register, which `load_invoices` fills before every tracker
+  replace and never prunes, so a deleted invoice's archived page still opens and says so).
+- **Uncleared checks** (Audit · AP) - every check QuickBooks still shows as uncleared (not matched = not deposited),
   from QBO's TransactionList `cleared=Uncleared` filter via `ledger/load_uncleared_checks.py`; each bank account's
   matched-through date; accounts never matched to a bank feed (Joint Checks) kept apart. `/api/uncleared`.
-- **Duplicate customers** (Company) - a project # carried by two ACTIVE QuickBooks customers (sync-all's "duplicate
+- **Duplicate customers** (Audit · Company) - a project # carried by two ACTIVE QuickBooks customers (sync-all's "duplicate
   customers for ..." lines). Every tool uses one customer per project # (`shared/qbo_api.pick_customer`: exact name,
   most invoices, oldest) and misses whatever sits on the other. One band per project: its status (Both have invoices ·
   Money on duplicate · Name typo · Separate job? · Empty duplicate), the customer the tools use, every invoice # and
   bill # on the skipped one. A project leaves once the extra customer is inactive and the mirror refreshed.
   `ledger/dup_customers.py` over the mirror (`/api/dupcustomers`; run it alone to print the list). Read-only.
-- **Checks QBO changed** (Company) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
+- **Checks QBO changed** (Audit · AP, first) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
   one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
@@ -289,11 +312,17 @@ on the network). What it shows:
   check backed up to `~/Library/Logs/Proficient/reapply-check/` first. `/api/checkdrift/reapply` (GET = dry run, POST =
   write); CLI `python ledger/reapply_check.py <check#> [--list] [--commit]`. **Mark resolved** = a local mark (settled
   outside the ledger, e.g. the vendor applied it to another bill).
-- **Reclassify transactions** (Company): move cost LINES from one project to another - the ledger's version of
-  QuickBooks' reclassify. Preview (mirror) -> tick lines (closed-period ones locked) -> optional cost-code swap ->
-  "Are you sure?" -> Touch ID -> `ledger/reclassify.py` writes only the ticked lines, each document re-read live,
-  backed up, and proven after the write (every line on To, no amount moved). Moves the line's Projects tag
-  (`ProjectRef`) with its customer. CLI `python ledger/reclassify.py FROM TO [--recode FW2=SL2] [--commit]`.
+- **Reclassify transactions** (Company): QuickBooks' reclassify at LINE level, bulk. Find lines (mirror) by date,
+  type, account (+ its sub-accounts), item, class, project, name, memo, doc # - or open the **P&L** by account for a
+  date range and click one. Tick lines (closed-period ones locked); the change panel offers each field the ticked lines
+  can carry - **account** (category + journal lines), **item** (item + sales lines), **class**, **project** (expense +
+  customer journal lines; an invoice's customer is the whole document's), **line memo**, **document memo** (set or
+  find & replace) - one value for all, or **Map each** current value. Every changed cell shows old -> new. "Are you
+  sure?" -> Touch ID -> `ledger/reclassify.py` writes only the ticked lines, each refused unless still the preview
+  (per-line signature), each document re-read live, backed up, and proven after the write (every field reads back as
+  asked, no amount / total / balance moved). A project move carries the line's Projects tag (`ProjectRef`). Bills,
+  expenses, vendor credits, journal entries, invoices, credit memos, sales receipts. CLI (project move):
+  `python ledger/reclassify.py FROM TO [--recode FW2=SL2] [--commit]`.
   **History** keeps every check QuickBooks left with no bills, fixed or not: when, the trigger (a paid bill deleted /
   check saved with no bill edited / before the change log), bills before, saves, status with the re-applied date, and
   any bill paid a second time. **QBO report (PDF)** rebuilds the support report from it on every click, into
@@ -400,6 +429,12 @@ bills leave the pay run, the payment and bills go into the mirror, the stub is f
 and the Bill Tracker refresh runs. QBO has no payment-method field on a bill payment, only check vs card, so ACH is a
 check-type payment whose reference says how it went.
 
+**From the vendor page too (2026-10-13).** On a vendor's bills, tick the unpaid ones and the tick bar's **Pay in
+QuickBooks…** opens the SAME review on that page, scoped to those bills (`GET /api/pay-bills/plan?bills=id,id`;
+the review token remembers the bills, so the write re-reads exactly them - `pay_bills.plan(bills)` /
+`marks_for`). The saved pay run is not touched; a paid bill ticked for the copy is left out. The write, the
+Touch ID, the stub and the follow-up are the one path above; the vendor page re-reads itself afterwards.
+
 **Pushed payments** is the queue of every payment pushed from here (`pay_push` in the ledger DB, self-created). A
 payment waits there until it **matches**: QBO shows its number and its stub is filed under that number. Nobody types
 the number: `pay_bills.watch()` runs at the end of every mirror refresh (`refresh_mirror.py` - sync-all step 0, the
@@ -451,16 +486,25 @@ The owner ruled: **only the owner, only this Mac, Touch ID on every write, no do
 payment per Letter page. `--vendor COWTOWN --date 2026-09-21` (or `--from/--to`, or `--payment <id>`)
 reads the mirror (BillPayment -> the bills it linked, the vendor's print name and address) and writes
 `Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<Vendor> - Bill Payment Stub <check # or card reference> <mm-dd-yyyy>.pdf`
-(`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless. Columns are a
-registry: the default six are QBO's (date · type · number · memo · amount · open balance);
-`--add project,bill_total,due_date` / `--drop type` / `--columns ...` change the set; `--list-columns`
-shows it. `amount` is what that payment applied to the bill, so the column ties to the payment; a bill
-covered only in part says so under its memo. The company name on the stub is `ACB_COMPANY_NAME` in
-`machine.env`. `--selftest` proves it offline.
+(`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless.
+**Two stubs (owner 2026-10-15: "we need a internal and external stub")**, each with a fixed set of columns:
+- **External** (kind `vendor`, mailed with the check on the envelope template): Date · Reference (the bill #) ·
+  Bill total · Open balance · Paid · New balance - "simply put the date, ref, total, open, paid, new and put it on
+  the mail template". The column registry still serves it: `--add project,memo,type,due_date` / `--drop date` /
+  `--columns ...` change the set, `--list-columns` shows it, the ledger's picker ticks it.
+- **Internal** (the office copy, the original centered header, filed under `<vendor>/Internal/`, never mailed):
+  Project · Memo · Bill total · Open balance · Paid · New balance - "simply include the project #, and the memo in
+  that order with the bill total, open balance, paid and new balance". Fixed: the picker does not change it. The
+  client invoices the money came from are OFF by default ("remove the invoice it's associated with as default") and
+  come back on top with the print menu's **Client invoices on top** tick (`invoices: true` on the POST).
+`amount` is what that payment applied to the bill, so the column ties to the payment; every money column is totalled
+on the last row, so Open balance - Paid = New balance reads on the total too. The company name on the stub is
+`ACB_COMPANY_NAME` in `machine.env`, our mailing address `ACB_COMPANY_ADDRESS`. `--selftest` proves it offline.
 
 **In the ledger:** vendor page > Payments view, the **Stub** column - `Print stub` per payment (POST
-`/api/bill-payment/stub`), a **Stub columns** picker (the registry as checkboxes, QBO's six by default,
-remembered per browser), and the **print history** under each payment. Every print is a row in
+`/api/bill-payment/stub`), the print menu (the external stub's columns as checkboxes, the six above by default,
+remembered per browser; the internal stub's one tick, Client invoices on top, never remembered; **External stub** /
+**Internal stub** buttons), and the **print history** under each payment. Every print is a row in
 `bill_payment_stub` with the stub as printed (snapshot), the columns, the QBO SyncToken at print time and
 its own archived PDF copy beside the ledger DB - `GET /api/bill-payment/stub/file?id=` serves that copy, so
 a print opens as it went out even after a re-print. The status pill is judged live against the mirror:

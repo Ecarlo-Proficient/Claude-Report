@@ -8,8 +8,9 @@ owner's Mac. One container, one process (`scheduler.py`):
 | Mirror refresh | every 3 min | the server's own QBO mirror (its own QuickBooks login) |
 | Count check | nightly 02:30 | the mirror (sweeps anything the change feed missed) |
 | AP then AR (one job) | every 15 min | Bill Tracker.xlsx, Invoice Tracker.xlsx (Accounting share), Notion, Teams |
+| CP P&Ls (10/13/2026) | daily 06:00 | every job folder at the top of the awarded-projects folder on the Common share gets its `Project_PnL_<job>.xlsx` in `<job>/Profit and Loss/` (QuickBooks transactions), then `CP Overview.xlsx` at the top of that folder (built last, from those workbooks). The WIP master is not read |
 
-Everything else - the ledger, WIP, P&Ls, every QuickBooks WRITER - stays on the owner's Mac. The image carries read
+Everything else - the ledger, WIP, the RP and MFD P&Ls, every QuickBooks WRITER - stays on the owner's Mac. The image carries read
 code only; `tests/test_office_server_image.py` fails the build if a writer is ever copied in. (This folder replaced
 the retired invoice-sync-only container on 09/30/2026.)
 
@@ -36,6 +37,7 @@ non-admin **automation user**.
 | `/volume1/docker/automation/data` | the mirror, status, logs, state | automation user, 700 |
 | `/volume1/automation-keys` | an **encrypted shared folder** (Control Panel > Shared Folder > Encryption) | automation user only |
 | `/volume1/docker/automation/po-tracker` | the Cloud Sync copy (step 2) | automation user, read |
+| `/volume1/Common/CURRENT PROJECTS/Awarded Projects Commercial projects` | the CP job folders (already on the Synology; step 2b) - the top-level folders ARE the Active list; the daily P&Ls land in `<job>/Profit and Loss/`, the CP Overview at the top | automation user read/write |
 | `/volume1/Accounting/_automation/registers` | the owner's rule files, pushed from the Mac | automation user read/write |
 | `/volume1/docker/automation/src` | this repo, cloned (step 6) | automation user |
 
@@ -46,6 +48,28 @@ Put the automation user's uid/gid (`id <user>` over SSH, or Control Panel) into 
 The owner keeps using the PO tracker on OneDrive (`Proficient Office - Purchase Orders`). Cloud Sync > add the
 Microsoft 365 / OneDrive for Business connection > that ONE folder > local path `/volume1/docker/automation/po-tracker`
 > **Sync direction: download remote changes only**. The server reads the copy; it never writes back.
+
+### 2b. The CP job folders (the CP P&Ls, 10/13/2026)
+
+The daily run is `project-pnl active cp --from-folders --no-prompt`: the Active list is whatever job folders sit at the
+top of `Common/CURRENT PROJECTS/Awarded Projects Commercial projects` (a folder under `Completed Projects` is finished),
+each job's transactions come from QuickBooks, and its workbook goes into `<job>/Profit and Loss/`. No Cloud Sync is
+needed - the folder is a Synology share already; compose mounts it at `/mnt/cp-awarded` read + write, and the
+automation user needs write access on it. **The WIP master is not read on the server** (the owner: "the wip report has
+nothing to do with this" - it stays a manual process on the ledger, where contract / ETC are confirmed as they come
+in); contract and ETC on the workbook come from the job's own documents (the signed G702 pay app, the takeoff) and the
+values typed on the sheet. After the first 06:00 run, open one `Project_PnL_<job>.xlsx` from a Mac over the share: if
+it will not open, the file inherited the automation user's permissions - the same `synoacltool -enforce-inherit` the
+update task runs on the trackers fixes it (then tell the developer so it is added to the task).
+
+### 2c. The approval report - Synology Cloud Sync, one way (10/13/2026)
+
+QuickBooks syncs its "Bill Approval Status ALL" report (the approval queue) into the Accounts Payable channel's files
+(SharePoint library "Company Files - Accounts Payable", `Bill Approval Status ALL.xlsx`). Cloud Sync > the same Microsoft
+365 connection > that ONE library > local path `/volume1/docker/automation/bill-approval` > **download remote changes
+only**. compose mounts it read only at `/mnt/bill-approval`; `server.env` names the file (`ACB_BILL_APPROVAL_XLSX`).
+`shared/bill_approval` reads it on every AP run and trusts it for 36 hours past the time QuickBooks printed on its last
+row; without it the Bill Tracker says "check QBO" for every unpaid bill entered since 09/16.
 
 ### 3. QuickBooks auth - the server's OWN app
 
@@ -152,7 +176,7 @@ owner's `sync-all` runs AP/AR as before.
 | `Dockerfile` | the image: pinned base (digest) + pinned packages (sha256), the read-only allow-list |
 | `.dockerignore` | lets in ONLY the allow-list |
 | `compose.yml` | the Synology mounts, the key folder, no ports |
-| `scheduler.py` | the clock: mirror / nightly check / AP-then-AR, test vs live, writer file, status, alerts |
+| `scheduler.py` | the clock: mirror / nightly check / AP-then-AR / the daily CP P&Ls (06:00, in the background), test vs live, writer file, status, alerts |
 | `server.env.example` | paths + ids (no secrets) |
 | `secrets.env.example` | the keys' names (values typed on the Synology only) |
 | `push_registers.sh` | Mac side: sends the owner's rule files to the server share (never cost_code_history.json) |

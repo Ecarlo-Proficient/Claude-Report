@@ -220,9 +220,16 @@ def _rec(items, as_of="2026-09-30", **kw):
                                           "was": 184.89, "where": "2100 MAYHILL"}]}}, **kw)
 
 
+BASE_COLUMNS = ("Name", "Key", "Status", "Standing", "Last statement", "QBO vendor", "Follow-ups")
+
+
 class SchemaNotion(FakeNotion):
+    """The board as built: its base columns + 'Last checked'; the bucket columns are added."""
+    columns = BASE_COLUMNS
+
     def retrieve_data_source(self, ds):
-        return {"properties": {"Last checked": {"type": "date"}}}
+        return {"properties": dict({c: {"type": "rich_text"} for c in self.columns},
+                                   **{"Last checked": {"type": "date"}})}
 
     def _request(self, method, path, body):
         self.schema = body
@@ -295,3 +302,16 @@ def test_a_note_typed_under_a_bill_on_notion_is_read_back():
     todo = fake.block_children(fake.kids[pid][1])[1]
     fake.append_children(todo["id"], [nb._para("asked for a credit 10/08")])      # she types it
     assert board.notes("RCI READY CABLE")["tax|T2"]["note"] == "asked for a credit 10/08"
+
+
+def test_a_column_removed_on_notion_is_skipped_not_a_failed_page():
+    """10/09: 'Follow-ups' was deleted from the board; every vendor page then failed with
+    a 400. A column the board no longer has is left out; the rest of the row is written."""
+    fake = SchemaNotion()
+    fake.columns = tuple(c for c in BASE_COLUMNS if c != "Follow-ups")
+    said = []
+    nb.Board("ds", client=fake).sync(_rec([_it("enter", "A1")]), log=said.append)
+    props = next(iter(fake.pages.values()))["properties"]
+    assert "Follow-ups" not in props and props["Not entered"]["number"] == 1
+    assert "Follow-ups" not in fake.schema["properties"]          # not re-created either
+    assert any("skipped: Follow-ups" in m for m in said)

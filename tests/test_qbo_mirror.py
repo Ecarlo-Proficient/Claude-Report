@@ -342,6 +342,7 @@ def test_purchase_order_edits_are_never_flagged():
     before = {"TotalAmt": 24.0, "POStatus": "Open", "Line": [_item_line(1, "EPOXY", 24.0)]}
     after = {"TotalAmt": 99.04, "POStatus": "Closed", "Line": [_item_line(1, "EPOXY", 99.04)]}
     assert m.change_flags("PurchaseOrder", "edited", before, after) == []
+
     assert "Status: Open -> Closed" in m.change_detail("PurchaseOrder", before, after)
 
 
@@ -367,3 +368,11 @@ def test_jobs_and_classes_of_a_record():
     assert m.classes_of({"ClassRef": {"name": "Commercial"}, "Line": [ln]}) == ["Commercial", "Residential"]
     assert m.jobs_of({"CustomerRef": {"name": "GC:MFD192 - JPI"}, "Line": []}) == ["MFD192"]
     assert m.jobs_of(None) == [] and m.classes_of(None) == []
+
+
+def test_change_flags_invoice_deleted_says_open_or_paid():
+    # the AR watch (2026-10-11): a deleted invoice is flagged by whether money was still open on it
+    assert m.change_flags("Invoice", "deleted", {"TotalAmt": 1000.0, "Balance": 1000.0}, None) == ["deleted open invoice"]
+    assert m.change_flags("Invoice", "deleted", {"TotalAmt": 1000.0, "Balance": 0.0}, None) == ["deleted paid invoice"]
+    assert m.change_flags("Invoice", "deleted", {"TotalAmt": 1000.0}, None) == ["deleted paid invoice"]
+    assert m.change_flags("CreditMemo", "deleted", {"TotalAmt": 50.0}, None) == ["deleted"]

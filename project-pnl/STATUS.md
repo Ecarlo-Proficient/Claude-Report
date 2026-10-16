@@ -7,6 +7,40 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 10/15/2026 · **Overhead audit** (owner, after CP800: "audit every financial document with oh and make sure we are not
+  making this same mistake of putting the contract OH while the project is active"). Every rate multiplication in the
+  repo was classified. Project-pnl, the Overviews and the Director's cut were already right (projection = rate x
+  contract, every to-date figure = rate x gross billed); the ledger was the one renderer left on the contract (fixed
+  10/14) plus its review page's finished-job list row (fixed now). Stale comments that still said "of the contract"
+  were rewritten (`--overhead-pct` help, `completed_pnl` header, `shared/wip_contracts`, the ledger draw comment).
+  OPEN, for a rebuild session: Draws sheet tile overhead = rate x (gross billed + retainage releases); completed
+  per-job sheet BILLED includes every release so its overhead runs past its own Summary row; MFD Overview and Director's
+  cut show 10% beside 9% ON PURPOSE (owner 10/15: 9% agreed with the director, 10% real - both stay; CP/RP 10% only).
+- 2026-10-14 · **Attachment index refreshes incrementally** (owner: the CP800 run took 9 minutes and should be
+  faster - its terminal sat on the last draw line for 8 silent minutes). Finding a bill's scans needs a company-wide
+  index of every QuickBooks Attachable (~78,000) because QBO cannot filter Attachable by its transaction; the index
+  was cached 7 days then fully re-pulled in silence. Now `_load_attachable_index` loads the cache on every run and
+  pulls only attachables with `MetaData.LastUpdatedTime` past the cache's `fetched` stamp less a 10-minute overlap
+  (the mirror's OVERLAP idea, same UTC `Z` filter shape), merges them (a returned attachable replaces the cached one
+  by id - its refs may have moved; one with no FileName or no refs is dropped) and rewrites the cache stamped at the
+  time the refresh started. One line: `attachment index: N files, +K changed since mm/dd hh:mm`. The full sweep runs
+  only with no cache file or an unreadable one, and says so before (about 8 minutes) and after (count, elapsed);
+  deleting the file forces it. QBO's query cannot report deletions, so a stale id can linger until a sweep - the
+  download loop's re-read of that id fails and the bill keeps its QBO link (it already did). `_ATT_CACHE_TTL_S` is
+  gone. Logs dir cache as before (`~/Library/Logs/Proficient/project-pnl/attachable_index_<realm>.json`).
+- 2026-10-13 · **The CP batch runs on the office server, daily at 06:00** (owner: "set up synology pnl for cp only, to
+  update daily once at 6am every day; include the overview as the last piece"). `docker/scheduler.py` job `pnl-cp`
+  runs `project_pnl_export.py active cp --from-folders --no-prompt`: NEW `--from-folders` makes the Active list the job
+  folders at the top of the awarded-projects folder (`active_cp_from_folders`; a folder under Completed Projects is
+  finished) and leaves the WIP master unread (owner: "the wip report has nothing to do with this - it must be updated
+  manually on the ledger, we confirm the contract/etc as they come in"); contract / ETC come from the G702 pay app, the
+  takeoff and the typed values, as they already do for a job off the master. CP only (RP folders carry no job #, MFD
+  moves). Every workbook into its job folder, then the CP Overview rebuilt from them - the order this tool already
+  follows. Also: `CP_AWARDED_BASE`
+  and the takeoff lookup's `_CP_ACTIVE_DIR` read `shared/pnl_paths.CP_AWARDED_BASE` (`ACB_CP_AWARDED_BASE` moves it; the
+  Mac default is unchanged), and the login line says QuickBooks, not Touch ID. The 09/03 "dying SMB share hangs a CP
+  run" issue does not apply on the server - the Common share is a local volume there. RP / MFD batches stay on the Mac.
+  Setup steps for the developer: `docker/STATUS.md` TO DO.
 - 2026-10-08 · **Joint check not paid out yet** (owner: "see how this will work when there is no # like Van Brunt
   how we are waiting to get copies of the joint check"). A payment deposited to the Joint Checks account with no
   payment out reads `Joint check · not paid out yet · <AR's memo>` in red, not "To us" (CP785 Draw #2: Van Brunt

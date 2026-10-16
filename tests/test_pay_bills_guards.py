@@ -123,3 +123,108 @@ def test_same_payment_same_request_id(monkeypatch, tmp_path):
     assert rows[0]["state"] == "written" and rows[0]["payment_id"] == "777"
     import hashlib, json
     assert rows[0]["request_id"] == hashlib.sha1(json.dumps(posts[0], sort_keys=True).encode()).hexdigest()[:36]
+
+
+def test_plan_on_given_bills_is_scoped_and_remembered(monkeypatch):
+    # the vendor page (owner 2026-10-13): the review runs on the ticked bills, not the saved run, and the token
+    # remembers which, so the write re-reads the same bills
+    monkeypatch.setattr(pb, "_login", lambda: ("a", "c"))
+    seen = {}
+
+    def fake_plan_live(access, cid, marks=None):
+        seen["marks"] = marks
+        return {"vendors": {"9": {"vendor_id": "9", "vendor": "RCI", "bills": [{"bill_id": "100", "amount": 50.0}], "total": 50.0}}, "skipped": []}
+    monkeypatch.setattr(pb, "_plan_live", fake_plan_live)
+    monkeypatch.setattr(pb, "_credits", lambda *a: [])
+    monkeypatch.setattr(pb, "accounts", lambda: [])
+    monkeypatch.setattr(pb, "authorized", lambda: (True, ""))
+    monkeypatch.setattr(pb, "_close_date", lambda *a: "")
+    d = pb.plan(["100", " ", "101"])
+    assert seen["marks"] == {"100": {"amount": None}, "101": {"amount": None}}
+    assert d["scope"] == "bills" and pb._TOKENS[d["run_token"]]["marks"] == seen["marks"]
+    d2 = pb.plan()
+    assert seen["marks"] is None and d2["scope"] == "run" and pb._TOKENS[d2["run_token"]]["marks"] is None
+
+
+def test_plan_live_on_given_bills_never_reads_the_saved_run(monkeypatch):
+    def boom():
+        raise AssertionError("read the saved run")
+    monkeypatch.setattr(pb.bill_marks, "read_pay_marks", boom)
+    bill = {"Id": "100", "DocNumber": "7", "TxnDate": "2026-10-01", "Balance": 80.0, "SyncToken": "1",
+            "VendorRef": {"value": "9", "name": "RCI"}, "PrivateNote": "", "MetaData": {}}
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {"100": bill})
+    monkeypatch.setattr(pb, "_held", lambda a, c: {})
+    p = pb._plan_live("a", "c", pb.marks_for(["100"]))
+    assert p["vendors"]["9"]["bills"][0]["amount"] == 80.0 and p["skipped"] == []
+    assert p["vendors"]["9"]["bills"][0]["partial"] is False
+
+
+# ── a payment MORE than its bills = a credit with the vendor (owner 2026-10-13, a joint check on a bill already paid) ──
+def test_a_typed_amount_above_the_bills_becomes_the_credit(monkeypatch, tmp_path):
+    _db(monkeypatch, tmp_path)
+    monkeypatch.setattr(pb, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {"100": {"Id": "100", "Balance": 10000.0, "DocNumber": "B1"}})
+    monkeypatch.setattr(pb, "_credits", lambda a, c, vid: [])
+    posts = []
+    monkeypatch.setattr(pb, "_post", lambda cid, body, rid: posts.append(body) or {"Id": "777", "TotalAmt": body["TotalAmt"]})
+    monkeypatch.setattr(pb, "_after_post", lambda *a, **k: None)
+    monkeypatch.setattr(pb, "_number_taken", lambda *a, **k: None)     # a typed check #: the mirror is not read here
+    lv = {"bills": [{"bill_id": "100", "amount": 4000.0, "balance": 10000.0, "doc": "B1"}], "paid_bills": []}
+    v = {"vendor_id": "9", "bills": [{"bill_id": "100", "amount": 4000}], "credits": [], "amount": 4301.0}
+    res = {"vendor_id": "9", "vendor": "V"}
+    pb._pay_vendor(v, "9", res, lv, {"credits": {}}, "tok", "check", {"name": "Op"}, "35", "2026-10-13", {"9": "20119"}, "a", "c")
+    assert res["ok"] and res["credit"] == 301.0 and "warn" not in res
+    assert posts[0]["TotalAmt"] == 4301.0 and [ln["Amount"] for ln in posts[0]["Line"]] == [4000.0]   # the excess is NO line
+    # the same bills with no amount typed: the payment equals its bills, no credit
+    posts.clear()
+    res = {"vendor_id": "9", "vendor": "V"}
+    pb._pay_vendor({**v, "amount": None}, "9", res, lv, {"credits": {}}, "tok", "check", {"name": "Op"}, "35", "2026-10-13", {"9": "20120"}, "a", "c")
+    assert res["ok"] and res["credit"] == 0 and posts[0]["TotalAmt"] == 4000.0
+
+
+def test_an_amount_below_the_bills_is_refused(monkeypatch, tmp_path):
+    _db(monkeypatch, tmp_path)
+    monkeypatch.setattr(pb, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {"100": {"Id": "100", "Balance": 10000.0, "DocNumber": "B1"}})
+    monkeypatch.setattr(pb, "_credits", lambda a, c, vid: [])
+    posts = []
+    monkeypatch.setattr(pb, "_post", lambda cid, body, rid: posts.append(body))
+    lv = {"bills": [{"bill_id": "100", "amount": 4000.0, "balance": 10000.0, "doc": "B1"}]}
+    v = {"vendor_id": "9", "bills": [{"bill_id": "100", "amount": 4000}], "credits": [], "amount": 3999.0}
+    res = {"vendor_id": "9", "vendor": "V"}
+    pb._pay_vendor(v, "9", res, lv, {"credits": {}}, "tok", "print", {"name": "Op"}, "35", "2026-10-13", {"9": pb.TO_PRINT}, "a", "c")
+    assert not posts and "less than the bills" in res["error"]
+
+
+def test_paid_bills_only_pay_as_a_credit_with_no_lines(monkeypatch, tmp_path):
+    """From the vendor page: the ticked bills are already paid (the joint check case) - the vendor stays on the
+    review with paid_bills, the typed amount is the whole payment and QuickBooks gets no Line at all."""
+    _db(monkeypatch, tmp_path)
+    monkeypatch.setattr(pb, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {})
+    monkeypatch.setattr(pb, "_credits", lambda a, c, vid: [])
+    posts = []
+    monkeypatch.setattr(pb, "_post", lambda cid, body, rid: posts.append(body) or {"Id": "778", "TotalAmt": body["TotalAmt"]})
+    monkeypatch.setattr(pb, "_after_post", lambda *a, **k: None)
+    monkeypatch.setattr(pb, "_number_taken", lambda *a, **k: None)
+    lv = {"bills": [], "paid_bills": [{"bill_id": "100", "doc": "B1", "date": "2026-09-01", "memo": "", "total": 500.0}]}
+    v = {"vendor_id": "9", "bills": [], "credits": [], "amount": 500.0}
+    res = {"vendor_id": "9", "vendor": "V"}
+    pb._pay_vendor(v, "9", res, lv, {"credits": {}}, "tok", "check", {"name": "Op"}, "35", "2026-10-13", {"9": "20119"}, "a", "c")
+    assert res["ok"] and res["credit"] == 500.0 and res["bills"] == 0
+    assert posts[0]["TotalAmt"] == 500.0 and "Line" not in posts[0]
+    # no amount typed on a credit-only payment: nothing to write
+    posts.clear()
+    res = {"vendor_id": "9", "vendor": "V"}
+    pb._pay_vendor({**v, "amount": None}, "9", res, lv, {"credits": {}}, "tok", "check", {"name": "Op"}, "35", "2026-10-13", {"9": "20119"}, "a", "c")
+    assert not posts and "amount is 0" in res["error"]
+    # the saved run never carries a paid bill's vendor; the vendor page's ticks do
+    paid = {"Id": "100", "Balance": 0, "TotalAmt": 500.0, "DocNumber": "B1", "TxnDate": "2026-09-01", "VendorRef": {"value": "9", "name": "V"},
+            "PrivateNote": "RP1 - paid by us 09/15", "MetaData": {"CreateTime": "2026-09-01"}}
+    monkeypatch.setattr(pb, "_live_ids", lambda a, c, typ, ids: {"100": paid})
+    monkeypatch.setattr(pb, "_held", lambda a, c: {})
+    p = pb._plan_live("a", "c", pb.marks_for(["100"]))
+    assert p["vendors"]["9"]["bills"] == [] and p["vendors"]["9"]["paid_bills"][0]["doc"] == "B1" and not p["skipped"]
+    monkeypatch.setattr(pb.bill_marks, "read_pay_marks", lambda: {"100": {"amount": None}})
+    p = pb._plan_live("a", "c")
+    assert not p["vendors"] and p["skipped"][0]["why"] == "already paid in QuickBooks"

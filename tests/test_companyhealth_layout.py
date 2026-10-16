@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from shared import paths
 
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".claude"}   # .claude/worktrees = other sessions' trees, never this clone's code
 
 
 def _py_files():
